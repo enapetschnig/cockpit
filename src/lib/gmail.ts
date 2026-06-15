@@ -24,6 +24,7 @@ export interface RawMail {
   subject: string;
   body: string;
   receivedAt: Date;
+  outgoing: boolean; // true = selbst gesendet (Gmail-Label SENT)
 }
 
 // Lesen reicht für Phase 1; gmail.send kommt mit "KI-Antwort entwerfen" (spätere Phase).
@@ -124,16 +125,17 @@ export async function fetchNewRawMails(account: Account, opts?: { max?: number; 
     const msg = await gmail.users.messages.get({ userId: "me", id, format: "full" });
     const payload = msg.data.payload;
     const headers = payload?.headers ?? [];
-    const from = parseFrom(header(headers, "From"));
+    const from = parseFrom(decodeMimeWords(header(headers, "From")));
     out.push({
       account,
       gmailId: id,
       threadId: msg.data.threadId ?? id,
       fromAddr: from.addr,
       fromName: from.name,
-      subject: header(headers, "Subject") || "(kein Betreff)",
+      subject: decodeMimeWords(header(headers, "Subject")) || "(kein Betreff)",
       body: extractBody(payload) || msg.data.snippet || "",
       receivedAt: msg.data.internalDate ? new Date(Number(msg.data.internalDate)) : new Date(),
+      outgoing: (msg.data.labelIds ?? []).includes("SENT"),
     });
   }
   return out;
@@ -148,6 +150,34 @@ type Header = { name?: string | null; value?: string | null };
 
 function header(headers: Header[], name: string): string {
   return headers.find((h) => (h.name ?? "").toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+/** Dekodiert RFC-2047 "Encoded-Words" (=?UTF-8?B?…?= / =?…?Q?…?=) in Header wie Betreff/Absender. */
+function decodeMimeWords(input: string): string {
+  if (!input || !input.includes("=?")) return input;
+  const joined = input.replace(/\?=\s+=\?/g, "?==?"); // Whitespace zwischen Encoded-Words entfernen
+  return joined.replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (_m, charset: string, enc: string, text: string) => {
+    try {
+      let bytes: Buffer;
+      if (enc.toUpperCase() === "B") {
+        bytes = Buffer.from(text, "base64");
+      } else {
+        const q = text.replace(/_/g, " ").replace(/=([0-9A-Fa-f]{2})/g, (_x, h: string) => String.fromCharCode(parseInt(h, 16)));
+        bytes = Buffer.from(q, "binary");
+      }
+      return bytes.toString(nodeCharset(charset));
+    } catch {
+      return text;
+    }
+  });
+}
+
+function nodeCharset(charset: string): BufferEncoding {
+  const c = charset.toLowerCase();
+  if (c.includes("utf-8") || c.includes("utf8")) return "utf8";
+  if (c.includes("8859-1") || c.includes("8859-15") || c.includes("1252") || c.includes("latin1")) return "latin1";
+  if (c.includes("utf-16")) return "utf16le";
+  return "utf8";
 }
 
 function parseFrom(raw: string): { name: string; addr: string } {

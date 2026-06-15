@@ -45,40 +45,47 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
       const raws = await fetchNewRawMails(a.account as Account);
       let count = 0;
       for (const r of raws) {
-        const c = await classifyEmail({
-          account: r.account,
-          fromName: r.fromName,
-          fromAddr: r.fromAddr,
-          subject: r.subject,
-          body: r.body,
-        });
-        await prisma.email.create({
-          data: {
-            account: r.account,
-            gmailId: r.gmailId,
-            threadId: r.threadId,
-            fromAddr: r.fromAddr,
-            fromName: r.fromName,
-            subject: r.subject,
-            body: r.body,
-            receivedAt: r.receivedAt,
-            summary: c.summary,
-            labelsJson: JSON.stringify(c.labels),
-            firmenrelevant: c.firmenrelevant,
-            priority: c.priority,
-            classifiedAt: new Date(),
-          },
-        });
-        count++;
-        res.imported++;
+        try {
+          // Gesendete Mails: nicht klassifizieren, nicht firmenrelevant, kein Push.
+          const c = r.outgoing
+            ? null
+            : await classifyEmail({ account: r.account, fromName: r.fromName, fromAddr: r.fromAddr, subject: r.subject, body: r.body });
+          const firmenrelevant = c?.firmenrelevant ?? false;
+          const created = await prisma.email.create({
+            data: {
+              account: r.account,
+              gmailId: r.gmailId,
+              threadId: r.threadId,
+              outgoing: r.outgoing,
+              fromAddr: r.fromAddr,
+              fromName: r.fromName,
+              subject: r.subject,
+              body: r.body,
+              receivedAt: r.receivedAt,
+              summary: c?.summary ?? null,
+              labelsJson: JSON.stringify(c?.labels ?? []),
+              firmenrelevant,
+              priority: c?.priority ?? "lo",
+              classifiedAt: new Date(),
+            },
+          });
+          count++;
+          res.imported++;
 
-        // Push nur für NEUE firmenrelevante Mails
-        if (notify && c.firmenrelevant) {
-          const tag = c.priority === "hi" ? "❗️ Wichtig · " : "";
-          await sendTelegram(
-            `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
-              `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c.summary)}`
-          );
+          // Push nur für eingehende, firmenrelevante Mails – und nur einmal (notifiedAt).
+          if (notify && firmenrelevant && !r.outgoing) {
+            await prisma.email.update({ where: { id: created.id }, data: { notifiedAt: new Date() } });
+            const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";
+            await sendTelegram(
+              `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
+                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}`
+            );
+          }
+        } catch (e) {
+          // Doppelte gmailId (Race local+Vercel) o. ä. -> diese Mail überspringen, Batch läuft weiter.
+          if (!String((e as Error).message).includes("Unique constraint")) {
+            console.error("[sync] mail", r.gmailId, (e as Error).message);
+          }
         }
       }
       res.perAccount[a.account] = count;

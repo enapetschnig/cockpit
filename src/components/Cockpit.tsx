@@ -81,7 +81,7 @@ export default function Cockpit() {
   }
 
   const inAcc = (e: EmailDTO) => acc === "alle" || e.account === acc;
-  const visible = emails.filter(inAcc);
+  const visible = emails.filter(inAcc).filter((e) => !e.outgoing); // Gesendetes nicht im Posteingang
 
   const counts = {
     firmenrelevant: visible.filter((e) => e.firmenrelevant).length,

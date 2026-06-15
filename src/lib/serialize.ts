@@ -24,6 +24,7 @@ export function toEmailDTO(e: Email & { customer?: Customer | null }): EmailDTO 
     firmenrelevant: e.firmenrelevant,
     priority: e.priority,
     filed: e.filed,
+    outgoing: e.outgoing,
     customerId: e.customerId,
     customer: e.customer
       ? { id: e.customer.id, name: e.customer.name, meta: e.customer.meta, color: e.customer.color }

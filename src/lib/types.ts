@@ -13,6 +13,7 @@ export interface EmailDTO {
   firmenrelevant: boolean;
   priority: Priority | string;
   filed: boolean;
+  outgoing: boolean;
   customerId: string | null;
   customer: { id: string; name: string; meta: string | null; color: string | null } | null;
 }

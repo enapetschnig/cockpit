@@ -79,7 +79,13 @@ export default function ConnectPage() {
     GOOGLE_CLIENT_SECRET: "Google Client-Secret",
     TELEGRAM_BOT_TOKEN: "Telegram Bot-Token",
     TELEGRAM_CHAT_ID: "Telegram Chat-ID",
+    APP_PASSWORD: "App-Login-Passwort",
   };
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    window.location.href = "/login";
+  }
 
   async function sync() {
     setSyncing(true);
@@ -135,7 +141,10 @@ export default function ConnectPage() {
 
   return (
     <main style={{ maxWidth: 560, margin: "0 auto", padding: "28px 18px", fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color: "#2b2723" }}>
-      <a href="/" style={{ color: "#6b6358", textDecoration: "none", fontSize: 14 }}>‹ Zum Cockpit</a>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <a href="/" style={{ color: "#6b6358", textDecoration: "none", fontSize: 14 }}>‹ Zum Cockpit</a>
+        <button onClick={logout} style={{ background: "none", border: "none", color: "#6b6358", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>Abmelden</button>
+      </div>
       <h1 style={{ fontSize: 24, margin: "12px 0 4px" }}>Gmail verbinden</h1>
       <p style={{ color: "#6b6358", marginTop: 0 }}>
         Verbinde Firmen- und Privat-Postfach. Danach holt „Synchronisieren" neue Mails und die KI ordnet sie ein.

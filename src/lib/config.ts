@@ -13,6 +13,7 @@ export const SETTING_KEYS = [
   "GOOGLE_CLIENT_SECRET",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
+  "APP_PASSWORD",
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 

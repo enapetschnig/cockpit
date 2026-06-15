@@ -33,8 +33,10 @@ model Email {
   receivedAt DateTime @default(now())
 
   // ── Gmail-Herkunft (Phase 1b) ────────────────────────────
-  gmailId  String? @unique // Gmail message id – verhindert Duplikate beim Sync
-  threadId String? // Gmail thread id (für spätere Konversationsansicht)
+  gmailId    String?   @unique // Gmail message id – verhindert Duplikate beim Sync
+  threadId   String? // Gmail thread id (für spätere Konversationsansicht)
+  outgoing   Boolean   @default(false) // true = von mir gesendet (Gmail-Label SENT)
+  notifiedAt DateTime? // wann per Telegram gepusht – verhindert Mehrfach-Push
 
   // ── von der KI (OpenAI) befüllt ──────────────────────────
   summary        String? // Ein-Satz-Zusammenfassung
