@@ -10,10 +10,12 @@ export const config = {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Vercel-Cron darf den Sync auch ohne Login (per CRON_SECRET)
-  if (pathname === "/api/gmail/sync") {
+  // Cron darf Sync + Briefing auch ohne Login (per CRON_SECRET)
+  if (pathname === "/api/gmail/sync" || pathname === "/api/briefing") {
     const cron = process.env.CRON_SECRET;
-    if (cron && req.headers.get("authorization") === `Bearer ${cron}`) return NextResponse.next();
+    const bearer = req.headers.get("authorization") === `Bearer ${cron}`;
+    const keyParam = req.nextUrl.searchParams.get("key") === cron;
+    if (cron && (bearer || keyParam)) return NextResponse.next();
   }
 
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
