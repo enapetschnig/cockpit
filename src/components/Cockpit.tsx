@@ -428,6 +428,8 @@ export default function Cockpit() {
         </div>
       </div>
 
+      {view === "inbox" && <div className="vphold">Wähle links eine Mail, um sie hier zu öffnen.</div>}
+
       {/* Bottom-Nav */}
       <div className="nav">
         <button className={"navi" + (view === "inbox" ? " active" : "")} onClick={() => setView("inbox")}>
