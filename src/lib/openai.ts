@@ -125,3 +125,46 @@ function heuristic(m: MailInput): ClassifyResult {
 
   return { summary: fallbackSummary(m), labels: [...labels], firmenrelevant, priority, suggestedTodos };
 }
+
+/** Transkribiert eine Sprachnachricht (OGG/Opus von Telegram) per Whisper. */
+export async function transcribeVoice(audio: Buffer, mime = "audio/ogg"): Promise<string> {
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("OpenAI-Key fehlt für die Transkription.");
+  const client = new OpenAI({ apiKey });
+  const file = new File([new Uint8Array(audio)], "voice.ogg", { type: mime });
+  const tr = await client.audio.transcriptions.create({ file, model: "whisper-1", language: "de" });
+  return (tr.text || "").trim();
+}
+
+/** Erstellt einen professionellen deutschen E-Mail-Antworttext aus Original + Anweisung. */
+export async function draftEmailReply(input: {
+  fromName: string;
+  fromAddr: string;
+  subject: string;
+  body: string;
+  instruction: string;
+}): Promise<string> {
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("OpenAI-Key fehlt.");
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  const client = new OpenAI({ apiKey });
+  const resp = await client.chat.completions.create({
+    model,
+    temperature: 0.4,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Du formulierst professionelle, freundliche deutsche E-Mail-Antworten für die ePower GmbH (Software für Handwerker). " +
+          "Gib NUR den Antworttext aus – keine Betreffzeile, keine Anführungszeichen, keine Erklärungen. Höflich, knapp, mit passender Anrede und Grußformel.",
+      },
+      {
+        role: "user",
+        content:
+          `Ursprüngliche Mail von ${input.fromName} <${input.fromAddr}>\nBetreff: ${input.subject}\n\n${input.body}\n\n` +
+          `---\nMeine Anweisung für die Antwort: ${input.instruction}\n\nSchreibe die Antwort-E-Mail.`,
+      },
+    ],
+  });
+  return resp.choices[0]?.message?.content?.trim() || "";
+}

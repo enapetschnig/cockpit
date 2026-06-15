@@ -17,6 +17,8 @@ export default function ConnectPage() {
   const [reclassMsg, setReclassMsg] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [detectMsg, setDetectMsg] = useState<string | null>(null);
+  const [tgBusy, setTgBusy] = useState(false);
+  const [tgMsg, setTgMsg] = useState<string | null>(null);
   const [settings, setSettings] = useState<Record<string, { set: boolean; source: string | null; hint: string }>>({});
   const [keyOrder, setKeyOrder] = useState<string[]>([]);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -136,6 +138,21 @@ export default function ConnectPage() {
     }
   }
 
+  async function activateBot() {
+    setTgBusy(true);
+    setTgMsg(null);
+    try {
+      const r = await fetch("/api/telegram/setup", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) setTgMsg(d.error || "Aktivierung fehlgeschlagen");
+      else setTgMsg("✅ Bot aktiv. Antworte im Telegram-Chat auf eine Mail-Benachrichtigung (Text/Sprache).");
+    } catch (e) {
+      setTgMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
   const card: React.CSSProperties = { background: "#fff", border: "1px solid #ece8e0", borderRadius: 14, padding: 18, marginBottom: 14 };
   const btn: React.CSSProperties = { display: "inline-block", padding: "10px 16px", borderRadius: 10, border: "none", fontWeight: 700, cursor: "pointer", fontSize: 14 };
 
@@ -211,6 +228,18 @@ export default function ConnectPage() {
           {detecting ? "Analysiere Mails …" : "Kunden aus Mails erkennen & anlegen"}
         </button>
         {detectMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{detectMsg}</p>}
+      </div>
+
+      <div style={{ ...card }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Telegram-Bot</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 10 }}>
+          Antworte im Telegram-Chat auf eine Mail-Benachrichtigung (Text oder 🎤 Sprache) → die KI erstellt einen
+          Antwort-Entwurf in Gmail. Funktioniert nur online (Vercel) – localhost erreicht Telegram nicht.
+        </div>
+        <button onClick={activateBot} disabled={tgBusy} style={{ ...btn, background: "#1c8a90", color: "#fff", width: "100%", opacity: tgBusy ? 0.6 : 1 }}>
+          {tgBusy ? "Aktiviere …" : "Telegram-Bot aktivieren"}
+        </button>
+        {tgMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{tgMsg}</p>}
       </div>
 
       <div style={{ ...card }}>

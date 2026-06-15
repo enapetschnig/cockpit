@@ -16,6 +16,9 @@ export async function middleware(req: NextRequest) {
     if (cron && req.headers.get("authorization") === `Bearer ${cron}`) return NextResponse.next();
   }
 
+  // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
+  if (pathname === "/api/telegram/webhook") return NextResponse.next();
+
   const { response, user } = await updateSession(req);
 
   // Login-Seite ist öffentlich (Session-Cookies trotzdem mitgeben)

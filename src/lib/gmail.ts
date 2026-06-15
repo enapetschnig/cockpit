@@ -27,8 +27,11 @@ export interface RawMail {
   outgoing: boolean; // true = selbst gesendet (Gmail-Label SENT)
 }
 
-// Lesen reicht für Phase 1; gmail.send kommt mit "KI-Antwort entwerfen" (spätere Phase).
-const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+// Lesen + Entwürfe erstellen (für die Telegram-Antwort-Funktion).
+const SCOPES = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
+];
 
 export async function isGmailConfigured(): Promise<boolean> {
   const [id, secret] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET")]);
@@ -231,4 +234,59 @@ function stripHtml(html: string): string {
     .replace(/\s+\n/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+/** Erstellt einen Antwort-Entwurf im selben Thread (für die Telegram-Antwort-Funktion). */
+export async function createReplyDraft(
+  account: Account,
+  gmailId: string,
+  bodyText: string
+): Promise<{ draftId: string; to: string; subject: string }> {
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: acc.refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: client });
+
+  const orig = await gmail.users.messages.get({
+    userId: "me",
+    id: gmailId,
+    format: "metadata",
+    metadataHeaders: ["From", "Subject", "Message-ID", "References"],
+  });
+  const h = (orig.data.payload?.headers ?? []) as Header[];
+  const to = parseFrom(decodeMimeWords(header(h, "From"))).addr;
+  const subjRaw = decodeMimeWords(header(h, "Subject")) || "(kein Betreff)";
+  const subject = /^re:/i.test(subjRaw) ? subjRaw : `Re: ${subjRaw}`;
+  const messageId = header(h, "Message-ID");
+  const references = [header(h, "References"), messageId].filter(Boolean).join(" ");
+
+  const raw = buildRawEmail({ from: acc.email || "me", to, subject, inReplyTo: messageId, references, body: bodyText });
+
+  const draft = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: { message: { raw, threadId: orig.data.threadId ?? undefined } },
+  });
+  return { draftId: draft.data.id ?? "", to, subject };
+}
+
+function buildRawEmail(o: { from: string; to: string; subject: string; inReplyTo?: string; references?: string; body: string }): string {
+  const lines = [
+    `From: ${o.from}`,
+    `To: ${o.to}`,
+    `Subject: ${encodeSubject(o.subject)}`,
+    o.inReplyTo ? `In-Reply-To: ${o.inReplyTo}` : "",
+    o.references ? `References: ${o.references}` : "",
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    o.body,
+  ].filter((l) => l !== "");
+  return Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
+}
+
+function encodeSubject(s: string): string {
+  if (/^[\x00-\x7F]*$/.test(s)) return s;
+  return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }

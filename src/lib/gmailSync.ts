@@ -74,12 +74,16 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
 
           // Push nur für eingehende, firmenrelevante Mails – und nur einmal (notifiedAt).
           if (notify && firmenrelevant && !r.outgoing) {
-            await prisma.email.update({ where: { id: created.id }, data: { notifiedAt: new Date() } });
             const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";
-            await sendTelegram(
+            const sent = await sendTelegram(
               `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
-                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}`
+                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}\n\n` +
+                `<i>↩️ Antworte auf diese Nachricht (Text/Sprache) für einen KI-Entwurf.</i>`
             );
+            await prisma.email.update({
+              where: { id: created.id },
+              data: { notifiedAt: new Date(), telegramMsgId: sent.messageId ? String(sent.messageId) : null },
+            });
           }
         } catch (e) {
           // Doppelte gmailId (Race local+Vercel) o. ä. -> diese Mail überspringen, Batch läuft weiter.

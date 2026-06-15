@@ -35,8 +35,9 @@ model Email {
   // ── Gmail-Herkunft (Phase 1b) ────────────────────────────
   gmailId    String?   @unique // Gmail message id – verhindert Duplikate beim Sync
   threadId   String? // Gmail thread id (für spätere Konversationsansicht)
-  outgoing   Boolean   @default(false) // true = von mir gesendet (Gmail-Label SENT)
-  notifiedAt DateTime? // wann per Telegram gepusht – verhindert Mehrfach-Push
+  outgoing      Boolean   @default(false) // true = von mir gesendet (Gmail-Label SENT)
+  notifiedAt    DateTime? // wann per Telegram gepusht – verhindert Mehrfach-Push
+  telegramMsgId String? // message_id des Telegram-Pushes – für "Antworten" im Chat
 
   // ── von der KI (OpenAI) befüllt ──────────────────────────
   summary        String? // Ein-Satz-Zusammenfassung

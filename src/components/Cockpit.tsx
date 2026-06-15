@@ -6,7 +6,7 @@ import type { EmailDTO, CustomerDTO } from "@/lib/types";
 
 type Tab = "firmenrelevant" | "wichtig" | "buchhaltung" | "zuordnen" | "alle";
 type Acc = "alle" | "firma" | "privat";
-type View = "inbox" | "email" | "kunden" | "kunde";
+type View = "inbox" | "email" | "kunden" | "kunde" | "gesendet";
 
 const PALETTE = ["#2f6df0", "#1f9d63", "#d8932a", "#e0533d", "#9a4fc4", "#1c8a90", "#5a6675"];
 
@@ -428,6 +428,17 @@ export default function Cockpit() {
         </div>
       </div>
 
+      {/* Gesendet */}
+      <div className={"view" + (view === "gesendet" ? " open" : "")}>
+        <div className="vhead"><button className="back" onClick={() => setView("inbox")}>‹ Cockpit</button><strong style={{ fontSize: 16 }}>Gesendet</strong></div>
+        <div className="vbody">
+          {(() => {
+            const sent = emails.filter((e) => e.outgoing && inAcc(e));
+            return sent.length ? sent.map((e) => <MailCard key={e.id} e={e} />) : <div className="muted">Keine gesendeten Mails.</div>;
+          })()}
+        </div>
+      </div>
+
       {view === "inbox" && <div className="vphold">Wähle links eine Mail, um sie hier zu öffnen.</div>}
 
       {/* Bottom-Nav */}
@@ -438,8 +449,8 @@ export default function Cockpit() {
         <button className={"navi" + (view === "kunden" || view === "kunde" ? " active" : "")} onClick={() => setView("kunden")}>
           <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0" /><path d="M16 6.2a3 3 0 0 1 0 5.6" /><path d="M20.5 19a5 5 0 0 0-3.5-4.8" /></svg>Kunden
         </button>
-        <button className="navi" onClick={() => pushToast("Heute", "Kalender-Ansicht kommt in Phase 2.")}>
-          <svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" /></svg>Heute<span className="soon">bald</span>
+        <button className={"navi" + (view === "gesendet" ? " active" : "")} onClick={() => setView("gesendet")}>
+          <svg viewBox="0 0 24 24"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" /></svg>Gesendet
         </button>
         <button className="navi" onClick={() => pushToast("Rechnungen", "Angebote & Rechnungen kommen in Phase 4.")}>
           <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z" /><path d="M9 9h6M9 13h6M9 17h4" /></svg>Rechnungen<span className="soon">bald</span>
