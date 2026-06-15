@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { getConfig } from "./config";
 import { draftEmailReply } from "./openai";
+import { ASSISTANT_PERSONA } from "./persona";
 
 export interface AssistantResult {
   reply: string;
@@ -77,6 +78,22 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "complete_todo",
+      description: "Hakt eine offene Aufgabe als erledigt ab (per Text/Stichwort finden).",
+      parameters: { type: "object", properties: { todo_text: { type: "string" } }, required: ["todo_text"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "reopen_todo",
+      description: "Öffnet eine bereits erledigte Aufgabe wieder.",
+      parameters: { type: "object", properties: { todo_text: { type: "string" } }, required: ["todo_text"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "remember_fact",
       description:
         "Merkt sich dauerhaft eine wichtige Information (Vorliebe des Nutzers, Deadline, Kunden-Info, laufendes Thema), damit du es beim nächsten Mal weißt. Nutze das proaktiv.",
@@ -115,6 +132,7 @@ interface Args {
   instruction?: string;
   content?: string;
   topic?: string;
+  todo_text?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -225,6 +243,20 @@ async function runTool(name: string, a: Args): Promise<unknown> {
       await prisma.todo.create({ data: { text: a.text, customerId } });
       return { ok: true, todo: a.text, customer: a.customer_name ?? null };
     }
+    case "complete_todo": {
+      if (!a.todo_text) return { error: "todo_text nötig" };
+      const t = await prisma.todo.findFirst({ where: { done: false, text: { contains: a.todo_text, mode: "insensitive" } }, orderBy: { createdAt: "desc" } });
+      if (!t) return { error: "Keine passende offene Aufgabe gefunden." };
+      await prisma.todo.update({ where: { id: t.id }, data: { done: true } });
+      return { ok: true, erledigt: t.text };
+    }
+    case "reopen_todo": {
+      if (!a.todo_text) return { error: "todo_text nötig" };
+      const t = await prisma.todo.findFirst({ where: { done: true, text: { contains: a.todo_text, mode: "insensitive" } }, orderBy: { createdAt: "desc" } });
+      if (!t) return { error: "Keine passende erledigte Aufgabe gefunden." };
+      await prisma.todo.update({ where: { id: t.id }, data: { done: false } });
+      return { ok: true, wieder_offen: t.text };
+    }
     case "remember_fact": {
       if (!a.content) return { error: "content nötig" };
       await prisma.memory.create({ data: { content: a.content, topic: a.topic ?? null } });
@@ -266,28 +298,23 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   const memories = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 40 });
   const memText = memories.length ? memories.map((m) => `- ${m.topic ? "[" + m.topic + "] " : ""}${m.content}`).join("\n") : "(noch nichts gemerkt)";
   const history = (await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, take: 16 })).reverse();
+  // Arbeits-Gedächtnis (zuletzt gezeigte Mails / aktiver Entwurf) – frisch ohne Cache laden.
+  const convRow = await prisma.setting.findUnique({ where: { key: "CONV_STATE" } });
+  const convState = convRow?.value?.trim();
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    {
-      role: "system",
-      content:
-        "Du bist der persönliche, proaktive, mitdenkende Assistent für das ePower Cockpit (E-Mail-Cockpit der ePower GmbH, Software für Handwerker). " +
-        "Schreib wie ein echter, kompetenter persönlicher Assistent – natürlich, freundlich, direkt und auf den Punkt, nicht roboterhaft. " +
-        "Wenn du eine Antwort auf eine Mail vorbereitest, ist klar, von welchem Postfach an welchen Empfänger sie geht (wird angezeigt). " +
-        "Du beantwortest Fragen zum Posteingang UND handelst: Mails einem Kunden zuordnen (assign_email_to_customer), in der Buchhaltung ablegen (file_to_accounting), " +
-        "Aufgaben anlegen (create_todo), Antworten formulieren (draft_reply – der Nutzer bestätigt das Senden selbst). " +
-        "DENK MIT: Beziehe dich aktiv auf den bisherigen Gesprächsverlauf und besonders auf die letzte Nachricht – Nachfragen wie 'und ordne die zu' meinen das zuletzt Besprochene. " +
-        "Merke dir proaktiv Wichtiges mit remember_fact (Deadlines, Vorlieben des Nutzers, laufende Themen, Kunden-Infos); mit recall_facts kannst du nachsehen. " +
-        "Finde die gemeinte Mail/den Kunden selbst über die Tools – frag nur bei echter Mehrdeutigkeit nach. Nach einer Aktion bestätige knapp. Nutze IMMER echte Daten, erfinde nichts. " +
-        "Antworte knapp auf Deutsch für Telegram: KEIN Markdown (kein Sternchen-Fett, keine Rauten, keine Tabellen), nur einfacher Text, Emojis und Bullet-Punkte. " +
-        `Heute ist ${today}.\n\nDein bisheriges Wissen (gemerkte Fakten):\n${memText}`,
-    },
+    { role: "system", content: ASSISTANT_PERSONA.replace("{DATUM}", today).replace("{MEMORIES}", memText) },
+    ...(convState
+      ? [{ role: "system" as const, content: `Arbeits-Kontext der letzten Nachricht (für Bezüge wie 'die zweite', 'ordne die zu', 'antworte ihm'):\n${convState}` }]
+      : []),
     ...(context?.replyEmailId
-      ? [{ role: "system" as const, content: `Kontext: Der Nutzer antwortet auf die E-Mail mit id=${context.replyEmailId}. Wenn er eine Antwort formulieren möchte, nutze draft_reply mit dieser id.` }]
+      ? [{ role: "system" as const, content: `Der Nutzer antwortet gerade auf die E-Mail mit id=${context.replyEmailId}. Wenn er antworten möchte, nutze draft_reply mit dieser id.` }]
       : []),
     ...history.map((h) => ({ role: h.role === "assistant" ? ("assistant" as const) : ("user" as const), content: h.content })),
     { role: "user", content: userText },
   ];
+
+  const lastEmails: { id: string; from: string; subject: string }[] = [];
 
   let finalReply = "";
   for (let i = 0; i < 6; i++) {
@@ -313,6 +340,13 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
       } catch (e) {
         result = { error: (e as Error).message };
       }
+      if (tc.function.name === "search_emails") {
+        const r = result as { emails?: Array<{ id: string; from: string; subject: string }> };
+        if (r && Array.isArray(r.emails)) {
+          lastEmails.length = 0;
+          for (const e of r.emails.slice(0, 8)) lastEmails.push({ id: e.id, from: e.from, subject: e.subject });
+        }
+      }
       messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
   }
@@ -324,6 +358,15 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : finalReply).slice(0, 2000) } });
   const old = await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, skip: 40, select: { id: true } });
   if (old.length) await prisma.botMessage.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
+
+  // Arbeits-Kontext für die nächste Nachricht festhalten (zuletzt gezeigte Mails / aktiver Entwurf).
+  const ctxParts: string[] = [];
+  if (lastEmails.length) ctxParts.push("Zuletzt gezeigte Mails:\n" + lastEmails.map((e, i) => `  ${i + 1}) id=${e.id} | ${e.from}: ${e.subject}`).join("\n"));
+  if (drafted) ctxParts.push(`Aktiver Antwort-Entwurf: email id=${drafted.emailId} an ${drafted.fromName}`);
+  if (ctxParts.length) {
+    const v = ctxParts.join("\n");
+    await prisma.setting.upsert({ where: { key: "CONV_STATE" }, create: { key: "CONV_STATE", value: v }, update: { value: v } });
+  }
 
   return { reply: finalReply, draftedFor: drafted };
 }
