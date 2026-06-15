@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 type Acc = { account: "firma" | "privat"; email: string | null; connected: boolean; lastSyncAt: string | null };
 type Status = { configured: boolean; accounts: Acc[]; error?: string };
@@ -79,11 +80,10 @@ export default function ConnectPage() {
     GOOGLE_CLIENT_SECRET: "Google Client-Secret",
     TELEGRAM_BOT_TOKEN: "Telegram Bot-Token",
     TELEGRAM_CHAT_ID: "Telegram Chat-ID",
-    APP_PASSWORD: "App-Login-Passwort",
   };
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    await supabaseBrowser().auth.signOut().catch(() => {});
     window.location.href = "/login";
   }
 
