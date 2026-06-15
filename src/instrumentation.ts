@@ -8,6 +8,8 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // Auf Vercel (serverless) gibt es keinen Dauerprozess -> dort übernimmt der Cron (vercel.json).
+  if (process.env.VERCEL) return;
   const g = globalThis as unknown as { __cockpitAutoSync?: boolean };
   if (g.__cockpitAutoSync) return;
   g.__cockpitAutoSync = true;
