@@ -1,0 +1,127 @@
+import OpenAI from "openai";
+import type { ClassifyResult, Priority } from "./types";
+import { ALL_LABEL_KEYS } from "./labels";
+
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+interface MailInput {
+  account: string;
+  fromName: string;
+  fromAddr: string;
+  subject: string;
+  body: string;
+}
+
+const SYSTEM_PROMPT =
+  "Du bist ein Assistent, der eingehende E-Mails für die österreichische Firma ePower GmbH einordnet. " +
+  "Die Firma entwickelt individuelle Software für Handwerker. Antworte AUSSCHLIESSLICH mit gültigem JSON.";
+
+function buildUserPrompt(m: MailInput): string {
+  return [
+    `Konto: ${m.account}`,
+    `Von: ${m.fromName} <${m.fromAddr}>`,
+    `Betreff: ${m.subject}`,
+    "",
+    m.body,
+    "",
+    "Gib JSON mit genau diesen Feldern zurück:",
+    '- "summary": ein deutscher Satz, max. 20 Wörter',
+    `- "labels": Teilmenge aus ${JSON.stringify(ALL_LABEL_KEYS)}`,
+    '- "firmenrelevant": true/false – WICHTIG: auch true, wenn die Mail im Privat-Postfach',
+    "  ankommt, aber die Firma betrifft (z. B. Steuerberater, Lieferanten-/Server-Rechnung).",
+    '- "priority": "hi" | "mid" | "lo"',
+    '- "suggestedTodos": kurze deutsche Aufgaben (Array), leer wenn nichts zu tun ist',
+  ].join("\n");
+}
+
+export async function classifyEmail(m: MailInput): Promise<ClassifyResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return heuristic(m);
+
+  try {
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: MODEL,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserPrompt(m) },
+      ],
+    });
+    const raw = resp.choices[0]?.message?.content ?? "{}";
+    return normalize(JSON.parse(raw), m);
+  } catch (e) {
+    console.error("[openai] Klassifizierung fehlgeschlagen – nutze Regel-Fallback:", e);
+    return heuristic(m);
+  }
+}
+
+function normalize(j: Record<string, unknown>, m: MailInput): ClassifyResult {
+  const labels = Array.isArray(j.labels)
+    ? (j.labels as unknown[]).map(String).filter((l) => ALL_LABEL_KEYS.includes(l))
+    : [];
+  const priority = (["hi", "mid", "lo"].includes(j.priority as string) ? j.priority : "mid") as Priority;
+  const todos = Array.isArray(j.suggestedTodos)
+    ? (j.suggestedTodos as unknown[]).map(String).filter(Boolean)
+    : [];
+  return {
+    summary: typeof j.summary === "string" && j.summary.trim() ? j.summary.trim() : fallbackSummary(m),
+    labels,
+    firmenrelevant: typeof j.firmenrelevant === "boolean" ? j.firmenrelevant : labels.length > 0,
+    priority,
+    suggestedTodos: todos,
+  };
+}
+
+function fallbackSummary(m: MailInput): string {
+  const t = m.body.replace(/\s+/g, " ").trim();
+  return t.length > 120 ? t.slice(0, 117) + "…" : t || m.subject;
+}
+
+/**
+ * Einfacher Regel-Fallback, damit die App auch OHNE OpenAI-Key sinnvoll läuft.
+ */
+function heuristic(m: MailInput): ClassifyResult {
+  const text = `${m.subject} ${m.body} ${m.fromAddr}`.toLowerCase();
+  const has = (...kw: string[]) => kw.some((k) => text.includes(k));
+  const labels = new Set<string>();
+  let priority: Priority = "mid";
+  let firmenrelevant = m.account === "firma";
+
+  if (has("rechnung", "beleg", "betrag", "zahlung", "€", "steuerberat", "faktura", "invoice")) {
+    labels.add("buchhaltung");
+    firmenrelevant = true;
+  }
+  if (has("angebot", "offerte", "kostenvoranschlag", "interesse", "anfrage")) {
+    labels.add("angebot");
+    labels.add("aufgabe");
+    firmenrelevant = true;
+  }
+  if (has("bug", "fehler", "stürzt", "absturz", "funktioniert nicht", "support", "problem")) {
+    labels.add("support");
+    labels.add("aufgabe");
+    priority = "hi";
+    firmenrelevant = true;
+  }
+  if (has("termin", "vorbeikommen", "meeting", "wann passt", "kalender")) labels.add("termin");
+  if (has("newsletter", "abmelden", "unsubscribe", "weekly")) {
+    labels.add("newsletter");
+    firmenrelevant = false;
+    priority = "lo";
+  }
+  if (has("dringend", "sofort", "asap", "bis freitag", "bis morgen", "stürzt")) priority = "hi";
+
+  // Privat erkannt (persönliche Absender, keine Firmen-Signale)
+  if (!firmenrelevant && labels.size === 0) {
+    labels.add("privat");
+    priority = "lo";
+  }
+
+  const suggestedTodos: string[] = [];
+  if (labels.has("angebot")) suggestedTodos.push("Angebot vorbereiten");
+  if (labels.has("support")) suggestedTodos.push("Problem prüfen & zurückmelden");
+  if (labels.has("buchhaltung")) suggestedTodos.push("Beleg für die Buchhaltung ablegen");
+
+  return { summary: fallbackSummary(m), labels: [...labels], firmenrelevant, priority, suggestedTodos };
+}

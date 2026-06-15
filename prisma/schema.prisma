@@ -1,0 +1,58 @@
+// ePower Cockpit – Datenmodell (Phase 1)
+// Läuft auf Supabase PostgreSQL im ISOLIERTEN Schema "cockpit"
+// (parallel zur bestehenden Demo-App im public-Schema – die wird NICHT angefasst).
+// Schema-Wahl steckt im Connection-String (?schema=cockpit), siehe .env / docs/10-supabase-datenbank.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Supabase Pooler (Transaction, Port 6543) – App-Laufzeit
+  directUrl = env("DIRECT_URL")   // Supabase Session (Port 5432) – Migrationen / db push
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  meta      String? // kurze Beschreibung, z. B. "Lagerverwaltungs-Software"
+  color     String? // Akzentfarbe für Avatar im Cockpit
+  createdAt DateTime @default(now())
+  emails    Email[]
+  todos     Todo[]
+}
+
+model Email {
+  id         String   @id @default(cuid())
+  account    String // "firma" | "privat" – Quell-Postfach
+  fromAddr   String
+  fromName   String
+  subject    String
+  body       String
+  receivedAt DateTime @default(now())
+
+  // ── von der KI (OpenAI) befüllt ──────────────────────────
+  summary        String? // Ein-Satz-Zusammenfassung
+  labelsJson     String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
+  firmenrelevant Boolean  @default(false) // KI-Entscheidung – auch für Privat-Mails!
+  priority       String   @default("mid") // "hi" | "mid" | "lo"
+  classifiedAt   DateTime?
+
+  // ── Workflow ─────────────────────────────────────────────
+  filed      Boolean   @default(false) // in Buchhaltung abgelegt
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  todos      Todo[]
+}
+
+model Todo {
+  id         String    @id @default(cuid())
+  text       String
+  done       Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  emailId    String?
+  email      Email?    @relation(fields: [emailId], references: [id])
+}
