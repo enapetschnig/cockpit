@@ -236,12 +236,12 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-/** Erstellt einen Antwort-Entwurf im selben Thread (für die Telegram-Antwort-Funktion). */
-export async function createReplyDraft(
+/** Schreibt eine Antwort und SENDET sie direkt im selben Thread (ohne Entwurf). */
+export async function sendReply(
   account: Account,
   gmailId: string,
   bodyText: string
-): Promise<{ draftId: string; to: string; subject: string }> {
+): Promise<{ to: string; subject: string }> {
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
   const client = await oauthClient();
@@ -263,11 +263,11 @@ export async function createReplyDraft(
 
   const raw = buildRawEmail({ from: acc.email || "me", to, subject, inReplyTo: messageId, references, body: bodyText });
 
-  const draft = await gmail.users.drafts.create({
+  await gmail.users.messages.send({
     userId: "me",
-    requestBody: { message: { raw, threadId: orig.data.threadId ?? undefined } },
+    requestBody: { raw, threadId: orig.data.threadId ?? undefined },
   });
-  return { draftId: draft.data.id ?? "", to, subject };
+  return { to, subject };
 }
 
 function buildRawEmail(o: { from: string; to: string; subject: string; inReplyTo?: string; references?: string; body: string }): string {

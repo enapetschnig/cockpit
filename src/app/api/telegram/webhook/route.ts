@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { sendTelegram, tgDownloadFile } from "@/lib/telegram";
 import { transcribeVoice, draftEmailReply } from "@/lib/openai";
-import { createReplyDraft, type Account } from "@/lib/gmail";
+import { sendReply, type Account } from "@/lib/gmail";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -49,7 +49,7 @@ async function handleMessage(msg: TgMessage) {
   if (text.startsWith("/start") || text.startsWith("/help")) {
     await sendTelegram(
       "👋 <b>ePower Cockpit Bot</b>\nAntworte auf eine Mail-Benachrichtigung – per Text oder 🎤 Sprachnachricht – " +
-        "und ich erstelle dir einen KI-Antwort-Entwurf direkt in Gmail.\n\n/offen – offene firmenrelevante Mails"
+        "und ich schicke direkt eine KI-Antwort per Gmail.\n\n/offen – offene firmenrelevante Mails"
     );
     return;
   }
@@ -105,12 +105,12 @@ async function handleMessage(msg: TgMessage) {
   });
 
   if (!target.gmailId) {
-    await sendTelegram("✍️ <b>Entwurf:</b>\n" + esc(draftText) + "\n\n(Diese Mail stammt nicht aus Gmail – kein Gmail-Entwurf möglich.)");
+    await sendTelegram("✍️ <b>Antwort:</b>\n" + esc(draftText) + "\n\n(Diese Mail stammt nicht aus Gmail – Senden nicht möglich.)");
     return;
   }
 
-  const res = await createReplyDraft(target.account as Account, target.gmailId, draftText);
+  const res = await sendReply(target.account as Account, target.gmailId, draftText);
   await sendTelegram(
-    `✍️ <b>Antwort-Entwurf an ${esc(res.to)}</b>\n<i>${esc(res.subject)}</i>\n\n${esc(draftText)}\n\n✅ Als Gmail-Entwurf gespeichert.`
+    `✅ <b>Antwort gesendet an ${esc(res.to)}</b>\n<i>${esc(res.subject)}</i>\n\n${esc(draftText)}`
   );
 }
