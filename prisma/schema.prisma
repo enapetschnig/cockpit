@@ -93,3 +93,12 @@ model BotMessage {
   content   String
   createdAt DateTime @default(now())
 }
+
+// Langzeit-Wissen des Assistenten: gemerkte Fakten über Nutzer, Kunden, laufende Themen.
+model Memory {
+  id        String   @id @default(cuid())
+  topic     String? // optionale Kategorie (z. B. Kundenname, "Vorliebe", "Deadline")
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+}

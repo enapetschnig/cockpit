@@ -10,7 +10,7 @@ import { draftEmailReply } from "./openai";
 
 export interface AssistantResult {
   reply: string;
-  draftedFor?: { emailId: string; text: string; fromName: string };
+  draftedFor?: { emailId: string; text: string; fromName: string; toAddr: string; fromEmail: string; account: string; subject: string };
 }
 
 const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -77,6 +77,23 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "remember_fact",
+      description:
+        "Merkt sich dauerhaft eine wichtige Information (Vorliebe des Nutzers, Deadline, Kunden-Info, laufendes Thema), damit du es beim nächsten Mal weißt. Nutze das proaktiv.",
+      parameters: { type: "object", properties: { content: { type: "string" }, topic: { type: "string", description: "optionale Kategorie, z. B. Kundenname oder 'Vorliebe'" } }, required: ["content"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recall_facts",
+      description: "Durchsucht das Langzeit-Gedächtnis nach gemerkten Fakten.",
+      parameters: { type: "object", properties: { query: { type: "string" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "draft_reply",
       description: "Bereitet eine Antwort auf eine E-Mail vor (der Nutzer bestätigt das Senden selbst per Knopf).",
       parameters: { type: "object", properties: { email_id: { type: "string" }, instruction: { type: "string" } }, required: ["email_id", "instruction"] },
@@ -96,6 +113,8 @@ interface Args {
   customer_name?: string;
   text?: string;
   instruction?: string;
+  content?: string;
+  topic?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -206,6 +225,18 @@ async function runTool(name: string, a: Args): Promise<unknown> {
       await prisma.todo.create({ data: { text: a.text, customerId } });
       return { ok: true, todo: a.text, customer: a.customer_name ?? null };
     }
+    case "remember_fact": {
+      if (!a.content) return { error: "content nötig" };
+      await prisma.memory.create({ data: { content: a.content, topic: a.topic ?? null } });
+      return { ok: true, gemerkt: a.content };
+    }
+    case "recall_facts": {
+      const where: Prisma.MemoryWhereInput = a.query
+        ? { OR: [{ content: { contains: a.query, mode: "insensitive" } }, { topic: { contains: a.query, mode: "insensitive" } }] }
+        : {};
+      const ms = await prisma.memory.findMany({ where, orderBy: { updatedAt: "desc" }, take: 30 });
+      return { facts: ms.map((m) => ({ topic: m.topic, content: m.content })) };
+    }
     default:
       return { error: "unbekanntes Tool" };
   }
@@ -215,31 +246,41 @@ async function doDraft(emailId: string, instruction: string): Promise<{ result: 
   const email = await prisma.email.findUnique({ where: { id: emailId } });
   if (!email) return { result: { error: "E-Mail nicht gefunden" } };
   const text = await draftEmailReply({ fromName: email.fromName, fromAddr: email.fromAddr, subject: email.subject, body: email.body, instruction });
-  return { result: { ok: true }, drafted: { emailId, text, fromName: email.fromName } };
+  const acc = await prisma.gmailAccount.findUnique({ where: { account: email.account } });
+  const subject = /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`;
+  return {
+    result: { ok: true, an: email.fromAddr, von: acc?.email ?? email.account },
+    drafted: { emailId, text, fromName: email.fromName, toAddr: email.fromAddr, fromEmail: acc?.email ?? email.account, account: email.account, subject },
+  };
 }
 
 export async function runAssistant(userText: string, context?: { replyEmailId?: string }): Promise<AssistantResult> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return { reply: "OpenAI-Key fehlt – ich kann gerade nicht antworten." };
-  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  const model = (await getConfig("ASSISTANT_MODEL")) || (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
   const client = new OpenAI({ apiKey });
 
   let drafted: AssistantResult["draftedFor"];
   const today = new Date().toISOString().slice(0, 10);
 
-  const history = (await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, take: 12 })).reverse();
+  const memories = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 40 });
+  const memText = memories.length ? memories.map((m) => `- ${m.topic ? "[" + m.topic + "] " : ""}${m.content}`).join("\n") : "(noch nichts gemerkt)";
+  const history = (await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, take: 16 })).reverse();
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     {
       role: "system",
       content:
-        "Du bist der persönliche, proaktive Assistent für das ePower Cockpit (E-Mail-Cockpit der ePower GmbH, Software für Handwerker). " +
-        "Du beantwortest Fragen zum Posteingang UND handelst auf Wunsch: Mails einem Kunden zuordnen (assign_email_to_customer), in der Buchhaltung ablegen (file_to_accounting), " +
+        "Du bist der persönliche, proaktive, mitdenkende Assistent für das ePower Cockpit (E-Mail-Cockpit der ePower GmbH, Software für Handwerker). " +
+        "Schreib wie ein echter, kompetenter persönlicher Assistent – natürlich, freundlich, direkt und auf den Punkt, nicht roboterhaft. " +
+        "Wenn du eine Antwort auf eine Mail vorbereitest, ist klar, von welchem Postfach an welchen Empfänger sie geht (wird angezeigt). " +
+        "Du beantwortest Fragen zum Posteingang UND handelst: Mails einem Kunden zuordnen (assign_email_to_customer), in der Buchhaltung ablegen (file_to_accounting), " +
         "Aufgaben anlegen (create_todo), Antworten formulieren (draft_reply – der Nutzer bestätigt das Senden selbst). " +
-        "Finde die gemeinte Mail/den Kunden selbst über search_emails/get_email/list_customers – frag nur nach, wenn es wirklich mehrdeutig ist. " +
-        "Nach einer Aktion bestätige knapp, was du getan hast. Nutze IMMER echte Daten, erfinde nichts. " +
+        "DENK MIT: Beziehe dich aktiv auf den bisherigen Gesprächsverlauf und besonders auf die letzte Nachricht – Nachfragen wie 'und ordne die zu' meinen das zuletzt Besprochene. " +
+        "Merke dir proaktiv Wichtiges mit remember_fact (Deadlines, Vorlieben des Nutzers, laufende Themen, Kunden-Infos); mit recall_facts kannst du nachsehen. " +
+        "Finde die gemeinte Mail/den Kunden selbst über die Tools – frag nur bei echter Mehrdeutigkeit nach. Nach einer Aktion bestätige knapp. Nutze IMMER echte Daten, erfinde nichts. " +
         "Antworte knapp auf Deutsch für Telegram: KEIN Markdown (kein Sternchen-Fett, keine Rauten, keine Tabellen), nur einfacher Text, Emojis und Bullet-Punkte. " +
-        `Heute ist ${today}.`,
+        `Heute ist ${today}.\n\nDein bisheriges Wissen (gemerkte Fakten):\n${memText}`,
     },
     ...(context?.replyEmailId
       ? [{ role: "system" as const, content: `Kontext: Der Nutzer antwortet auf die E-Mail mit id=${context.replyEmailId}. Wenn er eine Antwort formulieren möchte, nutze draft_reply mit dieser id.` }]

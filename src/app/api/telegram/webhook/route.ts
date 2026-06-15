@@ -113,13 +113,19 @@ async function handleMessage(msg: TgMessage) {
   const result = await runAssistant(instruction, { replyEmailId });
 
   if (result.draftedFor) {
-    await prisma.email.update({ where: { id: result.draftedFor.emailId }, data: { pendingReply: result.draftedFor.text } });
+    const d = result.draftedFor;
+    await prisma.email.update({ where: { id: d.emailId }, data: { pendingReply: d.text } });
+    const accLabel = d.account === "firma" ? "Firma" : d.account === "privat" ? "Privat" : d.account;
     await sendTelegram(
-      `✍️ <b>Antwort an ${esc(result.draftedFor.fromName)}</b>\n\n${esc(result.draftedFor.text)}\n\n<i>Bitte kontrollieren:</i>`,
+      `✍️ <b>Antwort vorbereitet</b>\n` +
+        `📤 Von: ${esc(d.fromEmail)} (${accLabel})\n` +
+        `📥 An: ${esc(d.fromName)} &lt;${esc(d.toAddr)}&gt;\n` +
+        `📝 ${esc(d.subject)}\n\n` +
+        `${esc(d.text)}\n\n<i>Bitte kontrollieren:</i>`,
       {
         buttons: [[
-          { text: "✅ Senden", data: `send:${result.draftedFor.emailId}` },
-          { text: "🗑 Verwerfen", data: `del:${result.draftedFor.emailId}` },
+          { text: "✅ Senden", data: `send:${d.emailId}` },
+          { text: "🗑 Verwerfen", data: `del:${d.emailId}` },
         ]],
       }
     );
