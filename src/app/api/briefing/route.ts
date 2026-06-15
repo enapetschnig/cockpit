@@ -46,8 +46,10 @@ async function runBriefing(force: boolean) {
   const last = await getConfig("LAST_BRIEFING_DATE");
   if (!force && last === date) return { skipped: "heute bereits gesendet" };
 
-  // Wichtige Mails seit gestern (ca. 32h zurück deckt den Vortag + Nacht ab)
-  const since = new Date(now.getTime() - 32 * 3600 * 1000);
+  // Nur NEUE wichtige Mails seit dem letzten Briefing (keine Wiederholungen).
+  // Fallback beim allerersten Mal: letzte 32h.
+  const lastAt = await getConfig("LAST_BRIEFING_AT");
+  const since = lastAt ? new Date(lastAt) : new Date(now.getTime() - 32 * 3600 * 1000);
   const mails = await prisma.email.findMany({
     where: { outgoing: false, receivedAt: { gte: since }, OR: [{ firmenrelevant: true }, { priority: "hi" }] },
     orderBy: { receivedAt: "desc" },
@@ -96,10 +98,9 @@ async function runBriefing(force: boolean) {
   }
 
   const res = await sendTelegram(text);
-  await prisma.setting.upsert({
-    where: { key: "LAST_BRIEFING_DATE" },
-    create: { key: "LAST_BRIEFING_DATE", value: date },
-    update: { value: date },
-  });
-  return { sent: res.ok, skipped: undefined, count: mails.length, date };
+  // Zeitstempel + Datum merken, damit das nächste Briefing nur Neueres zeigt.
+  const nowIso = now.toISOString();
+  await prisma.setting.upsert({ where: { key: "LAST_BRIEFING_DATE" }, create: { key: "LAST_BRIEFING_DATE", value: date }, update: { value: date } });
+  await prisma.setting.upsert({ where: { key: "LAST_BRIEFING_AT" }, create: { key: "LAST_BRIEFING_AT", value: nowIso }, update: { value: nowIso } });
+  return { sent: res.ok, count: mails.length, since: since.toISOString(), date };
 }
