@@ -24,6 +24,8 @@ zwei Postfächern (Firma + privat), klassifiziert sie mit der KI und legt sie in
 
 ## Anleitung — Google Cloud (einmalig, ~10 Min)
 
+> 📖 **Ganz ausführlich, Klick für Klick:** [Anleitung: Gmail mit dem Cockpit verbinden](./anleitung-gmail-einrichten.md).
+
 1. **Projekt anlegen:** [console.cloud.google.com](https://console.cloud.google.com) →
    Projekt-Auswahl → *Neues Projekt* → Name z. B. „ePower Cockpit".
 2. **Gmail API aktivieren:** *APIs & Services → Library* → „Gmail API" suchen → **Enable**.

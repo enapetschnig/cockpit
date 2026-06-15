@@ -25,6 +25,8 @@ aufgeteilt, damit nichts überläuft. Start/Setup steht im [Haupt-README](../REA
 | 10 | [Supabase-Datenbank](./10-supabase-datenbank.md) | Isoliertes Schema `cockpit` — **Setup-Anleitung** |
 | 11 | [Roadmap & Phasen](./11-roadmap.md) | Was als Nächstes kommt |
 
+**Schritt-für-Schritt-Anleitung:** [Gmail mit dem Cockpit verbinden](./anleitung-gmail-einrichten.md) (Google-OAuth einrichten).
+
 ---
 
 ### Konventionen
