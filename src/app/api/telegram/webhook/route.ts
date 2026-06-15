@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { sendTelegram, tgDownloadFile } from "@/lib/telegram";
+import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage } from "@/lib/telegram";
 import { transcribeVoice, draftEmailReply } from "@/lib/openai";
 import { sendReply, type Account } from "@/lib/gmail";
 
@@ -15,6 +15,12 @@ interface TgMessage {
   reply_to_message?: { message_id: number };
 }
 
+interface TgCallback {
+  id: string;
+  data?: string;
+  message?: { chat: { id: number }; message_id: number };
+}
+
 function esc(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -26,12 +32,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const update = (await req.json().catch(() => ({}))) as { message?: TgMessage };
+  const update = (await req.json().catch(() => ({}))) as { message?: TgMessage; callback_query?: TgCallback };
+  const chatId = await getConfig("TELEGRAM_CHAT_ID");
+
+  // Button-Klick (Senden / Verwerfen)
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    if (chatId && String(cb.message?.chat?.id) !== String(chatId)) {
+      await tgAnswerCallback(cb.id);
+      return NextResponse.json({ ok: true });
+    }
+    try {
+      await handleCallback(cb);
+    } catch (e) {
+      console.error("[telegram/webhook] callback", e);
+      await tgAnswerCallback(cb.id, "Fehler");
+      await sendTelegram("⚠️ Fehler beim Senden: " + esc((e as Error).message));
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   const msg = update.message;
   if (!msg) return NextResponse.json({ ok: true });
-
   // Nur der eigene Chat darf den Bot bedienen
-  const chatId = await getConfig("TELEGRAM_CHAT_ID");
   if (chatId && String(msg.chat?.id) !== String(chatId)) return NextResponse.json({ ok: true });
 
   try {
@@ -49,7 +72,7 @@ async function handleMessage(msg: TgMessage) {
   if (text.startsWith("/start") || text.startsWith("/help")) {
     await sendTelegram(
       "👋 <b>ePower Cockpit Bot</b>\nAntworte auf eine Mail-Benachrichtigung – per Text oder 🎤 Sprachnachricht – " +
-        "und ich schicke direkt eine KI-Antwort per Gmail.\n\n/offen – offene firmenrelevante Mails"
+        "ich formuliere eine Antwort, die du dann per Klick (✅ Senden) sendest.\n\n/offen – offene firmenrelevante Mails"
     );
     return;
   }
@@ -109,8 +132,45 @@ async function handleMessage(msg: TgMessage) {
     return;
   }
 
-  const res = await sendReply(target.account as Account, target.gmailId, draftText);
-  await sendTelegram(
-    `✅ <b>Antwort gesendet an ${esc(res.to)}</b>\n<i>${esc(res.subject)}</i>\n\n${esc(draftText)}`
-  );
+  // Antwort zwischenspeichern und zur Kontrolle mit Senden/Verwerfen anzeigen
+  await prisma.email.update({ where: { id: target.id }, data: { pendingReply: draftText } });
+  await sendTelegram(`✍️ <b>Antwort an ${esc(target.fromName)}</b>\n\n${esc(draftText)}\n\n<i>Bitte kontrollieren:</i>`, {
+    buttons: [[
+      { text: "✅ Senden", data: `send:${target.id}` },
+      { text: "🗑 Verwerfen", data: `del:${target.id}` },
+    ]],
+  });
+}
+
+async function handleCallback(cb: TgCallback) {
+  const [action, emailId] = (cb.data || "").split(":");
+  const email = emailId ? await prisma.email.findUnique({ where: { id: emailId } }) : null;
+  if (!email) {
+    await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
+    return;
+  }
+
+  if (action === "del") {
+    await prisma.email.update({ where: { id: email.id }, data: { pendingReply: null } });
+    await tgAnswerCallback(cb.id, "Verworfen");
+    if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, "🗑 Antwort verworfen.");
+    return;
+  }
+
+  if (action === "send") {
+    if (!email.pendingReply || !email.gmailId) {
+      await tgAnswerCallback(cb.id, "Nichts zu senden");
+      return;
+    }
+    const text = email.pendingReply;
+    const res = await sendReply(email.account as Account, email.gmailId, text);
+    await prisma.email.update({ where: { id: email.id }, data: { pendingReply: null } });
+    await tgAnswerCallback(cb.id, "Gesendet ✅");
+    if (cb.message) {
+      await tgEditMessage(cb.message.chat.id, cb.message.message_id, `✅ <b>Gesendet an ${esc(res.to)}</b>\n<i>${esc(res.subject)}</i>\n\n${esc(text)}`);
+    }
+    return;
+  }
+
+  await tgAnswerCallback(cb.id);
 }

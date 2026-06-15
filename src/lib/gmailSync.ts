@@ -78,7 +78,7 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
             const sent = await sendTelegram(
               `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
                 `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}\n\n` +
-                `<i>↩️ Antworte (Text/Sprache) – ich schicke direkt eine KI-Antwort.</i>`
+                `<i>↩️ Antworte (Text/Sprache) – ich formuliere eine Antwort zum Kontrollieren.</i>`
             );
             await prisma.email.update({
               where: { id: created.id },

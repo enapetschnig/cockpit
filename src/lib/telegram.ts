@@ -8,7 +8,7 @@ const API = (token: string) => `https://api.telegram.org/bot${token}`;
 
 export async function sendTelegram(
   text: string,
-  opts?: { replyTo?: number }
+  opts?: { replyTo?: number; buttons?: { text: string; data: string }[][] }
 ): Promise<{ ok: boolean; skipped?: boolean; messageId?: number }> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
   const chatId = await getConfig("TELEGRAM_CHAT_ID");
@@ -26,6 +26,9 @@ export async function sendTelegram(
         parse_mode: "HTML",
         disable_web_page_preview: true,
         ...(opts?.replyTo ? { reply_to_message_id: opts.replyTo } : {}),
+        ...(opts?.buttons
+          ? { reply_markup: { inline_keyboard: opts.buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) } }
+          : {}),
       }),
     });
     const json = (await res.json()) as { ok: boolean; result?: { message_id: number } };
@@ -57,7 +60,29 @@ export async function tgSetWebhook(url: string, secret: string): Promise<{ ok: b
   const res = await fetch(`${API(token)}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, secret_token: secret, allowed_updates: ["message"] }),
+    body: JSON.stringify({ url, secret_token: secret, allowed_updates: ["message", "callback_query"] }),
   });
   return (await res.json()) as { ok: boolean; description?: string };
+}
+
+/** Beantwortet einen Button-Klick (entfernt die Lade-Animation, zeigt optional einen Hinweis). */
+export async function tgAnswerCallback(callbackId: string, text?: string): Promise<void> {
+  const token = await getConfig("TELEGRAM_BOT_TOKEN");
+  if (!token) return;
+  await fetch(`${API(token)}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackId, text: text ?? "" }),
+  });
+}
+
+/** Ersetzt den Text einer bestehenden Nachricht (z. B. nach „Senden" – Buttons verschwinden). */
+export async function tgEditMessage(chatId: number | string, messageId: number, text: string): Promise<void> {
+  const token = await getConfig("TELEGRAM_BOT_TOKEN");
+  if (!token) return;
+  await fetch(`${API(token)}/editMessageText`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+  });
 }

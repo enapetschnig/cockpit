@@ -233,8 +233,8 @@ export default function ConnectPage() {
       <div style={{ ...card }}>
         <div style={{ fontWeight: 700, marginBottom: 2 }}>Telegram-Bot</div>
         <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 10 }}>
-          Antworte im Telegram-Chat auf eine Mail-Benachrichtigung (Text oder 🎤 Sprache) → die KI schickt
-          direkt eine Antwort per Gmail. Funktioniert nur online (Vercel) – localhost erreicht Telegram nicht.
+          Antworte im Telegram-Chat auf eine Mail-Benachrichtigung (Text oder 🎤 Sprache) → die KI formuliert
+          eine Antwort, du kontrollierst sie und sendest per Klick. Funktioniert nur online (Vercel) – localhost erreicht Telegram nicht.
         </div>
         <button onClick={activateBot} disabled={tgBusy} style={{ ...btn, background: "#1c8a90", color: "#fff", width: "100%", opacity: tgBusy ? 0.6 : 1 }}>
           {tgBusy ? "Aktiviere …" : "Telegram-Bot aktivieren"}
