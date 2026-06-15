@@ -49,7 +49,7 @@ function oauthClient() {
 export function getAuthUrl(account: Account): string {
   return oauthClient().generateAuthUrl({
     access_type: "offline", // -> Refresh-Token
-    prompt: "consent", // erzwingt Refresh-Token auch bei erneuter Verbindung
+    prompt: "select_account consent", // Konto-Auswahl erzwingen + Refresh-Token sichern
     scope: SCOPES,
     state: account,
     include_granted_scopes: true,
