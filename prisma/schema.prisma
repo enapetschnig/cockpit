@@ -85,3 +85,11 @@ model Setting {
   value     String
   updatedAt DateTime @default(now()) @updatedAt
 }
+
+// Gesprächsverlauf des Telegram-Assistenten (für Nachfragen / Kontext).
+model BotMessage {
+  id        String   @id @default(cuid())
+  role      String // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}

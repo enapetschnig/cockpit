@@ -1,6 +1,6 @@
 /**
- * KI-Assistent für den Telegram-Bot: beantwortet Fragen zum Posteingang
- * (über Tools auf die DB) und kann Antwort-Entwürfe vorbereiten.
+ * KI-Assistent für den Telegram-Bot: beantwortet Fragen zum Posteingang UND handelt
+ * (zuordnen, ablegen, Aufgaben anlegen, antworten). Mit Gesprächsgedächtnis (BotMessage).
  */
 import OpenAI from "openai";
 import { Prisma } from "@prisma/client";
@@ -19,13 +19,14 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "search_emails",
       description:
-        "Sucht/zählt eingegangene E-Mails. Beispiele: heutige Mails (since_days:0), offene Rechnungen (label:'buchhaltung'), Mails von jemandem (query:'Name').",
+        "Sucht/zählt eingegangene E-Mails. Bsp: heutige Mails (since_days:0), offene Rechnungen (label:'buchhaltung'), Mails von jemandem (query:'Name'). Liefert IDs für weitere Aktionen.",
       parameters: {
         type: "object",
         properties: {
           since_days: { type: "number", description: "nur Mails der letzten N Tage; 0 = heute" },
           account: { type: "string", enum: ["firma", "privat"] },
           only_firmenrelevant: { type: "boolean" },
+          unassigned: { type: "boolean", description: "nur noch keinem Kunden zugeordnete" },
           label: { type: "string", description: "buchhaltung | angebot | aufgabe | support | termin | newsletter | privat" },
           query: { type: "string", description: "Freitext in Absender/Betreff/Zusammenfassung" },
           limit: { type: "number" },
@@ -36,95 +37,184 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "list_customers",
-      description: "Listet Kunden mit Anzahl offener Aufgaben und zugeordneter Mails.",
-      parameters: { type: "object", properties: {} },
+      name: "get_email",
+      description: "Liefert den vollständigen Text einer E-Mail (für Zusammenfassungen/Details).",
+      parameters: { type: "object", properties: { email_id: { type: "string" } }, required: ["email_id"] },
+    },
+  },
+  {
+    type: "function",
+    function: { name: "list_customers", description: "Listet Kunden mit Anzahl offener Aufgaben und Mails.", parameters: { type: "object", properties: {} } },
+  },
+  {
+    type: "function",
+    function: { name: "list_open_todos", description: "Listet alle offenen Aufgaben (optional je Kunde).", parameters: { type: "object", properties: { customer_name: { type: "string" } } } },
+  },
+  {
+    type: "function",
+    function: {
+      name: "assign_email_to_customer",
+      description: "Ordnet eine E-Mail einem Kunden zu (legt den Kunden bei Bedarf neu an).",
+      parameters: { type: "object", properties: { email_id: { type: "string" }, customer_name: { type: "string" } }, required: ["email_id", "customer_name"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_to_accounting",
+      description: "Legt eine E-Mail in der Buchhaltung ab (markiert sie als abgelegt).",
+      parameters: { type: "object", properties: { email_id: { type: "string" } }, required: ["email_id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_todo",
+      description: "Legt eine Aufgabe an, optional bei einem Kunden.",
+      parameters: { type: "object", properties: { text: { type: "string" }, customer_name: { type: "string" } }, required: ["text"] },
     },
   },
   {
     type: "function",
     function: {
       name: "draft_reply",
-      description: "Erstellt einen Antwort-Entwurf auf eine bestimmte E-Mail (Nutzer bestätigt das Senden selbst).",
-      parameters: {
-        type: "object",
-        properties: {
-          email_id: { type: "string", description: "ID der E-Mail (aus search_emails)" },
-          instruction: { type: "string", description: "Inhalt/Tonfall der Antwort" },
-        },
-        required: ["email_id", "instruction"],
-      },
+      description: "Bereitet eine Antwort auf eine E-Mail vor (der Nutzer bestätigt das Senden selbst per Knopf).",
+      parameters: { type: "object", properties: { email_id: { type: "string" }, instruction: { type: "string" } }, required: ["email_id", "instruction"] },
     },
   },
 ];
 
-interface SearchArgs {
+interface Args {
   since_days?: number;
   account?: string;
   only_firmenrelevant?: boolean;
+  unassigned?: boolean;
   label?: string;
   query?: string;
   limit?: number;
+  email_id?: string;
+  customer_name?: string;
+  text?: string;
+  instruction?: string;
 }
 
-async function searchEmails(a: SearchArgs) {
-  const where: Prisma.EmailWhereInput = { outgoing: false };
-  if (a.account === "firma" || a.account === "privat") where.account = a.account;
-  if (a.only_firmenrelevant) where.firmenrelevant = true;
-  if (typeof a.since_days === "number") {
-    const d = new Date();
-    d.setDate(d.getDate() - Math.max(0, a.since_days));
-    d.setHours(0, 0, 0, 0);
-    where.receivedAt = { gte: d };
+function parseLabels(s: string): string[] {
+  try {
+    const a = JSON.parse(s);
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
   }
-  if (a.query) {
-    where.OR = [
-      { fromName: { contains: a.query, mode: "insensitive" } },
-      { fromAddr: { contains: a.query, mode: "insensitive" } },
-      { subject: { contains: a.query, mode: "insensitive" } },
-      { summary: { contains: a.query, mode: "insensitive" } },
-    ];
-  }
-  if (a.label) where.labelsJson = { contains: `"${a.label}"` };
-
-  const rows = await prisma.email.findMany({
-    where,
-    orderBy: { receivedAt: "desc" },
-    take: Math.min(a.limit ?? 15, 30),
-    include: { customer: true },
-  });
-  return {
-    count: rows.length,
-    emails: rows.map((e) => ({
-      id: e.id,
-      account: e.account,
-      from: e.fromName,
-      subject: e.subject,
-      summary: e.summary,
-      firmenrelevant: e.firmenrelevant,
-      date: e.receivedAt.toISOString().slice(0, 16).replace("T", " "),
-      customer: e.customer?.name ?? null,
-    })),
-  };
 }
 
-async function listCustomers() {
-  const cs = await prisma.customer.findMany({ include: { todos: true, emails: true }, orderBy: { name: "asc" } });
-  return {
-    customers: cs.map((c) => ({ name: c.name, offeneAufgaben: c.todos.filter((t) => !t.done).length, mails: c.emails.length })),
-  };
+async function findCustomer(name: string, createIfMissing = false) {
+  let c = await prisma.customer.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
+  if (!c && createIfMissing) c = await prisma.customer.create({ data: { name, color: "#2f6df0" } });
+  return c;
+}
+
+async function runTool(name: string, a: Args): Promise<unknown> {
+  switch (name) {
+    case "search_emails": {
+      const where: Prisma.EmailWhereInput = { outgoing: false };
+      if (a.account === "firma" || a.account === "privat") where.account = a.account;
+      if (a.only_firmenrelevant) where.firmenrelevant = true;
+      if (a.unassigned) where.customerId = null;
+      if (typeof a.since_days === "number") {
+        const d = new Date();
+        d.setDate(d.getDate() - Math.max(0, a.since_days));
+        d.setHours(0, 0, 0, 0);
+        where.receivedAt = { gte: d };
+      }
+      if (a.query)
+        where.OR = [
+          { fromName: { contains: a.query, mode: "insensitive" } },
+          { fromAddr: { contains: a.query, mode: "insensitive" } },
+          { subject: { contains: a.query, mode: "insensitive" } },
+          { summary: { contains: a.query, mode: "insensitive" } },
+        ];
+      if (a.label) where.labelsJson = { contains: `"${a.label}"` };
+      const rows = await prisma.email.findMany({ where, orderBy: { receivedAt: "desc" }, take: Math.min(a.limit ?? 15, 30), include: { customer: true } });
+      return {
+        count: rows.length,
+        emails: rows.map((e) => ({
+          id: e.id,
+          account: e.account,
+          from: e.fromName,
+          subject: e.subject,
+          summary: e.summary,
+          firmenrelevant: e.firmenrelevant,
+          labels: parseLabels(e.labelsJson),
+          date: e.receivedAt.toISOString().slice(0, 16).replace("T", " "),
+          customer: e.customer?.name ?? null,
+          filed: e.filed,
+        })),
+      };
+    }
+    case "get_email": {
+      const e = a.email_id ? await prisma.email.findUnique({ where: { id: a.email_id }, include: { customer: true } }) : null;
+      if (!e) return { error: "E-Mail nicht gefunden" };
+      return {
+        id: e.id,
+        account: e.account,
+        from: e.fromName,
+        fromAddr: e.fromAddr,
+        subject: e.subject,
+        body: e.body.slice(0, 4000),
+        summary: e.summary,
+        labels: parseLabels(e.labelsJson),
+        firmenrelevant: e.firmenrelevant,
+        date: e.receivedAt.toISOString().slice(0, 16).replace("T", " "),
+        customer: e.customer?.name ?? null,
+      };
+    }
+    case "list_customers": {
+      const cs = await prisma.customer.findMany({ include: { todos: true, emails: true }, orderBy: { name: "asc" } });
+      return { customers: cs.map((c) => ({ name: c.name, offeneAufgaben: c.todos.filter((t) => !t.done).length, mails: c.emails.length })) };
+    }
+    case "list_open_todos": {
+      const where: Prisma.TodoWhereInput = { done: false };
+      if (a.customer_name) {
+        const c = await findCustomer(a.customer_name);
+        if (!c) return { todos: [] };
+        where.customerId = c.id;
+      }
+      const todos = await prisma.todo.findMany({ where, include: { customer: true }, orderBy: { createdAt: "desc" }, take: 50 });
+      return { todos: todos.map((t) => ({ text: t.text, customer: t.customer?.name ?? null })) };
+    }
+    case "assign_email_to_customer": {
+      if (!a.email_id || !a.customer_name) return { error: "email_id und customer_name nötig" };
+      const e = await prisma.email.findUnique({ where: { id: a.email_id } });
+      if (!e) return { error: "E-Mail nicht gefunden" };
+      const c = await findCustomer(a.customer_name, true);
+      await prisma.email.update({ where: { id: a.email_id }, data: { customerId: c!.id } });
+      return { ok: true, customer: c!.name, subject: e.subject };
+    }
+    case "file_to_accounting": {
+      const e = a.email_id ? await prisma.email.findUnique({ where: { id: a.email_id } }) : null;
+      if (!e) return { error: "E-Mail nicht gefunden" };
+      await prisma.email.update({ where: { id: e.id }, data: { filed: true } });
+      return { ok: true, subject: e.subject };
+    }
+    case "create_todo": {
+      if (!a.text) return { error: "text nötig" };
+      let customerId: string | null = null;
+      if (a.customer_name) {
+        const c = await findCustomer(a.customer_name, true);
+        customerId = c!.id;
+      }
+      await prisma.todo.create({ data: { text: a.text, customerId } });
+      return { ok: true, todo: a.text, customer: a.customer_name ?? null };
+    }
+    default:
+      return { error: "unbekanntes Tool" };
+  }
 }
 
 async function doDraft(emailId: string, instruction: string): Promise<{ result: unknown; drafted?: AssistantResult["draftedFor"] }> {
   const email = await prisma.email.findUnique({ where: { id: emailId } });
   if (!email) return { result: { error: "E-Mail nicht gefunden" } };
-  const text = await draftEmailReply({
-    fromName: email.fromName,
-    fromAddr: email.fromAddr,
-    subject: email.subject,
-    body: email.body,
-    instruction,
-  });
+  const text = await draftEmailReply({ fromName: email.fromName, fromAddr: email.fromAddr, subject: email.subject, body: email.body, instruction });
   return { result: { ok: true }, drafted: { emailId, text, fromName: email.fromName } };
 }
 
@@ -137,50 +227,62 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   let drafted: AssistantResult["draftedFor"];
   const today = new Date().toISOString().slice(0, 10);
 
+  const history = (await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, take: 12 })).reverse();
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     {
       role: "system",
       content:
-        "Du bist der persönliche Assistent für das ePower Cockpit (E-Mail-Cockpit der ePower GmbH, Software für Handwerker). " +
-        "Beantworte Fragen zum Posteingang knapp und konkret auf Deutsch – für Telegram. " +
-        "Verwende KEIN Markdown (kein Sternchen-Fett, keine Raute-Überschriften, keine Tabellen) – nur einfachen Text, Emojis und Aufzählungen mit Bullet-Punkten. " +
-        "Nutze IMMER die Tools für echte Daten und erfinde nichts. Du kannst Antwort-Entwürfe erstellen (draft_reply); " +
-        `der Nutzer bestätigt das Senden selbst. Heute ist ${today}.`,
+        "Du bist der persönliche, proaktive Assistent für das ePower Cockpit (E-Mail-Cockpit der ePower GmbH, Software für Handwerker). " +
+        "Du beantwortest Fragen zum Posteingang UND handelst auf Wunsch: Mails einem Kunden zuordnen (assign_email_to_customer), in der Buchhaltung ablegen (file_to_accounting), " +
+        "Aufgaben anlegen (create_todo), Antworten formulieren (draft_reply – der Nutzer bestätigt das Senden selbst). " +
+        "Finde die gemeinte Mail/den Kunden selbst über search_emails/get_email/list_customers – frag nur nach, wenn es wirklich mehrdeutig ist. " +
+        "Nach einer Aktion bestätige knapp, was du getan hast. Nutze IMMER echte Daten, erfinde nichts. " +
+        "Antworte knapp auf Deutsch für Telegram: KEIN Markdown (kein Sternchen-Fett, keine Rauten, keine Tabellen), nur einfacher Text, Emojis und Bullet-Punkte. " +
+        `Heute ist ${today}.`,
     },
     ...(context?.replyEmailId
-      ? [
-          {
-            role: "system" as const,
-            content: `Kontext: Der Nutzer antwortet auf die E-Mail mit id=${context.replyEmailId}. Wenn er eine Antwort formulieren möchte, rufe draft_reply mit dieser id auf.`,
-          },
-        ]
+      ? [{ role: "system" as const, content: `Kontext: Der Nutzer antwortet auf die E-Mail mit id=${context.replyEmailId}. Wenn er eine Antwort formulieren möchte, nutze draft_reply mit dieser id.` }]
       : []),
+    ...history.map((h) => ({ role: h.role === "assistant" ? ("assistant" as const) : ("user" as const), content: h.content })),
     { role: "user", content: userText },
   ];
 
-  for (let i = 0; i < 4; i++) {
+  let finalReply = "";
+  for (let i = 0; i < 6; i++) {
     const resp = await client.chat.completions.create({ model, temperature: 0.2, messages, tools: TOOLS });
     const m = resp.choices[0]?.message;
     if (!m) break;
     messages.push(m);
-    if (!m.tool_calls?.length) return { reply: (m.content ?? "").trim() || "…", draftedFor: drafted };
-
+    if (!m.tool_calls?.length) {
+      finalReply = (m.content ?? "").trim();
+      break;
+    }
     for (const tc of m.tool_calls) {
       let result: unknown;
       try {
-        const args = JSON.parse(tc.function.arguments || "{}");
-        if (tc.function.name === "search_emails") result = await searchEmails(args as SearchArgs);
-        else if (tc.function.name === "list_customers") result = await listCustomers();
-        else if (tc.function.name === "draft_reply") {
+        const args = JSON.parse(tc.function.arguments || "{}") as Args;
+        if (tc.function.name === "draft_reply") {
           const r = await doDraft(String(args.email_id), String(args.instruction || ""));
           drafted = r.drafted ?? drafted;
           result = r.result;
-        } else result = { error: "unbekanntes Tool" };
+        } else {
+          result = await runTool(tc.function.name, args);
+        }
       } catch (e) {
         result = { error: (e as Error).message };
       }
       messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
   }
-  return { reply: drafted ? "" : "Das habe ich nicht ganz verstanden – formulier es bitte anders.", draftedFor: drafted };
+
+  if (!finalReply && !drafted) finalReply = "Das habe ich nicht ganz verstanden – formulier es bitte anders.";
+
+  // Gedächtnis aktualisieren + auf die letzten 40 Einträge begrenzen
+  await prisma.botMessage.create({ data: { role: "user", content: userText.slice(0, 2000) } });
+  await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : finalReply).slice(0, 2000) } });
+  const old = await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, skip: 40, select: { id: true } });
+  if (old.length) await prisma.botMessage.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
+
+  return { reply: finalReply, draftedFor: drafted };
 }
