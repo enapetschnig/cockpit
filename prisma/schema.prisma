@@ -73,3 +73,11 @@ model GmailAccount {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 }
+
+// App-Einstellungen / Keys (OpenAI, Google, Telegram) – in der DB statt als Env-Var,
+// damit auf Vercel nur DATABASE_URL/DIRECT_URL nötig sind. Env-Var bleibt als Fallback.
+model Setting {
+  key       String   @id // z. B. "OPENAI_API_KEY"
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
+}

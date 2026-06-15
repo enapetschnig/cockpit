@@ -6,9 +6,11 @@
  *  1) Bot bei @BotFather erstellen -> Token in .env (TELEGRAM_BOT_TOKEN)
  *  2) Bot anschreiben, dann Chat-ID via @userinfobot holen -> TELEGRAM_CHAT_ID
  */
+import { getConfig } from "./config";
+
 export async function sendTelegram(text: string): Promise<{ ok: boolean; skipped?: boolean }> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const token = await getConfig("TELEGRAM_BOT_TOKEN");
+  const chatId = await getConfig("TELEGRAM_CHAT_ID");
 
   if (!token || !chatId) {
     console.warn("[telegram] nicht konfiguriert – Nachricht nur im Log:\n" + text);

@@ -6,7 +6,7 @@
  * legt sie in der DB ab und pusht NEUE firmenrelevante Mails per Telegram.
  */
 import { prisma } from "./db";
-import { fetchNewRawMails, listAccounts, markSynced, isConfigured, type Account } from "./gmail";
+import { fetchNewRawMails, listAccounts, markSynced, isGmailConfigured, type Account } from "./gmail";
 import { classifyEmail } from "./openai";
 import { sendTelegram } from "./telegram";
 
@@ -26,7 +26,7 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
   const notify = opts?.notify ?? true;
   const res: SyncResult = { imported: 0, perAccount: {}, errors: [] };
 
-  if (!isConfigured()) {
+  if (!(await isGmailConfigured())) {
     res.errors.push("Gmail nicht konfiguriert");
     return res;
   }

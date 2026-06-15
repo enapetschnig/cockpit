@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUrl, isConfigured, type Account } from "@/lib/gmail";
+import { getAuthUrl, isGmailConfigured, type Account } from "@/lib/gmail";
 
 export const dynamic = "force-dynamic";
 
@@ -9,11 +9,13 @@ export async function GET(req: NextRequest) {
   if (account !== "firma" && account !== "privat") {
     return NextResponse.json({ error: "account muss 'firma' oder 'privat' sein" }, { status: 400 });
   }
-  if (!isConfigured()) {
+  if (!(await isGmailConfigured())) {
     return NextResponse.json(
-      { error: "Gmail nicht konfiguriert – GOOGLE_CLIENT_ID/SECRET fehlen (.env). Siehe docs/09-gmail-anbindung.md" },
+      { error: "Gmail nicht konfiguriert – GOOGLE_CLIENT_ID/SECRET fehlen. Eintragen unter /connect → Einstellungen." },
       { status: 503 }
     );
   }
-  return NextResponse.redirect(getAuthUrl(account as Account));
+  // Redirect-URI aus der aktuellen Adresse ableiten (localhost ODER Vercel-URL) – kein Env nötig.
+  const redirectUri = new URL("/api/gmail/callback", req.nextUrl.origin).toString();
+  return NextResponse.redirect(await getAuthUrl(account as Account, redirectUri));
 }

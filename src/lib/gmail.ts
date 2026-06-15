@@ -11,6 +11,7 @@
  */
 import { google } from "googleapis";
 import { prisma } from "./db";
+import { getConfig } from "./config";
 
 export type Account = "firma" | "privat";
 
@@ -28,26 +29,23 @@ export interface RawMail {
 // Lesen reicht für Phase 1; gmail.send kommt mit "KI-Antwort entwerfen" (spätere Phase).
 const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 
-export function isConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+export async function isGmailConfigured(): Promise<boolean> {
+  const [id, secret] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET")]);
+  return Boolean(id && secret);
 }
 
-function oauthClient() {
-  if (!isConfigured()) {
-    throw new Error(
-      "Gmail nicht konfiguriert: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET fehlen (.env). Siehe docs/09-gmail-anbindung.md"
-    );
+async function oauthClient(redirectUri?: string) {
+  const [clientId, clientSecret] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET")]);
+  if (!clientId || !clientSecret) {
+    throw new Error("Gmail nicht konfiguriert: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET fehlen. Eintragen unter /connect → Einstellungen.");
   }
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/gmail/callback"
-  );
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri || "http://localhost:3000/api/gmail/callback");
 }
 
 /** Consent-URL für den OAuth-Flow. `state` trägt das Konto durch den Redirect. */
-export function getAuthUrl(account: Account): string {
-  return oauthClient().generateAuthUrl({
+export async function getAuthUrl(account: Account, redirectUri: string): Promise<string> {
+  const client = await oauthClient(redirectUri);
+  return client.generateAuthUrl({
     access_type: "offline", // -> Refresh-Token
     prompt: "select_account consent", // Konto-Auswahl erzwingen + Refresh-Token sichern
     scope: SCOPES,
@@ -57,8 +55,8 @@ export function getAuthUrl(account: Account): string {
 }
 
 /** Tauscht den Auth-Code gegen Tokens, liest die Gmail-Adresse und speichert das Konto. */
-export async function handleCallback(code: string, account: Account): Promise<{ account: Account; email: string | null }> {
-  const client = oauthClient();
+export async function handleCallback(code: string, account: Account, redirectUri: string): Promise<{ account: Account; email: string | null }> {
+  const client = await oauthClient(redirectUri);
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
 
@@ -104,7 +102,7 @@ export async function fetchNewRawMails(account: Account, opts?: { max?: number; 
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
 
-  const client = oauthClient();
+  const client = await oauthClient();
   client.setCredentials({ refresh_token: acc.refreshToken });
   const gmail = google.gmail({ version: "v1", auth: client });
 

@@ -16,6 +16,39 @@ export default function ConnectPage() {
   const [reclassMsg, setReclassMsg] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [detectMsg, setDetectMsg] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Record<string, { set: boolean; source: string | null; hint: string }>>({});
+  const [keyOrder, setKeyOrder] = useState<string[]>([]);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+
+  async function loadSettings() {
+    try {
+      const r = await fetch("/api/settings");
+      const d = await r.json();
+      setSettings(d.status || {});
+      setKeyOrder(d.keys || []);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function saveSettings() {
+    setSavingSettings(true);
+    setSettingsMsg(null);
+    try {
+      const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const d = await r.json();
+      setSettings(d.status || {});
+      setForm({});
+      setSettingsMsg(d.saved?.length ? `Gespeichert: ${d.saved.join(", ")}` : "Nichts geändert (leere Felder werden ignoriert).");
+      loadStatus();
+    } catch (e) {
+      setSettingsMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setSavingSettings(false);
+    }
+  }
 
   async function loadStatus() {
     try {
@@ -36,7 +69,17 @@ export default function ConnectPage() {
     }
     window.history.replaceState({}, "", "/connect");
     loadStatus();
+    loadSettings();
   }, []);
+
+  const KEY_LABEL: Record<string, string> = {
+    OPENAI_API_KEY: "OpenAI API-Key",
+    OPENAI_MODEL: "OpenAI Modell (z. B. gpt-4o-mini)",
+    GOOGLE_CLIENT_ID: "Google Client-ID",
+    GOOGLE_CLIENT_SECRET: "Google Client-Secret",
+    TELEGRAM_BOT_TOKEN: "Telegram Bot-Token",
+    TELEGRAM_CHAT_ID: "Telegram Chat-ID",
+  };
 
   async function sync() {
     setSyncing(true);
@@ -107,8 +150,9 @@ export default function ConnectPage() {
 
       {status && !status.configured && (
         <div style={{ ...card, background: "#fff7e6", borderColor: "#f0dca8" }}>
-          <b>Noch nicht konfiguriert.</b> Trage <code>GOOGLE_CLIENT_ID</code> und <code>GOOGLE_CLIENT_SECRET</code> in
-          die <code>.env</code> ein (Google-Cloud-OAuth-Client). Schritt-für-Schritt: <code>docs/09-gmail-anbindung.md</code>.
+          <b>Noch nicht konfiguriert.</b> Trage unten unter <b>Einstellungen</b> die
+          <code> Google Client-ID</code> und das <code>Client-Secret</code> ein. Anleitung:
+          <code> docs/anleitung-gmail-einrichten.md</code>.
         </div>
       )}
 
@@ -158,6 +202,34 @@ export default function ConnectPage() {
           {detecting ? "Analysiere Mails …" : "Kunden aus Mails erkennen & anlegen"}
         </button>
         {detectMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{detectMsg}</p>}
+      </div>
+
+      <div style={{ ...card }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Einstellungen (Keys)</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 12 }}>
+          Werden sicher in Supabase gespeichert (nicht im Code). Leeres Feld = unverändert.
+        </div>
+        {keyOrder.map((k) => (
+          <div key={k} style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 12.5, color: "#6b6358", marginBottom: 4 }}>
+              {KEY_LABEL[k] ?? k}
+              {settings[k]?.set
+                ? ` · gesetzt (${settings[k].hint}${settings[k].source === "env" ? ", aus .env" : ""})`
+                : " · nicht gesetzt"}
+            </label>
+            <input
+              type={k.includes("MODEL") || k.includes("CHAT_ID") ? "text" : "password"}
+              value={form[k] ?? ""}
+              placeholder={settings[k]?.set ? "•••••• (gesetzt – leer = behalten)" : "eintragen …"}
+              onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ddd6cb", fontSize: 14 }}
+            />
+          </div>
+        ))}
+        <button onClick={saveSettings} disabled={savingSettings} style={{ ...btn, background: "#5a6675", color: "#fff", width: "100%", marginTop: 4, opacity: savingSettings ? 0.6 : 1 }}>
+          {savingSettings ? "Speichere …" : "Einstellungen speichern"}
+        </button>
+        {settingsMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{settingsMsg}</p>}
       </div>
     </main>
   );

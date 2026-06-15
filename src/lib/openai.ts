@@ -1,8 +1,7 @@
 import OpenAI from "openai";
 import type { ClassifyResult, Priority } from "./types";
 import { ALL_LABEL_KEYS } from "./labels";
-
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+import { getConfig } from "./config";
 
 interface MailInput {
   account: string;
@@ -35,13 +34,14 @@ function buildUserPrompt(m: MailInput): string {
 }
 
 export async function classifyEmail(m: MailInput): Promise<ClassifyResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return heuristic(m);
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
 
   try {
     const client = new OpenAI({ apiKey });
     const resp = await client.chat.completions.create({
-      model: MODEL,
+      model,
       temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [

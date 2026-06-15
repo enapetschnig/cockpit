@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { isConfigured } from "@/lib/gmail";
+import { isGmailConfigured } from "@/lib/gmail";
 import { runSync } from "@/lib/gmailSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 async function doSync() {
-  if (!isConfigured()) {
+  if (!(await isGmailConfigured())) {
     return NextResponse.json({ error: "Gmail nicht konfiguriert (GOOGLE_CLIENT_ID/SECRET fehlen)." }, { status: 503 });
   }
   return NextResponse.json(await runSync());

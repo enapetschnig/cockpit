@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getConfig } from "@/lib/config";
 import OpenAI from "openai";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const PALETTE = ["#2f6df0", "#1f9d63", "#d8932a", "#e0533d", "#9a4fc4", "#1c8a90", "#5a6675"];
 
 interface Verdict {
@@ -20,10 +20,11 @@ interface Verdict {
  * Steuerberater, Marktplätzen, Newslettern. Legt erkannte Kunden an und ordnet ihre Mails zu.
  */
 export async function POST() {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) {
     return NextResponse.json({ error: "OpenAI-Key fehlt – die Kundenerkennung braucht KI." }, { status: 503 });
   }
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
 
   const emails = await prisma.email.findMany({ where: { firmenrelevant: true } });
   if (emails.length === 0) return NextResponse.json({ created: 0, assigned: 0, customers: [] });
@@ -68,7 +69,7 @@ export async function POST() {
   let results: Verdict[] = [];
   try {
     const resp = await client.chat.completions.create({
-      model: MODEL,
+      model,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [

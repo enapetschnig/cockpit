@@ -13,7 +13,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${origin}/connect?error=${encodeURIComponent("Ungültige Antwort von Google")}`);
   }
   try {
-    const { account, email } = await handleCallback(code, state as Account);
+    const redirectUri = new URL("/api/gmail/callback", origin).toString();
+    const { account, email } = await handleCallback(code, state as Account, redirectUri);
     return NextResponse.redirect(`${origin}/connect?connected=${account}&email=${encodeURIComponent(email ?? "")}`);
   } catch (e) {
     console.error("[gmail/callback]", e);
