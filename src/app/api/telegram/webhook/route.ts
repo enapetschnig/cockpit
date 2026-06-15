@@ -25,6 +25,15 @@ function esc(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Markdown entfernen (Telegram zeigt **/# sonst wörtlich an)
+function stripMd(s: string): string {
+  return (s || "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "• ");
+}
+
 const HELP = [
   "👋 <b>ePower Cockpit Bot</b>",
   "Frag mich einfach etwas zu deinen Mails – z. B.:",
@@ -115,7 +124,7 @@ async function handleMessage(msg: TgMessage) {
       }
     );
   } else {
-    await sendTelegram(result.reply || "…");
+    await sendTelegram(esc(stripMd(result.reply)) || "…");
   }
 }
 
