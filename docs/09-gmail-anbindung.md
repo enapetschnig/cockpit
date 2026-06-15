@@ -5,9 +5,10 @@
 **In einem Satz:** Statt Beispiel-Daten holt das Cockpit deine **echten** Gmail-Nachrichten aus
 zwei Postfächern (Firma + privat), klassifiziert sie mit der KI und legt sie in der Datenbank ab.
 
-> **Status:** Aktuell ist [src/lib/gmail.ts](../src/lib/gmail.ts) noch ein Stub und das Cockpit
-> läuft auf Seed-Daten. Dieses Dokument ist die **Anleitung** + der Bauplan. Du kannst die
-> Google-Cloud-Schritte (1–5) schon jetzt erledigen, während die Code-Seite gebaut wird.
+> **Status:** ✅ Backend gebaut — [src/lib/gmail.ts](../src/lib/gmail.ts) (OAuth + Sync via `googleapis`),
+> die Routen `/api/gmail/*` und die Verbinden-Seite **[/connect](../src/app/connect/page.tsx)** stehen.
+> Zum Loslegen fehlen nur **dein DB-Passwort** (siehe [Supabase](./10-supabase-datenbank.md)) und
+> **dein Google-OAuth-Client** (Schritte 1–5 unten).
 
 ## So funktioniert es (Architektur)
 1. **OAuth 2.0 pro Konto:** Du verbindest Firmen- und Privat-Gmail einmal. Google gibt uns
@@ -46,23 +47,26 @@ zwei Postfächern (Firma + privat), klassifiziert sie mit der KI und legt sie in
    ```
 
 ## Verbinden & Synchronisieren (in der App)
-Sobald die Code-Seite steht (Phase 1b):
+1. App starten (`npm run dev`) und **http://localhost:3000/connect** öffnen
+   (oder im Cockpit-Header auf „Gmail verbinden").
+2. Beim **Firma**-Postfach auf **„Verbinden"** → bei Google mit der Firmen-Adresse einloggen → Zugriff erlauben.
+3. Beim **Privat**-Postfach auf **„Verbinden"** → mit der Privat-Adresse.
+4. **„Jetzt synchronisieren"** → neue Mails (letzte 30 Tage) werden geladen, von der KI
+   eingeordnet und erscheinen im [Posteingang](./02-posteingang.md). Wichtige firmenrelevante
+   Mails lösen einen [Telegram-Push](./08-telegram-push.md) aus.
 
-1. App starten (`npm run dev`).
-2. Firmen-Postfach verbinden: Aufruf von **`/api/gmail/connect?account=firma`** → bei Google
-   mit der **Firmen**-Adresse einloggen → Zugriff erlauben.
-3. Privat-Postfach verbinden: **`/api/gmail/connect?account=privat`** → mit der **Privat**-Adresse.
-4. **„Sync"** auslösen (`/api/gmail/sync`) → neue Mails werden geladen, klassifiziert und
-   erscheinen im [Posteingang](./02-posteingang.md).
+Endpunkte direkt: `GET /api/gmail/connect?account=firma|privat` · `GET /api/gmail/status` · `POST /api/gmail/sync`.
 
-## Geplante Code-Bausteine
+## Code-Bausteine (gebaut ✅)
 | Datei / Route | Aufgabe |
 |---|---|
-| [src/lib/gmail.ts](../src/lib/gmail.ts) | OAuth-Client, `getAuthUrl`, Token-Tausch, `syncMailbox` (via `googleapis`) |
-| `GET /api/gmail/connect` | startet den OAuth-Flow (`?account=firma\|privat`) |
-| `GET /api/gmail/callback` | tauscht Code → Refresh-Token, speichert es pro Konto |
-| `POST /api/gmail/sync` | holt neue Mails → `classifyEmail` → DB → optional Telegram |
-| Prisma-Model `GmailAccount` | speichert pro Konto: E-Mail, Refresh-Token, letzte `historyId` |
+| [src/lib/gmail.ts](../src/lib/gmail.ts) | OAuth-Client, `getAuthUrl`, `handleCallback`, `fetchNewRawMails` (via `googleapis`) |
+| [api/gmail/connect](../src/app/api/gmail/connect/route.ts) | startet den OAuth-Flow (`?account=firma\|privat`) |
+| [api/gmail/callback](../src/app/api/gmail/callback/route.ts) | tauscht Code → Refresh-Token, speichert es pro Konto |
+| [api/gmail/sync](../src/app/api/gmail/sync/route.ts) | holt neue Mails → `classifyEmail` → DB → optional Telegram |
+| [api/gmail/status](../src/app/api/gmail/status/route.ts) | Verbindungsstatus beider Postfächer |
+| [connect/page.tsx](../src/app/connect/page.tsx) | Verbinden-Seite `/connect` (Buttons + Sync) |
+| `GmailAccount` + `Email.gmailId` | [schema.prisma](../prisma/schema.prisma) – Token-Speicher + Dedupe |
 | `googleapis` (npm) | offizielle Google-/Gmail-Client-Library |
 
 ## Sicherheit

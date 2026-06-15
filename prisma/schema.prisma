@@ -32,6 +32,10 @@ model Email {
   body       String
   receivedAt DateTime @default(now())
 
+  // ── Gmail-Herkunft (Phase 1b) ────────────────────────────
+  gmailId  String? @unique // Gmail message id – verhindert Duplikate beim Sync
+  threadId String? // Gmail thread id (für spätere Konversationsansicht)
+
   // ── von der KI (OpenAI) befüllt ──────────────────────────
   summary        String? // Ein-Satz-Zusammenfassung
   labelsJson     String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
@@ -55,4 +59,17 @@ model Todo {
   customer   Customer? @relation(fields: [customerId], references: [id])
   emailId    String?
   email      Email?    @relation(fields: [emailId], references: [id])
+}
+
+// Verbundenes Gmail-Postfach (zwei Stück: "firma" + "privat").
+// Speichert das OAuth-Refresh-Token, damit das Cockpit ohne erneuten Login synchronisieren kann.
+model GmailAccount {
+  id           String    @id @default(cuid())
+  account      String    @unique // "firma" | "privat"
+  email        String? // verbundene Gmail-Adresse (aus dem OAuth-Profil)
+  refreshToken String? // OAuth-Refresh-Token – nur in der isolierten cockpit-DB
+  historyId    String? // letzte Gmail historyId für späteren Delta-Sync
+  lastSyncAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }

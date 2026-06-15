@@ -110,9 +110,10 @@ epower-cockpit/
 
 ## Nächste Schritte (Roadmap)
 
-1. **Gmail echt anbinden** (`src/lib/gmail.ts`): Google-OAuth für beide Konten,
-   `users.watch` + Cloud Pub/Sub für Echtzeit, eingehende Mails → `classifyEmail()`
-   → DB → optional Telegram-Push. Empfehlung: `googleapis` ergänzen.
+1. **Gmail** ✅ angebunden — OAuth für beide Konten + Sync via `googleapis`, Verbinden-Seite
+   unter `/connect`. Eingehende Mails → `classifyEmail()` → DB → Telegram-Push.
+   Offen: Echtzeit per `users.watch` + Cloud Pub/Sub statt manuellem Sync. Details:
+   [docs/09-gmail-anbindung.md](./docs/09-gmail-anbindung.md).
 2. **Telegram-Auto-Push** für wichtige Mails + Befehle (`/heute`, `/offen`).
 3. **Phase 2:** Kalender (2 Konten). **Phase 4:** Angebote/Rechnungen.
    **Phase 5:** Buchhaltung + BMD-Upload. (Siehe Plan-Dokument.)
