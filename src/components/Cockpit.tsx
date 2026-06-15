@@ -48,6 +48,19 @@ export default function Cockpit() {
     Promise.all([loadEmails(), loadCustomers()]).finally(() => setLoading(false));
   }, []);
 
+  // Inbox alle 60s aktualisieren – zeigt neue Mails vom Auto-Sync automatisch an.
+  useEffect(() => {
+    const t = setInterval(() => loadEmails(), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Beim Öffnen einmal synchronisieren – so ist alles aktuell, sobald man reingeht.
+  useEffect(() => {
+    fetch("/api/gmail/sync", { method: "POST" })
+      .then(() => Promise.all([loadEmails(), loadCustomers()]))
+      .catch(() => {});
+  }, []);
+
   // Demo-Push beim ersten Laden: zeigt eine firmenrelevante Mail aus dem Privat-Postfach
   useEffect(() => {
     if (loading) return;

@@ -12,6 +12,10 @@ export default function ConnectPage() {
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [reclassing, setReclassing] = useState(false);
+  const [reclassMsg, setReclassMsg] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const [detectMsg, setDetectMsg] = useState<string | null>(null);
 
   async function loadStatus() {
     try {
@@ -50,6 +54,36 @@ export default function ConnectPage() {
     } finally {
       setSyncing(false);
       loadStatus();
+    }
+  }
+
+  async function reclassifyAll() {
+    setReclassing(true);
+    setReclassMsg(null);
+    try {
+      const r = await fetch("/api/classify/all", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) setReclassMsg(d.error || "Neu-Einordnen fehlgeschlagen");
+      else setReclassMsg(`${d.updated} von ${d.total} Mails neu mit KI eingeordnet.${(d.errors || []).length ? " Fehler: " + d.errors.length : ""}`);
+    } catch (e) {
+      setReclassMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setReclassing(false);
+    }
+  }
+
+  async function detectCustomers() {
+    setDetecting(true);
+    setDetectMsg(null);
+    try {
+      const r = await fetch("/api/customers/detect", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) setDetectMsg(d.error || "Erkennung fehlgeschlagen");
+      else setDetectMsg(`${d.created} Kunde(n) angelegt, ${d.assigned} Mail(s) zugeordnet${d.customers?.length ? ": " + d.customers.join(", ") : "."}`);
+    } catch (e) {
+      setDetectMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setDetecting(false);
     }
   }
 
@@ -98,6 +132,33 @@ export default function ConnectPage() {
         {syncing ? "Synchronisiere …" : "Jetzt synchronisieren"}
       </button>
       {syncMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{syncMsg}</p>}
+
+      <p style={{ color: "#8a8175", fontSize: 12.5, marginTop: 8 }}>
+        🔄 Auto-Sync läuft im Hintergrund (alle ~2 Min), solange die App läuft — neue
+        firmenrelevante Mails werden per Telegram gepusht (sofern eingerichtet).
+      </p>
+
+      <div style={{ ...card, marginTop: 14 }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>KI-Einordnung</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 10 }}>
+          Ordnet alle vorhandenen Mails einmal frisch mit der KI ein (Zusammenfassung, Labels, Firmenrelevanz).
+        </div>
+        <button onClick={reclassifyAll} disabled={reclassing} style={{ ...btn, background: "#2f6df0", color: "#fff", width: "100%", opacity: reclassing ? 0.6 : 1 }}>
+          {reclassing ? "Ordne neu ein … (kann 1–2 Min dauern)" : "Alle mit KI neu einordnen"}
+        </button>
+        {reclassMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{reclassMsg}</p>}
+      </div>
+
+      <div style={{ ...card }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Kunden erkennen</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 10 }}>
+          Findet aus deinen firmenrelevanten Mails echte Kunden (Handwerksbetriebe), legt sie an und ordnet ihre Mails zu — Dienste, Lieferanten &amp; Newsletter werden ignoriert.
+        </div>
+        <button onClick={detectCustomers} disabled={detecting} style={{ ...btn, background: "#d8932a", color: "#fff", width: "100%", opacity: detecting ? 0.6 : 1 }}>
+          {detecting ? "Analysiere Mails …" : "Kunden aus Mails erkennen & anlegen"}
+        </button>
+        {detectMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{detectMsg}</p>}
+      </div>
     </main>
   );
 }
