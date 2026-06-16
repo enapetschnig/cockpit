@@ -6,12 +6,13 @@ import OpenAI from "openai";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { getConfig } from "./config";
-import { draftEmailReply } from "./openai";
+import { draftEmailReply, composeEmail } from "./openai";
 import { ASSISTANT_PERSONA } from "./persona";
 
 export interface AssistantResult {
   reply: string;
   draftedFor?: { emailId: string; text: string; fromName: string; toAddr: string; fromEmail: string; account: string; subject: string };
+  newEmail?: { pendingId: string; account: string; fromEmail: string; toAddr: string; toName?: string; subject: string; body: string };
 }
 
 const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -116,6 +117,25 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       parameters: { type: "object", properties: { email_id: { type: "string" }, instruction: { type: "string" } }, required: ["email_id", "instruction"] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "draft_new_email",
+      description:
+        "Verfasst eine KOMPLETT NEUE E-Mail (kein Reply). Empfänger als E-Mail-Adresse (to) ODER Kundenname (customer_name, Adresse wird aus dessen letzter Mail genommen). Der Nutzer bestätigt das Senden per Knopf.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "E-Mail-Adresse des Empfängers" },
+          customer_name: { type: "string", description: "alternativ: Kundenname" },
+          account: { type: "string", enum: ["firma", "privat"], description: "von welchem Postfach gesendet wird (Standard firma)" },
+          subject: { type: "string", description: "optionaler Betreff" },
+          instruction: { type: "string", description: "Inhalt/Auftrag der Mail" },
+        },
+        required: ["instruction"],
+      },
+    },
+  },
 ];
 
 interface Args {
@@ -133,6 +153,8 @@ interface Args {
   content?: string;
   topic?: string;
   todo_text?: string;
+  to?: string;
+  subject?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -286,6 +308,35 @@ async function doDraft(emailId: string, instruction: string): Promise<{ result: 
   };
 }
 
+async function doDraftNew(a: Args): Promise<{ result: unknown; newEmail?: AssistantResult["newEmail"] }> {
+  let toAddr = (a.to || "").trim();
+  let toName: string | null = null;
+  if ((!toAddr || !toAddr.includes("@")) && a.customer_name) {
+    const c = await findCustomer(a.customer_name);
+    if (c) {
+      const e = await prisma.email.findFirst({ where: { customerId: c.id }, orderBy: { receivedAt: "desc" } });
+      if (e) {
+        toAddr = e.fromAddr;
+        toName = e.fromName;
+      }
+    }
+  }
+  if (!toAddr || !toAddr.includes("@")) {
+    return { result: { error: "Keine gültige Empfänger-Adresse gefunden. Bitte E-Mail-Adresse angeben." } };
+  }
+  const account = a.account === "privat" ? "privat" : "firma";
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) return { result: { error: `Postfach ${account} ist nicht verbunden.` } };
+  const composed = await composeEmail({ to: toName || toAddr, instruction: a.instruction || a.subject || "" });
+  const subject = (a.subject || "").trim() || composed.subject;
+  const body = composed.body;
+  const pending = await prisma.pendingEmail.create({ data: { account, toAddr, toName, subject, body } });
+  return {
+    result: { ok: true, an: toAddr, betreff: subject },
+    newEmail: { pendingId: pending.id, account, fromEmail: acc.email ?? account, toAddr, toName: toName ?? undefined, subject, body },
+  };
+}
+
 export async function runAssistant(userText: string, context?: { replyEmailId?: string }): Promise<AssistantResult> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return { reply: "OpenAI-Key fehlt – ich kann gerade nicht antworten." };
@@ -293,6 +344,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   const client = new OpenAI({ apiKey });
 
   let drafted: AssistantResult["draftedFor"];
+  let newEmail: AssistantResult["newEmail"];
   const today = new Date().toISOString().slice(0, 10);
 
   const memories = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 40 });
@@ -334,6 +386,10 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
           const r = await doDraft(String(args.email_id), String(args.instruction || ""));
           drafted = r.drafted ?? drafted;
           result = r.result;
+        } else if (tc.function.name === "draft_new_email") {
+          const r = await doDraftNew(args);
+          newEmail = r.newEmail ?? newEmail;
+          result = r.result;
         } else {
           result = await runTool(tc.function.name, args);
         }
@@ -351,11 +407,11 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
     }
   }
 
-  if (!finalReply && !drafted) finalReply = "Das habe ich nicht ganz verstanden – formulier es bitte anders.";
+  if (!finalReply && !drafted && !newEmail) finalReply = "Das habe ich nicht ganz verstanden – formulier es bitte anders.";
 
   // Gedächtnis aktualisieren + auf die letzten 40 Einträge begrenzen
   await prisma.botMessage.create({ data: { role: "user", content: userText.slice(0, 2000) } });
-  await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : finalReply).slice(0, 2000) } });
+  await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : newEmail ? "[Neue Mail vorbereitet]" : finalReply).slice(0, 2000) } });
   const old = await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, skip: 40, select: { id: true } });
   if (old.length) await prisma.botMessage.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
 
@@ -368,5 +424,5 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
     await prisma.setting.upsert({ where: { key: "CONV_STATE" }, create: { key: "CONV_STATE", value: v }, update: { value: v } });
   }
 
-  return { reply: finalReply, draftedFor: drafted };
+  return { reply: finalReply, draftedFor: drafted, newEmail };
 }

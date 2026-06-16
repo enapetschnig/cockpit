@@ -270,6 +270,17 @@ export async function sendReply(
   return { to, subject };
 }
 
+/** Sendet eine KOMPLETT NEUE E-Mail (kein Reply). */
+export async function sendNewEmail(account: Account, to: string, subject: string, body: string): Promise<void> {
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: acc.refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: client });
+  const raw = buildRawEmail({ from: acc.email || "me", to, subject, body });
+  await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+}
+
 function buildRawEmail(o: { from: string; to: string; subject: string; inReplyTo?: string; references?: string; body: string }): string {
   const lines = [
     `From: ${o.from}`,

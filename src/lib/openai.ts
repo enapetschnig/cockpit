@@ -168,3 +168,27 @@ export async function draftEmailReply(input: {
   });
   return resp.choices[0]?.message?.content?.trim() || "";
 }
+
+/** Verfasst eine komplett neue deutsche E-Mail (Betreff + Text) aus einem Auftrag. */
+export async function composeEmail(input: { to: string; instruction: string }): Promise<{ subject: string; body: string }> {
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("OpenAI-Key fehlt.");
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  const client = new OpenAI({ apiKey });
+  const resp = await client.chat.completions.create({
+    model,
+    temperature: 0.4,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "Du schreibst professionelle, freundliche deutsche E-Mails für die ePower GmbH (Software für Handwerker). " +
+          'Gib NUR JSON zurück: { "subject": "...", "body": "..." }. Der Body hat passende Anrede und Grußformel, kein Markdown, keine Platzhalter wie [Name].',
+      },
+      { role: "user", content: `Empfänger: ${input.to}\nAuftrag: ${input.instruction}\n\nSchreibe Betreff und Mailtext.` },
+    ],
+  });
+  const j = JSON.parse(resp.choices[0]?.message?.content ?? "{}") as { subject?: string; body?: string };
+  return { subject: (j.subject || "Nachricht").trim(), body: (j.body || "").trim() };
+}

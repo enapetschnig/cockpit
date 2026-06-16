@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage } from "@/lib/telegram";
 import { transcribeVoice } from "@/lib/openai";
-import { sendReply, type Account } from "@/lib/gmail";
+import { sendReply, sendNewEmail, type Account } from "@/lib/gmail";
 import { runAssistant } from "@/lib/assistant";
 
 export const dynamic = "force-dynamic";
@@ -129,14 +129,51 @@ async function handleMessage(msg: TgMessage) {
         ]],
       }
     );
+  } else if (result.newEmail) {
+    const n = result.newEmail;
+    const accLabel = n.account === "firma" ? "Firma" : "Privat";
+    await sendTelegram(
+      `✉️ <b>Neue Mail vorbereitet</b>\n` +
+        `📤 Von: ${esc(n.fromEmail)} (${accLabel})\n` +
+        `📥 An: ${n.toName ? esc(n.toName) + " " : ""}&lt;${esc(n.toAddr)}&gt;\n` +
+        `📝 ${esc(n.subject)}\n\n` +
+        `${esc(n.body)}\n\n<i>Bitte kontrollieren:</i>`,
+      {
+        buttons: [[
+          { text: "✅ Senden", data: `sendnew:${n.pendingId}` },
+          { text: "🗑 Verwerfen", data: `delnew:${n.pendingId}` },
+        ]],
+      }
+    );
   } else {
     await sendTelegram(esc(stripMd(result.reply)) || "…");
   }
 }
 
 async function handleCallback(cb: TgCallback) {
-  const [action, emailId] = (cb.data || "").split(":");
-  const email = emailId ? await prisma.email.findUnique({ where: { id: emailId } }) : null;
+  const [action, id] = (cb.data || "").split(":");
+
+  // Komplett neue Mail (PendingEmail)
+  if (action === "sendnew" || action === "delnew") {
+    const p = id ? await prisma.pendingEmail.findUnique({ where: { id } }) : null;
+    if (!p) {
+      await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
+      return;
+    }
+    if (action === "delnew") {
+      await prisma.pendingEmail.delete({ where: { id: p.id } });
+      await tgAnswerCallback(cb.id, "Verworfen");
+      if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, "🗑 Mail verworfen.");
+      return;
+    }
+    await sendNewEmail(p.account as Account, p.toAddr, p.subject, p.body);
+    await prisma.pendingEmail.delete({ where: { id: p.id } });
+    await tgAnswerCallback(cb.id, "Gesendet ✅");
+    if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `✅ <b>Gesendet an ${esc(p.toAddr)}</b>\n<i>${esc(p.subject)}</i>\n\n${esc(p.body)}`);
+    return;
+  }
+
+  const email = id ? await prisma.email.findUnique({ where: { id } }) : null;
   if (!email) {
     await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
     return;

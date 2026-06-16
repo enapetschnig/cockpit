@@ -94,6 +94,17 @@ model BotMessage {
   createdAt DateTime @default(now())
 }
 
+// Komplett neue Mail (kein Reply), die im Telegram-Chat auf "Senden" wartet.
+model PendingEmail {
+  id        String   @id @default(cuid())
+  account   String // "firma" | "privat"
+  toAddr    String
+  toName    String?
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+}
+
 // Langzeit-Wissen des Assistenten: gemerkte Fakten über Nutzer, Kunden, laufende Themen.
 model Memory {
   id        String   @id @default(cuid())
