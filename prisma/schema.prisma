@@ -41,11 +41,12 @@ model Email {
   pendingReply  String? // KI-Antwort, die im Telegram-Chat auf "Senden" wartet
 
   // ── von der KI (OpenAI) befüllt ──────────────────────────
-  summary        String? // Ein-Satz-Zusammenfassung
-  labelsJson     String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
-  firmenrelevant Boolean  @default(false) // KI-Entscheidung – auch für Privat-Mails!
-  priority       String   @default("mid") // "hi" | "mid" | "lo"
-  classifiedAt   DateTime?
+  summary            String? // Ein-Satz-Zusammenfassung
+  labelsJson         String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
+  suggestedTodosJson String   @default("[]") // KI-Aufgabenvorschläge (für 1-Klick "Aufgabe")
+  firmenrelevant     Boolean  @default(false) // KI-Entscheidung – auch für Privat-Mails!
+  priority           String   @default("mid") // "hi" | "mid" | "lo"
+  classifiedAt       DateTime?
 
   // ── Workflow ─────────────────────────────────────────────
   filed      Boolean   @default(false) // in Buchhaltung abgelegt

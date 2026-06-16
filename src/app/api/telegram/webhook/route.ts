@@ -179,6 +179,25 @@ async function handleCallback(cb: TgCallback) {
     return;
   }
 
+  // Ein-Tipp-Aktionen aus dem Mail-Push (Buttons bleiben erhalten)
+  if (action === "file") {
+    await prisma.email.update({ where: { id: email.id }, data: { filed: true } });
+    await tgAnswerCallback(cb.id, "✓ In Buchhaltung abgelegt");
+    return;
+  }
+  if (action === "todo") {
+    let todos: string[] = [];
+    try {
+      todos = JSON.parse(email.suggestedTodosJson || "[]");
+    } catch {
+      todos = [];
+    }
+    const text = todos[0] || `Follow-up: ${email.subject}`;
+    await prisma.todo.create({ data: { text, emailId: email.id, customerId: email.customerId } });
+    await tgAnswerCallback(cb.id, "✓ Aufgabe angelegt");
+    return;
+  }
+
   if (action === "del") {
     await prisma.email.update({ where: { id: email.id }, data: { pendingReply: null } });
     await tgAnswerCallback(cb.id, "Verworfen");

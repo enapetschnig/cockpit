@@ -64,6 +64,7 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
               receivedAt: r.receivedAt,
               summary: c?.summary ?? null,
               labelsJson: JSON.stringify(c?.labels ?? []),
+              suggestedTodosJson: JSON.stringify(c?.suggestedTodos ?? []),
               firmenrelevant,
               priority: c?.priority ?? "lo",
               classifiedAt: new Date(),
@@ -75,10 +76,18 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
           // Push nur für eingehende, firmenrelevante Mails – und nur einmal (notifiedAt).
           if (notify && firmenrelevant && !r.outgoing) {
             const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";
+            const suggestion = (c!.suggestedTodos ?? [])[0];
             const sent = await sendTelegram(
               `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
-                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}\n\n` +
-                `<i>↩️ Antworte (Text/Sprache) – ich formuliere eine Antwort zum Kontrollieren.</i>`
+                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}` +
+                (suggestion ? `\n\n💡 <i>${esc(suggestion)}</i>` : "") +
+                `\n\n<i>↩️ Antworte (Text/Sprache) für eine Antwort.</i>`,
+              {
+                buttons: [[
+                  { text: "✅ Aufgabe", data: `todo:${created.id}` },
+                  { text: "💰 Buchhaltung", data: `file:${created.id}` },
+                ]],
+              }
             );
             await prisma.email.update({
               where: { id: created.id },
