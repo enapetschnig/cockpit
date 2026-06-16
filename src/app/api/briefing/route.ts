@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { sendTelegram } from "@/lib/telegram";
+import { listEvents } from "@/lib/calendar";
 import OpenAI from "openai";
 
 export const dynamic = "force-dynamic";
@@ -57,15 +58,34 @@ async function runBriefing(force: boolean) {
     include: { customer: true },
   });
 
-  let text: string;
+  // Heutige Termine aus beiden Kalendern (Mails UND Kalender im Briefing).
+  const todays: string[] = [];
+  for (const acc of ["firma", "privat"] as const) {
+    try {
+      const evs = await listEvents(acc, { days: 2, max: 25 });
+      for (const e of evs) {
+        if ((e.start || "").slice(0, 10) === date) {
+          const t = e.allDay ? "ganztägig" : e.start.slice(11, 16);
+          todays.push(`${t}  ${e.summary}${e.location ? " @ " + e.location : ""}  (${acc})`);
+        }
+      }
+    } catch {
+      /* Kalender-Scope evtl. (noch) nicht erteilt -> überspringen */
+    }
+  }
+  todays.sort();
+  const eventPart = todays.length ? "\n\n📅 <b>Heute:</b>\n" + esc(todays.map((e) => "• " + e).join("\n")) : "";
+
+  // Mails-Teil (ohne Begrüßung).
+  let mailPart: string;
   if (mails.length === 0) {
-    text = "☀️ <b>Guten Morgen!</b>\nKeine wichtigen Mails seit gestern – entspannter Start! 👍";
+    mailPart = "Keine neuen wichtigen Mails seit gestern.";
   } else {
     const lines = mails.map(
       (m) => `- [${m.account}${m.priority === "hi" ? ", dringend" : ""}] ${m.fromName}: ${m.subject}${m.summary ? " — " + m.summary : ""}`
     );
     const structured =
-      `☀️ <b>Guten Morgen!</b>\n${mails.length} wichtige Mail(s) seit gestern:\n\n` +
+      `${mails.length} wichtige Mail(s) seit gestern:\n\n` +
       esc(mails.map((m) => `• ${m.priority === "hi" ? "❗️ " : ""}${m.fromName}: ${m.subject}${m.summary ? "\n   ↳ " + m.summary : ""}`).join("\n"));
 
     const apiKey = await getConfig("OPENAI_API_KEY");
@@ -82,25 +102,30 @@ async function runBriefing(force: boolean) {
               content:
                 "Du schreibst eine kurze, freundliche Morgen-Übersicht für den Inhaber der ePower GmbH (Software für Handwerker). " +
                 "Deutsch, für Telegram: einfacher Text + Emojis, KEIN Markdown (kein Sternchen-Fett, keine Rauten). " +
-                "Fasse die wichtigen Mails von gestern knapp zusammen, das Dringendste zuerst, max ~10 Zeilen. Beginne NICHT mit einer Begrüßung (die kommt schon davor).",
+                "Fasse die wichtigen Mails knapp zusammen, das Dringendste zuerst, max ~10 Zeilen. Beginne NICHT mit einer Begrüßung.",
             },
             { role: "user", content: `Wichtige Mails seit gestern:\n${lines.join("\n")}` },
           ],
         });
         const ai = resp.choices[0]?.message?.content?.trim();
-        text = ai ? "☀️ <b>Guten Morgen!</b>\n\n" + esc(stripMd(ai)) : structured;
+        mailPart = ai ? esc(stripMd(ai)) : structured;
       } catch {
-        text = structured;
+        mailPart = structured;
       }
     } else {
-      text = structured;
+      mailPart = structured;
     }
   }
+
+  const text =
+    mails.length === 0 && todays.length === 0
+      ? "☀️ <b>Guten Morgen!</b>\nKeine neuen wichtigen Mails und keine Termine heute – entspannter Start! 👍"
+      : "☀️ <b>Guten Morgen!</b>\n\n" + mailPart + eventPart;
 
   const res = await sendTelegram(text);
   // Zeitstempel + Datum merken, damit das nächste Briefing nur Neueres zeigt.
   const nowIso = now.toISOString();
   await prisma.setting.upsert({ where: { key: "LAST_BRIEFING_DATE" }, create: { key: "LAST_BRIEFING_DATE", value: date }, update: { value: date } });
   await prisma.setting.upsert({ where: { key: "LAST_BRIEFING_AT" }, create: { key: "LAST_BRIEFING_AT", value: nowIso }, update: { value: nowIso } });
-  return { sent: res.ok, count: mails.length, since: since.toISOString(), date };
+  return { sent: res.ok, count: mails.length, events: todays.length, since: since.toISOString(), date };
 }
