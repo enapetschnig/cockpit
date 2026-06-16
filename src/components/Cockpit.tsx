@@ -6,7 +6,8 @@ import type { EmailDTO, CustomerDTO } from "@/lib/types";
 
 type Tab = "firmenrelevant" | "wichtig" | "buchhaltung" | "zuordnen" | "alle";
 type Acc = "alle" | "firma" | "privat";
-type View = "inbox" | "email" | "kunden" | "kunde" | "gesendet";
+type View = "inbox" | "email" | "kunden" | "kunde" | "gesendet" | "kalender";
+type CalEv = { id: string; summary: string; start: string; end: string; location?: string; allDay: boolean; account: string };
 
 const PALETTE = ["#2f6df0", "#1f9d63", "#d8932a", "#e0533d", "#9a4fc4", "#1c8a90", "#5a6675"];
 
@@ -35,6 +36,14 @@ export default function Cockpit() {
   const [newCustName, setNewCustName] = useState("");
   const [toast, setToast] = useState<{ title: string; body: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Antwort (Web)
+  const [replyFor, setReplyFor] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [replyInstr, setReplyInstr] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
+  // Kalender (Web)
+  const [events, setEvents] = useState<CalEv[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   async function loadEmails() {
     const r = await fetch("/api/emails");
@@ -60,6 +69,17 @@ export default function Cockpit() {
       .then(() => Promise.all([loadEmails(), loadCustomers()]))
       .catch(() => {});
   }, []);
+
+  // Kalender laden, sobald die Kalender-Ansicht geöffnet wird.
+  useEffect(() => {
+    if (view !== "kalender") return;
+    setEventsLoading(true);
+    fetch("/api/calendar?days=14")
+      .then((r) => r.json())
+      .then((d) => setEvents(d.events || []))
+      .catch(() => {})
+      .finally(() => setEventsLoading(false));
+  }, [view]);
 
   // Demo-Push beim ersten Laden: zeigt eine firmenrelevante Mail aus dem Privat-Postfach
   useEffect(() => {
@@ -114,6 +134,41 @@ export default function Cockpit() {
   function openEmail(id: string) {
     setActiveEmailId(id);
     setView("email");
+    setReplyFor(null);
+    setReplyText("");
+    setReplyInstr("");
+  }
+  async function draftReply(emailId: string) {
+    setReplyBusy(true);
+    setReplyFor(emailId);
+    try {
+      const r = await fetch("/api/reply", { method: "POST", headers: json, body: JSON.stringify({ emailId, instruction: replyInstr }) });
+      const d = await r.json();
+      if (r.ok) setReplyText(d.text || "");
+      else pushToast("Fehler", d.error || "Entwurf fehlgeschlagen");
+    } catch {
+      pushToast("Fehler", "Entwurf fehlgeschlagen");
+    } finally {
+      setReplyBusy(false);
+    }
+  }
+  async function sendReplyWeb(emailId: string, toName: string) {
+    if (!replyText.trim()) return;
+    setReplyBusy(true);
+    try {
+      const r = await fetch("/api/reply/send", { method: "POST", headers: json, body: JSON.stringify({ emailId, text: replyText }) });
+      const d = await r.json();
+      if (r.ok) {
+        pushToast("Gesendet", `Antwort an ${toName} gesendet.`);
+        setReplyFor(null);
+        setReplyText("");
+        setReplyInstr("");
+      } else pushToast("Fehler", d.error || "Senden fehlgeschlagen");
+    } catch {
+      pushToast("Fehler", "Senden fehlgeschlagen");
+    } finally {
+      setReplyBusy(false);
+    }
   }
   async function classifyNow(id: string) {
     setClassifying(true);
@@ -367,9 +422,32 @@ export default function Cockpit() {
 
               <div className="actions">
                 {activeEmail.labels.includes("aufgabe") && <button className="btn ai" onClick={() => makeTask(activeEmail)}>+ Aufgabe erstellen</button>}
-                <button className="btn primary" onClick={() => pushToast("KI-Antwort", "Antwort-Entwurf kommt in einer späteren Phase.")}>KI-Antwort entwerfen</button>
+                <button className="btn primary" disabled={replyBusy && replyFor === activeEmail.id} onClick={() => draftReply(activeEmail.id)}>
+                  {replyBusy && replyFor === activeEmail.id && !replyText ? "Entwerfe …" : "KI-Antwort entwerfen"}
+                </button>
                 <button className="btn ghost" onClick={() => setView("inbox")}>Erledigt</button>
               </div>
+
+              {replyFor === activeEmail.id && (replyText || replyBusy) && (
+                <div className="card">
+                  <div className="kv" style={{ fontWeight: 700, color: "var(--ink)", marginBottom: 6 }}>Antwort-Entwurf an {activeEmail.fromName}</div>
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    rows={8}
+                    placeholder={replyBusy ? "Entwerfe …" : ""}
+                    style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontSize: 13.5, lineHeight: 1.5, fontFamily: "inherit", resize: "vertical" }}
+                  />
+                  <div className="addrow" style={{ marginTop: 8 }}>
+                    <input placeholder="Anweisung (z. B. kürzer, förmlicher) → neu entwerfen" value={replyInstr} onChange={(e) => setReplyInstr(e.target.value)} onKeyDown={(e) => e.key === "Enter" && draftReply(activeEmail.id)} />
+                    <button className="btn ghost" style={{ flex: "none", minWidth: 0, padding: "10px 14px" }} disabled={replyBusy} onClick={() => draftReply(activeEmail.id)}>↻</button>
+                  </div>
+                  <div className="actions" style={{ marginTop: 8 }}>
+                    <button className="btn primary" disabled={replyBusy || !replyText.trim()} onClick={() => sendReplyWeb(activeEmail.id, activeEmail.fromName)}>✅ Senden</button>
+                    <button className="btn ghost" onClick={() => { setReplyFor(null); setReplyText(""); }}>Verwerfen</button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -439,6 +517,34 @@ export default function Cockpit() {
         </div>
       </div>
 
+      {/* Kalender */}
+      <div className={"view" + (view === "kalender" ? " open" : "")}>
+        <div className="vhead"><button className="back" onClick={() => setView("inbox")}>‹ Cockpit</button><strong style={{ fontSize: 16 }}>Kalender</strong></div>
+        <div className="vbody">
+          {eventsLoading ? (
+            <div className="muted">Lade Termine …</div>
+          ) : events.length === 0 ? (
+            <div className="muted">Keine Termine in den nächsten 14 Tagen.</div>
+          ) : (
+            groupByDay(events).map(([day, evs]) => (
+              <div key={day} className="cal-day">
+                <div className="cal-daylabel">{dayLabel(day)}</div>
+                {evs.map((ev) => (
+                  <div key={ev.account + ev.id} className="cal-ev">
+                    <div className="cal-time">{ev.allDay ? "ganztägig" : evTime(ev.start)}</div>
+                    <div className="cal-main">
+                      <div className="cal-title">{ev.summary || "(ohne Titel)"}</div>
+                      {ev.location && <div className="cal-loc">{ev.location}</div>}
+                    </div>
+                    <span className={"pill " + (ev.account === "privat" ? "pill-privat" : "pill-firma")}>{ev.account}</span>
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {view === "inbox" && <div className="vphold">Wähle links eine Mail, um sie hier zu öffnen.</div>}
 
       {/* Bottom-Nav */}
@@ -452,8 +558,8 @@ export default function Cockpit() {
         <button className={"navi" + (view === "gesendet" ? " active" : "")} onClick={() => setView("gesendet")}>
           <svg viewBox="0 0 24 24"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" /></svg>Gesendet
         </button>
-        <button className="navi" onClick={() => pushToast("Rechnungen", "Angebote & Rechnungen kommen in Phase 4.")}>
-          <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z" /><path d="M9 9h6M9 13h6M9 17h4" /></svg>Rechnungen<span className="soon">bald</span>
+        <button className={"navi" + (view === "kalender" ? " active" : "")} onClick={() => setView("kalender")}>
+          <svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" /></svg>Kalender
         </button>
       </div>
     </div>
@@ -467,4 +573,31 @@ function timeAgo(iso: string): string {
   if (diff < 86400) return Math.floor(diff / 3600) + " Std";
   if (diff < 7 * 86400) return Math.floor(diff / 86400) + " Tg";
   return d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
+}
+
+// Termine nach Kalendertag (YYYY-MM-DD) gruppieren, chronologisch.
+function groupByDay(events: CalEv[]): [string, CalEv[]][] {
+  const map = new Map<string, CalEv[]>();
+  for (const ev of events) {
+    const day = ev.start.slice(0, 10);
+    if (!map.has(day)) map.set(day, []);
+    map.get(day)!.push(ev);
+  }
+  return [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+
+function dayLabel(day: string): string {
+  const d = new Date(day + "T00:00:00");
+  const today = new Date();
+  const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const diff = Math.round((d.getTime() - t0.getTime()) / 86400000);
+  const base = d.toLocaleDateString("de-AT", { weekday: "long", day: "2-digit", month: "long" });
+  if (diff === 0) return "Heute · " + base;
+  if (diff === 1) return "Morgen · " + base;
+  return base;
+}
+
+function evTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
 }

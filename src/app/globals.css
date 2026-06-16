@@ -104,6 +104,18 @@ button{font-family:inherit}
 .tl .ti:last-child::after{display:none}
 .tlt{font-size:13px;font-weight:600} .tld{font-size:11.5px;color:var(--sub);margin-top:1px}
 
+/* Kalender */
+.cal-day{margin-bottom:18px}
+.cal-daylabel{font-size:12px;font-weight:700;color:var(--sub);text-transform:capitalize;margin:0 2px 8px;letter-spacing:.2px}
+.cal-ev{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.cal-time{font-size:12.5px;font-weight:700;color:var(--ink);min-width:46px;flex:none}
+.cal-main{flex:1;min-width:0}
+.cal-title{font-size:13.5px;font-weight:600;color:var(--ink)}
+.cal-loc{font-size:11.5px;color:var(--sub);margin-top:2px}
+.pill{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:11px;flex:none;text-transform:capitalize}
+.pill-firma{color:var(--accent);background:var(--accent-soft)}
+.pill-privat{color:var(--amber);background:var(--amber-soft)}
+
 .addrow{display:flex;gap:8px;margin-top:10px}
 .addrow input{flex:1;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13px;outline:none}
 .addrow input:focus{border-color:var(--accent)}
