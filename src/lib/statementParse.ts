@@ -6,6 +6,10 @@
  * PDF wird (MVP) nicht geparst – der Beleg wird trotzdem archiviert/ans BMD geladen.
  */
 
+import OpenAI from "openai";
+import { extractText, getDocumentProxy } from "unpdf";
+import { getConfig } from "./config";
+
 export interface NormalizedBooking {
   bookingDate: Date;
   amount: number; // signiert: Ausgabe negativ
@@ -26,9 +30,81 @@ const COLS: Record<keyof Omit<NormalizedBooking, "raw" | "bookingDate" | "amount
   reference: ["buchungsreferenz", "zahlungsreferenz", "referencenumber", "referenz", "kundenreferenz"],
 };
 
-export function parseStatement(bytes: Buffer | Uint8Array, filename: string, mime?: string): NormalizedBooking[] {
+export async function parseStatement(bytes: Buffer | Uint8Array, filename: string, mime?: string): Promise<NormalizedBooking[]> {
   const isCsv = /\.csv$/i.test(filename) || /csv|text\/plain/i.test(mime || "");
-  if (!isCsv) return []; // PDF/sonst: nicht parsen (nur archivieren)
+  if (isCsv) return parseCsvStatement(bytes);
+  const isPdf = /\.pdf$/i.test(filename) || /pdf/i.test(mime || "");
+  if (isPdf) return parseStatementPdf(bytes);
+  return [];
+}
+
+/** PDF-Auszug: Text via unpdf → Buchungen via OpenAI strukturiert (robust für Bank & Kreditkarte). */
+async function parseStatementPdf(bytes: Buffer | Uint8Array): Promise<NormalizedBooking[]> {
+  let text = "";
+  try {
+    const pdf = await getDocumentProxy(bytes instanceof Buffer ? new Uint8Array(bytes) : bytes);
+    const r = await extractText(pdf, { mergePages: true });
+    text = Array.isArray(r.text) ? r.text.join("\n") : r.text || "";
+  } catch {
+    return [];
+  }
+  return text ? extractStatementBookings(text) : [];
+}
+
+const STMT_SYS = [
+  "Du extrahierst Transaktionen aus einem österreichischen Kontoauszug ODER einer Kreditkartenabrechnung (PDF-Text).",
+  'Gib NUR JSON zurück: {"bookings":[{"bookingDate":"YYYY-MM-DD","amount":<number>,"currency":"EUR","counterparty":"...","purpose":"..."}]}',
+  "Regeln:",
+  "- amount NEGATIV bei Ausgaben/Belastungen (Kreditkarten-Käufe, '-'-Suffix), POSITIV bei Gutschriften/Eingängen.",
+  "- bookingDate = Buchungsdatum bzw. Valuta (ISO YYYY-MM-DD).",
+  "- counterparty = Händler/Empfänger (Vertragsunternehmen bei Kreditkarte; Firmenname bei Bank).",
+  "- purpose = restlicher Buchungstext/Verwendungszweck (inkl. Rechnungs-Nr., falls vorhanden).",
+  "- Österr. Zahlenformat im Text (1.234,56) → als Zahl 1234.56 ausgeben.",
+  "- IGNORIERE Saldo-/Info-Zeilen: 'Alter/Neuer Kontostand','Offener Betrag','Offener Betrag Vormonat','Einzugsbetrag','Ihre Zahlung Vormonat','Gutschriften','Belastungen','Umsatz der Karte', Tabellenköpfe und Hinweistexte (z. B. Verbraucherpreisindex). Nur echte Transaktionen.",
+].join("\n");
+
+export async function extractStatementBookings(text: string): Promise<NormalizedBooking[]> {
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) return [];
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  try {
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: STMT_SYS },
+        { role: "user", content: text.slice(0, 14000) },
+      ],
+    });
+    const j = JSON.parse(resp.choices[0]?.message?.content ?? "{}") as { bookings?: unknown[] };
+    const rows = Array.isArray(j.bookings) ? j.bookings : [];
+    return rows.map(toBooking).filter((b): b is NormalizedBooking => b != null);
+  } catch {
+    return [];
+  }
+}
+
+function toBooking(r: unknown): NormalizedBooking | null {
+  if (!r || typeof r !== "object") return null;
+  const o = r as Record<string, unknown>;
+  const d = typeof o.bookingDate === "string" ? new Date(o.bookingDate) : null;
+  const amount = typeof o.amount === "number" ? o.amount : Number(o.amount);
+  if (!d || Number.isNaN(d.getTime()) || !Number.isFinite(amount)) return null;
+  return {
+    bookingDate: d,
+    amount,
+    currency: typeof o.currency === "string" && o.currency ? o.currency.toUpperCase().slice(0, 3) : "EUR",
+    counterparty: typeof o.counterparty === "string" ? o.counterparty : null,
+    purpose: typeof o.purpose === "string" ? o.purpose : null,
+    reference: null,
+    raw: JSON.stringify(o),
+  };
+}
+
+/** CSV-Auszug (George/Erste) – deterministisch, ohne API. */
+function parseCsvStatement(bytes: Buffer | Uint8Array): NormalizedBooking[] {
   const text = decodeText(bytes);
   const delim = text.includes(";") ? ";" : ",";
   const rows = parseCsv(text, delim).filter((r) => r.some((c) => c.trim() !== ""));

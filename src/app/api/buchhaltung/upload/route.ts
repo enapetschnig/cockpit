@@ -35,8 +35,8 @@ export async function POST(req: Request) {
   const dup = await prisma.beleg.findUnique({ where: { fileSha: sha } });
   if (dup) return NextResponse.json({ error: "schon hochgeladen", belegId: dup.id }, { status: 409 });
 
-  // Buchungen parsen (CSV; PDF liefert leer = nur Archiv) → Monat aus erster Buchung ableiten.
-  const bookings = parseStatement(bytes, fileName, mime);
+  // Buchungen parsen (CSV deterministisch, PDF via unpdf+KI) → Monat aus erster Buchung ableiten.
+  const bookings = await parseStatement(bytes, fileName, mime);
   const period =
     String(form.get("periodMonth") || "") ||
     (bookings.length ? monthOf(bookings[0].bookingDate) : monthOf(new Date()));

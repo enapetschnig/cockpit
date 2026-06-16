@@ -123,6 +123,19 @@ export interface AdCampaignDTO {
   health: { state: AdState; label: string; reason: string };
 }
 
+export interface AdLocation {
+  type: string; // city | region | zip | country | custom
+  key?: string;
+  name?: string;
+  radiusKm?: number;
+  latitude?: number;
+  longitude?: number;
+}
+export interface AdInterest {
+  id: string;
+  name?: string;
+}
+
 export interface AdDraftDTO {
   id: string;
   adAccountId: string;
@@ -135,6 +148,12 @@ export interface AdDraftDTO {
   websiteUrl: string | null;
   privacyUrl: string | null;
   imageUrl: string | null;
+  gender: string | null;
+  ageMin: number;
+  ageMax: number;
+  tone: string;
+  locations: AdLocation[];
+  interests: AdInterest[];
   headline: string | null;
   primaryText: string | null;
   creativeNote: string | null;

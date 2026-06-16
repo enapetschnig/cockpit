@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LABELS } from "@/lib/labels";
-import type { EmailDTO, CustomerDTO, AdAccountDTO, AdCampaignDTO, AdDraftDTO } from "@/lib/types";
+import type { EmailDTO, CustomerDTO, AdAccountDTO, AdCampaignDTO, AdDraftDTO, AdLocation, AdInterest } from "@/lib/types";
 
 type Tab = "firmenrelevant" | "wichtig" | "buchhaltung" | "zuordnen" | "alle";
 type Acc = "alle" | "firma" | "privat";
@@ -33,6 +33,12 @@ type AdFormState = {
   websiteUrl: string;
   privacyUrl: string;
   imageUrl: string;
+  tone: string; // du | sie
+  gender: string; // "" | men | women
+  ageMin: number;
+  ageMax: number;
+  locations: AdLocation[];
+  interests: AdInterest[];
 };
 const emptyAdForm: AdFormState = {
   adAccountId: "",
@@ -45,6 +51,12 @@ const emptyAdForm: AdFormState = {
   websiteUrl: "",
   privacyUrl: "",
   imageUrl: "",
+  tone: "du",
+  gender: "",
+  ageMin: 25,
+  ageMax: 65,
+  locations: [],
+  interests: [],
 };
 const AD_GOALS: { v: string; t: string }[] = [
   { v: "leads", t: "Anfragen / Leads" },
@@ -86,6 +98,11 @@ export default function Cockpit() {
   const [adForm, setAdForm] = useState<AdFormState>(emptyAdForm);
   const [adDraft, setAdDraft] = useState<AdDraftDTO | null>(null);
   const [adBusy, setAdBusy] = useState(false);
+  // Facebook-Targeting-Suche (Orte + Interessen)
+  const [locQuery, setLocQuery] = useState("");
+  const [locResults, setLocResults] = useState<{ key: string; name: string; type: string; region?: string; country?: string }[]>([]);
+  const [intQuery, setIntQuery] = useState("");
+  const [intResults, setIntResults] = useState<{ id: string; name: string; audienceSize?: number; path?: string }[]>([]);
 
   async function loadEmails() {
     const r = await fetch("/api/emails");
@@ -163,7 +180,67 @@ export default function Cockpit() {
     const firstConnected = adAccounts.find((a) => a.hasToken);
     setAdForm({ ...emptyAdForm, adAccountId: firstConnected?.id || "" });
     setAdDraft(null);
+    setLocQuery("");
+    setLocResults([]);
+    setIntQuery("");
+    setIntResults([]);
     setView("anzeige_neu");
+  }
+
+  // Orte live aus Facebook suchen (debounced)
+  useEffect(() => {
+    const q = locQuery.trim();
+    if (q.length < 2) { setLocResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/ads/targeting?kind=location&q=${encodeURIComponent(q)}&accountId=${adForm.adAccountId}`);
+        const d = await r.json();
+        setLocResults(d.results || []);
+      } catch {
+        /* ignore */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locQuery]);
+
+  // Interessen live aus Facebook suchen (debounced)
+  useEffect(() => {
+    const q = intQuery.trim();
+    if (q.length < 2) { setIntResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/ads/targeting?kind=interest&q=${encodeURIComponent(q)}&accountId=${adForm.adAccountId}`);
+        const d = await r.json();
+        setIntResults(d.results || []);
+      } catch {
+        /* ignore */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intQuery]);
+
+  function addLocation(r: { key: string; name: string; type: string }) {
+    if (adForm.locations.some((l) => l.key === r.key)) return;
+    setAdForm((f) => ({ ...f, locations: [...f.locations, { type: r.type, key: r.key, name: r.name, radiusKm: r.type === "city" ? 30 : undefined }] }));
+    setLocQuery("");
+    setLocResults([]);
+  }
+  function removeLocation(key?: string) {
+    setAdForm((f) => ({ ...f, locations: f.locations.filter((l) => l.key !== key) }));
+  }
+  function setLocRadius(key: string | undefined, km: number) {
+    setAdForm((f) => ({ ...f, locations: f.locations.map((l) => (l.key === key ? { ...l, radiusKm: km } : l)) }));
+  }
+  function addInterest(r: { id: string; name: string }) {
+    if (adForm.interests.some((i) => i.id === r.id)) return;
+    setAdForm((f) => ({ ...f, interests: [...f.interests, { id: r.id, name: r.name }] }));
+    setIntQuery("");
+    setIntResults([]);
+  }
+  function removeInterest(id: string) {
+    setAdForm((f) => ({ ...f, interests: f.interests.filter((i) => i.id !== id) }));
   }
 
   async function createDraft(mode: "ki" | "vorlage") {
@@ -830,7 +907,84 @@ export default function Cockpit() {
               <label className="ad-lbl">Bild-URL (optional)</label>
               <input className="ad-inp" placeholder="https://… (Datei-Upload kommt bald)" value={adForm.imageUrl} onChange={(e) => setAdForm({ ...adForm, imageUrl: e.target.value })} />
 
-              <div className="actions" style={{ marginTop: 12 }}>
+              {/* Standorte – direkt aus Facebook */}
+              <div className="ad-sep">Zielgruppe & Standorte <span className="ad-sep-hint">direkt aus Facebook</span></div>
+              <label className="ad-lbl">Standorte (Ort + Umkreis)</label>
+              {adForm.locations.length > 0 && (
+                <div className="ad-chips">
+                  {adForm.locations.map((l) => (
+                    <span key={l.key} className="ad-chip">
+                      📍 {l.name}
+                      {l.type === "city" && (
+                        <select className="ad-chip-radius" value={l.radiusKm ?? 30} onChange={(e) => setLocRadius(l.key, Number(e.target.value))}>
+                          {[10, 15, 20, 25, 30, 40, 50, 80].map((km) => <option key={km} value={km}>+{km} km</option>)}
+                        </select>
+                      )}
+                      <button className="ad-chip-x" onClick={() => removeLocation(l.key)}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input className="ad-inp" placeholder="Ort suchen (z. B. Klagenfurt) …" value={locQuery} onChange={(e) => setLocQuery(e.target.value)} />
+              {locResults.length > 0 && (
+                <div className="ad-results">
+                  {locResults.map((r) => (
+                    <div key={r.key} className="ad-result" onClick={() => addLocation(r)}>
+                      <span>{r.name}</span>
+                      <span className="ad-result-meta">{r.type === "city" ? "Stadt" : r.type === "region" ? "Region" : r.type}{r.region ? ` · ${r.region}` : ""}{r.country ? ` · ${r.country}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {adForm.locations.length === 0 && <div className="ad-mini">Ohne Auswahl: ganz Österreich.</div>}
+
+              <label className="ad-lbl">Zielgruppen / Interessen</label>
+              {adForm.interests.length > 0 && (
+                <div className="ad-chips">
+                  {adForm.interests.map((i) => (
+                    <span key={i.id} className="ad-chip">🎯 {i.name}<button className="ad-chip-x" onClick={() => removeInterest(i.id)}>×</button></span>
+                  ))}
+                </div>
+              )}
+              <input className="ad-inp" placeholder="Interesse suchen (z. B. Photovoltaik, Eigenheim) …" value={intQuery} onChange={(e) => setIntQuery(e.target.value)} />
+              {intResults.length > 0 && (
+                <div className="ad-results">
+                  {intResults.map((r) => (
+                    <div key={r.id} className="ad-result" onClick={() => addInterest(r)}>
+                      <span>{r.name}</span>
+                      <span className="ad-result-meta">{r.audienceSize ? `${Math.round(r.audienceSize / 1000)}k` : ""}{r.path ? ` · ${r.path.split(" › ").slice(-1)[0]}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {adForm.interests.length === 0 && <div className="ad-mini">Optional – ohne Interessen wird breiter ausgespielt.</div>}
+
+              <div className="ad-row2" style={{ marginTop: 6 }}>
+                <div style={{ flex: 1 }}>
+                  <label className="ad-lbl">Geschlecht</label>
+                  <select className="ad-inp" value={adForm.gender} onChange={(e) => setAdForm({ ...adForm, gender: e.target.value })}>
+                    <option value="">Alle</option>
+                    <option value="men">Männer</option>
+                    <option value="women">Frauen</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label className="ad-lbl">Alter</label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input className="ad-inp" type="number" min={18} max={65} value={adForm.ageMin} onChange={(e) => setAdForm({ ...adForm, ageMin: Number(e.target.value) })} />
+                    <span style={{ color: "var(--sub)" }}>–</span>
+                    <input className="ad-inp" type="number" min={18} max={65} value={adForm.ageMax} onChange={(e) => setAdForm({ ...adForm, ageMax: Number(e.target.value) })} />
+                  </div>
+                </div>
+              </div>
+
+              <label className="ad-lbl">Anrede im Text</label>
+              <div className="ad-toggle">
+                <button className={"ad-toggle-b" + (adForm.tone === "du" ? " on" : "")} onClick={() => setAdForm({ ...adForm, tone: "du" })}>Du (nahbar)</button>
+                <button className={"ad-toggle-b" + (adForm.tone === "sie" ? " on" : "")} onClick={() => setAdForm({ ...adForm, tone: "sie" })}>Sie (seriös)</button>
+              </div>
+
+              <div className="actions" style={{ marginTop: 14 }}>
                 <button className="btn ai" disabled={adBusy} onClick={() => createDraft("ki")}>{adBusy ? "…" : "✨ Mit KI erstellen"}</button>
                 <button className="btn ghost" disabled={adBusy} onClick={() => createDraft("vorlage")}>Vorlage nutzen</button>
               </div>
@@ -851,6 +1005,12 @@ export default function Cockpit() {
               {adDraft.questions.length > 0 && (
                 <div className="ad-note"><b>📋 Formular:</b> {adDraft.questions.join(" · ")}</div>
               )}
+              <div className="ad-note">
+                <b>🎯 Zielgruppe:</b>{" "}
+                {adDraft.locations.length ? adDraft.locations.map((l) => l.name + (l.radiusKm ? ` +${l.radiusKm}km` : "")).join(", ") : "ganz Österreich"}
+                {" · "}{adDraft.ageMin}–{adDraft.ageMax} J.{adDraft.gender === "men" ? " · Männer" : adDraft.gender === "women" ? " · Frauen" : ""}
+                {adDraft.interests.length ? " · " + adDraft.interests.map((i) => i.name).join(", ") : ""}
+              </div>
 
               {adDraft.destination === "website" ? (
                 <>

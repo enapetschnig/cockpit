@@ -7,6 +7,7 @@
  * einen Beleg(status="collected"). browser-use brauchen wir nur für OpenAI + den BMD-Upload.
  */
 import crypto from "node:crypto";
+import { extractText, getDocumentProxy } from "unpdf";
 import { prisma } from "./db";
 import { fetchAttachment, type RawMail } from "./gmail";
 import { uploadBeleg } from "./supabase/server";
@@ -158,6 +159,63 @@ export function periodMonthOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// ── Metadaten aus dem PDF-Text (bevorzugt vor Mail-Body) ─────
+export interface PdfMeta {
+  invoiceDate: Date | null; // aus "Rechnungsdatum" – maßgeblich für Monat/Periode
+  amount: number | null;
+  currency: string | null;
+  invoiceNumber: string | null;
+}
+
+/** Liest Rechnungsdatum, Betrag & Nummer aus den PDF-Bytes. Fehler → alles null (Fallback greift). */
+export async function extractPdfMeta(bytes: Uint8Array): Promise<PdfMeta> {
+  const empty: PdfMeta = { invoiceDate: null, amount: null, currency: null, invoiceNumber: null };
+  try {
+    const pdf = await getDocumentProxy(bytes);
+    const res = await extractText(pdf, { mergePages: true });
+    const text = Array.isArray(res.text) ? res.text.join("\n") : res.text || "";
+    return text ? parseInvoicePdf(text) : empty;
+  } catch {
+    return empty;
+  }
+}
+
+function parseInvoicePdf(text: string): PdfMeta {
+  // Rechnungsdatum (DD.MM.YYYY) – die Regel: der Monat kommt aus DIESEM Datum, nicht vom Mail-Eingang.
+  let invoiceDate: Date | null = null;
+  const dm =
+    text.match(/Rechnungs?datum\s*:?\s*(\d{1,2})\.(\d{1,2})\.(\d{4})/i) ||
+    text.match(/(?:Belegdatum|Invoice date|Date of issue)\s*:?\s*(\d{1,2})\.(\d{1,2})\.(\d{4})/i);
+  if (dm) invoiceDate = new Date(Date.UTC(Number(dm[3]), Number(dm[2]) - 1, Number(dm[1])));
+
+  // Rechnungsnummer
+  const nm =
+    text.match(/Rechnungs?nummer\s*:?\s*([A-Za-z0-9][A-Za-z0-9/\-]{2,})/i) ||
+    text.match(/(?:Invoice (?:no\.?|number)|Rechnung\s*Nr\.?)\s*:?\s*([A-Za-z0-9][A-Za-z0-9/\-]{2,})/i);
+  const invoiceNumber = nm ? nm[1] : null;
+
+  // Betrag: nach dem aussagekräftigsten Label (Rechnungsbetrag > Gesamt > …)
+  const LABELS = [
+    "Rechnungsbetrag", "Gesamtbetrag", "Zahlbetrag", "Bruttobetrag", "Gesamtbruttobetrag",
+    "Zu zahlen", "Amount paid", "Amount due", "Total amount", "Gesamt", "Total",
+  ];
+  let amount: number | null = null;
+  let currency: string | null = null;
+  for (const label of LABELS) {
+    const re = new RegExp(label + "\\s*:?\\s*(€|EUR|\\$|USD)?\\s*([\\d.,]+)\\s*(€|EUR|\\$|USD)?", "i");
+    const m = text.match(re);
+    const val = m ? parseMoney(m[2]) : null;
+    if (val != null && val > 0) {
+      amount = val;
+      const sym = m![1] || m![3];
+      currency = sym ? CUR(sym) : null;
+      break;
+    }
+  }
+  if (amount != null && !currency) currency = /€|EUR/.test(text) ? "EUR" : /\$|USD/.test(text) ? "USD" : "EUR";
+  return { invoiceDate, amount, currency, invoiceNumber };
+}
+
 // ── Erfassen: Bytes -> Storage -> Beleg ──────────────────────
 export interface CaptureInput {
   kind?: string; // default "rechnung"
@@ -237,33 +295,51 @@ function pickInvoiceAttachment(raw: RawMail) {
  */
 export async function captureBelegeFromEmail(emailId: string | null, raw: RawMail): Promise<Beleg | null> {
   const { vendor, vendorKey } = resolveVendor(raw.fromAddr, raw.fromName, raw.subject);
-  const meta = extractBelegMeta(raw.subject, raw.body);
-  const base = {
+
+  // 1) PDF-Bytes besorgen (Anhang bevorzugt, sonst Stripe-Link)
+  let bytes: Buffer | null = null;
+  let fileName = "";
+  let fileMime = "application/pdf";
+  let sourceUrl: string | null = null;
+  const att = pickInvoiceAttachment(raw);
+  if (att) {
+    bytes = await fetchAttachment(raw.account, raw.gmailId, att.attachmentId);
+    fileName = att.filename;
+    fileMime = att.mimeType;
+  } else {
+    const link = extractStripePdfLink(raw.body);
+    if (link) {
+      const res = await fetch(link);
+      if (res.ok) {
+        bytes = Buffer.from(await res.arrayBuffer());
+        fileName = `${vendorKey}-${raw.receivedAt.toISOString().slice(0, 10)}.pdf`;
+        sourceUrl = link;
+      }
+    }
+  }
+  if (!bytes) return null;
+
+  // 2) Metadaten: PDF (Rechnungsdatum/Betrag) ist maßgeblich, Mail-Body nur Fallback.
+  const body = extractBelegMeta(raw.subject, raw.body);
+  const pdf = await extractPdfMeta(new Uint8Array(bytes));
+  const invoiceDate = pdf.invoiceDate || raw.receivedAt; // Regel: Monat = Rechnungsdatum aus dem PDF
+  const amount = pdf.amount ?? body.amount;
+  const currency = pdf.currency || body.currency;
+  const invoiceNumber = pdf.invoiceNumber || body.invoiceNumber;
+
+  return captureBeleg({
     source: "email",
     sourceEmailId: emailId,
     vendor,
     vendorKey,
-    invoiceNumber: meta.invoiceNumber,
-    invoiceDate: raw.receivedAt,
-    periodMonth: periodMonthOf(raw.receivedAt),
-    amount: meta.amount,
-    currency: meta.currency,
-  };
-
-  const att = pickInvoiceAttachment(raw);
-  if (att) {
-    const bytes = await fetchAttachment(raw.account, raw.gmailId, att.attachmentId);
-    return captureBeleg({ ...base, bytes, fileName: att.filename, fileMime: att.mimeType });
-  }
-
-  const link = extractStripePdfLink(raw.body);
-  if (link) {
-    const res = await fetch(link);
-    if (res.ok) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      const name = `${vendorKey}-${raw.receivedAt.toISOString().slice(0, 10)}.pdf`;
-      return captureBeleg({ ...base, bytes: buf, fileName: name, fileMime: "application/pdf", sourceUrl: link });
-    }
-  }
-  return null;
+    bytes,
+    fileName,
+    fileMime,
+    sourceUrl,
+    invoiceNumber,
+    invoiceDate,
+    periodMonth: periodMonthOf(invoiceDate),
+    amount,
+    currency,
+  });
 }

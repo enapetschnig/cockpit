@@ -270,23 +270,118 @@ function disabledAdvantageCreativeSpec() {
   };
 }
 
+type SelLocation = { type: string; key?: string; name?: string; radiusKm?: number; latitude?: number; longitude?: number };
+type SelInterest = { id: string; name?: string };
+
+function parseJsonArr<T>(s: string): T[] {
+  try {
+    const a = JSON.parse(s);
+    return Array.isArray(a) ? (a as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function buildLaunchTargeting(d: AdDraft) {
   const t: Record<string, unknown> = {
     age_min: d.ageMin,
     age_max: d.ageMax,
-    geo_locations: { countries: [(d.country || "AT").toUpperCase()] },
     publisher_platforms: ["facebook", "instagram"],
     facebook_positions: ["feed"],
     instagram_positions: ["stream"],
+    // Advantage+ Audience AUS – exakt die gewählte Zielgruppe, kein automatisches Aufblähen.
+    targeting_automation: { advantage_audience: 0 },
   };
-  if (d.latitude != null && d.longitude != null && d.radiusKm != null) {
-    t.geo_locations = {
-      custom_locations: [{ latitude: d.latitude, longitude: d.longitude, radius: d.radiusKm, distance_unit: "kilometer" }],
-    };
+
+  // Orte direkt aus Facebook (per adgeolocation gewählt) → geo_locations-Buckets
+  const locs = parseJsonArr<SelLocation>(d.locationsJson);
+  const geo: Record<string, unknown> = {};
+  const cities: unknown[] = [];
+  const regions: unknown[] = [];
+  const zips: unknown[] = [];
+  const countries: string[] = [];
+  const custom: unknown[] = [];
+  for (const l of locs) {
+    const radius = l.radiusKm && l.radiusKm > 0 ? l.radiusKm : 25;
+    if (l.type === "city" && l.key) cities.push({ key: l.key, radius, distance_unit: "kilometer" });
+    else if (l.type === "region" && l.key) regions.push({ key: l.key });
+    else if (l.type === "zip" && l.key) zips.push({ key: l.key });
+    else if (l.type === "country" && l.key) countries.push(l.key.toUpperCase());
+    else if (l.latitude != null && l.longitude != null) custom.push({ latitude: l.latitude, longitude: l.longitude, radius, distance_unit: "kilometer" });
   }
+  if (cities.length) geo.cities = cities;
+  if (regions.length) geo.regions = regions;
+  if (zips.length) geo.zips = zips;
+  if (countries.length) geo.countries = countries;
+  if (custom.length) geo.custom_locations = custom;
+
+  // Fallback: einzelner Lat/Lng-Radius (Altfeld) oder ganzes Land
+  if (Object.keys(geo).length === 0) {
+    if (d.latitude != null && d.longitude != null && d.radiusKm != null) {
+      geo.custom_locations = [{ latitude: d.latitude, longitude: d.longitude, radius: d.radiusKm, distance_unit: "kilometer" }];
+    } else {
+      geo.countries = [(d.country || "AT").toUpperCase()];
+    }
+  }
+  t.geo_locations = geo;
+
   if (d.gender === "men") t.genders = [1];
   else if (d.gender === "women") t.genders = [2];
+
+  // Zielgruppen/Interessen direkt aus Facebook (per adinterest gewählt)
+  const interests = parseJsonArr<SelInterest>(d.interestsJson).filter((i) => i && i.id);
+  if (interests.length) {
+    t.flexible_spec = [{ interests: interests.map((i) => ({ id: i.id, name: i.name })) }];
+  }
   return t;
+}
+
+// ── Facebook Targeting-Suche (Orte + Interessen, live aus Meta) ────────────
+export interface LocationHit {
+  key: string;
+  name: string;
+  type: string; // city | region | zip | country | subcity | neighborhood | ...
+  country?: string;
+  region?: string;
+}
+export async function searchLocations(adAccountId: string, q: string): Promise<LocationHit[]> {
+  if (!q.trim()) return [];
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const d = await graphGet("search", token, {
+    type: "adgeolocation",
+    location_types: JSON.stringify(["city", "region", "zip", "country"]),
+    q: q.trim(),
+    limit: "12",
+  });
+  return ((d.data as Record<string, unknown>[]) ?? []).map((r) => ({
+    key: String(r.key),
+    name: String(r.name ?? ""),
+    type: String(r.type ?? "city"),
+    country: (r.country_name as string) || (r.country_code as string) || undefined,
+    region: (r.region as string) || undefined,
+  }));
+}
+
+export interface InterestHit {
+  id: string;
+  name: string;
+  audienceSize?: number;
+  path?: string;
+}
+export async function searchInterests(adAccountId: string, q: string): Promise<InterestHit[]> {
+  if (!q.trim()) return [];
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const d = await graphGet("search", token, { type: "adinterest", q: q.trim(), limit: "12" });
+  return ((d.data as Record<string, unknown>[]) ?? []).map((r) => ({
+    id: String(r.id),
+    name: String(r.name ?? ""),
+    audienceSize: (r.audience_size_upper_bound as number) ?? (r.audience_size as number) ?? undefined,
+    path: Array.isArray(r.path) ? (r.path as string[]).join(" › ") : undefined,
+  }));
 }
 
 function slug(s: string, max = 40): string {

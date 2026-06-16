@@ -273,6 +273,11 @@ model AdDraft {
   radiusKm    Float?
   latitude    Float?
   longitude   Float?
+  tone        String  @default("du") // du | sie – Anrede für den KI-Text
+
+  // Targeting direkt aus Facebook (per adgeolocation/adinterest-Suche gewählt)
+  locationsJson String @default("[]") // [{type:"city|region|zip|country|custom", key?, name, radiusKm?, latitude?, longitude?}]
+  interestsJson String @default("[]") // [{id, name}]
 
   // KI/Vorlagen-Output
   headline      String?

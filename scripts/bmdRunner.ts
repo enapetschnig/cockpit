@@ -28,10 +28,6 @@ const FOLDER_TREE: Record<Folder, RegExp> = {
   eingang: /ER\s+Eingangsrechnung/i,
   kreditkarte: /KK\s+Kreditkarte\b/i,
 };
-const DROP_HINT: Record<Folder, RegExp> = {
-  eingang: /Legen Sie Ihre ER/i,
-  kreditkarte: /Legen Sie Ihre/i,
-};
 
 /** "2026-06" → "6/26" */
 function periodShort(periodMonth: string | null): string {
@@ -41,6 +37,12 @@ function periodShort(periodMonth: string | null): string {
 }
 function descriptionFor(b: Beleg): string {
   return [b.vendor, periodShort(b.periodMonth)].filter(Boolean).join(" ");
+}
+/** "2026-06" → "6/2026" (BMD-Buchungsperiode) */
+function periodLong(periodMonth: string | null): string {
+  if (!periodMonth || !/^\d{4}-\d{2}$/.test(periodMonth)) return "";
+  const [y, m] = periodMonth.split("-");
+  return `${Number(m)}/${y}`;
 }
 
 /** Bank vs. Kreditkarte aus dem Abgleich ableiten. */
@@ -76,39 +78,30 @@ async function selectFolder(page: Page, folder: Folder): Promise<void> {
   await page.waitForTimeout(800);
 }
 
-/** Lädt eine Datei über "Dateien hochladen" (nativer Dateidialog). */
-async function uploadFile(page: Page, localPath: string): Promise<void> {
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser", { timeout: 12000 }),
-    page.getByText("Dateien hochladen", { exact: false }).first().click(),
-  ]);
-  await chooser.setFiles(localPath);
-}
-
-/** Beste-Mühe: Beschreibung der frisch hochgeladenen Zeile setzen (ExtJS-Grid Inline-Edit). */
-async function setDescription(page: Page, fileName: string, desc: string): Promise<boolean> {
-  try {
-    const row = page.getByText(fileName, { exact: false }).first();
-    await row.waitFor({ timeout: 25000 });
-    // Beschreibungs-Zelle in derselben Zeile (rechts neben dem Dateinamen) doppelklicken.
-    const cell = page.locator("tr", { has: row }).locator("td").nth(1);
-    await cell.dblclick({ timeout: 5000 });
-    await page.keyboard.type(desc, { delay: 10 });
-    await page.keyboard.press("Enter");
-    return true;
-  } catch {
-    return false;
+/**
+ * Vollständiger BMD-Upload-Ablauf (live verifiziert):
+ *  Toolbar "Dateien hochladen" → Modal "Zusatzinformation" (Buchungsperiode + Beschreibung)
+ *  → "Übernehmen" → Modal "Dateien hochladen": verstecktes input[type=file] per setInputFiles
+ *  → "Dateien hochladen" (Modal-Button) → Bestätigung "Der Upload wurde fertiggestellt!".
+ * Voraussetzung: der Ziel-Ordner ist bereits selektiert (selectFolder).
+ */
+async function uploadViaModal(page: Page, localPath: string, desc: string, periodMY: string): Promise<boolean> {
+  await page.getByText("Dateien hochladen", { exact: false }).first().click(); // Toolbar
+  await page.getByText("Zusatzinformation", { exact: false }).first().waitFor({ timeout: 10000 });
+  if (periodMY) {
+    // Buchungsperiode best effort (Default = aktuelle Periode; Beschreibung trägt den Monat ohnehin).
+    await page.locator('input[id*="AttrFieldCmbField"]').first().fill(periodMY).catch(() => {});
   }
-}
-
-/** Wartet, bis die hochgeladene Datei in der Liste auftaucht (Erfolgs-Nachweis). */
-async function confirmUploaded(page: Page, fileName: string): Promise<boolean> {
-  return page
-    .getByText(fileName, { exact: false })
-    .first()
-    .waitFor({ timeout: 30000 })
-    .then(() => true)
-    .catch(() => false);
+  await page.locator('input[id*="AttrFieldTextField"]').first().fill(desc);
+  await page.getByText("Übernehmen", { exact: true }).first().click();
+  await page.waitForSelector("input[type=file]", { state: "attached", timeout: 10000 });
+  await page.setInputFiles("input[type=file]", localPath);
+  await page.waitForTimeout(1500);
+  await page.getByText("Dateien hochladen", { exact: false }).last().click(); // Modal-Button
+  return Promise.race([
+    page.getByText(/Upload wurde fertiggestellt/i).first().waitFor({ timeout: 35000 }).then(() => true),
+    page.getByText(desc, { exact: false }).first().waitFor({ timeout: 35000 }).then(() => true),
+  ]).catch(() => false);
 }
 
 async function downloadPdf(b: Beleg): Promise<string> {
@@ -160,24 +153,21 @@ async function main(): Promise<void> {
         loggedIn = true;
       }
       const folder = await folderForBeleg(b);
-      await selectFolder(page, folder);
-      await uploadFile(page, tmp);
-
-      const ok = await confirmUploaded(page, b.fileName || "");
-      if (!ok) throw new Error("Upload nicht bestätigt (Datei nicht in Liste)");
       const desc = descriptionFor(b);
-      const descOk = await setDescription(page, b.fileName || "", desc);
+      await selectFolder(page, folder);
+      const ok = await uploadViaModal(page, tmp, desc, periodLong(b.periodMonth));
+      if (!ok) throw new Error("Upload nicht bestätigt");
 
       await prisma.beleg.update({
         where: { id: b.id },
         data: {
           status: "uploaded",
           bmdUploadedAt: new Date(),
-          confirmation: `${folder === "kreditkarte" ? "KK Kreditkarte" : "ER Eingangsrechnungen"} · ${desc}${descOk ? "" : " (Beschreibung manuell prüfen)"}`,
+          confirmation: `${folder === "kreditkarte" ? "KK Kreditkarte" : "ER Eingangsrechnungen"} · ${desc}`,
           bmdError: null,
         },
       });
-      console.log(`  ✅ ${b.vendor} → ${folder} · "${desc}"${descOk ? "" : " (Beschreibung fehlgeschlagen)"}`);
+      console.log(`  ✅ ${b.vendor} → ${folder} · "${desc}"`);
     } catch (e) {
       await prisma.beleg.update({ where: { id: b.id }, data: { status: "failed", bmdError: (e as Error).message } });
       console.log(`  ⚠️ ${b.vendor}: ${(e as Error).message}`);

@@ -105,14 +105,16 @@ export function toAdCampaignDTO(c: AdCampaign, health: AdCampaignDTO["health"]):
   };
 }
 
-export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
-  let questions: string[] = [];
+function safeArr<T>(s: string): T[] {
   try {
-    const a = JSON.parse(d.questionsJson);
-    if (Array.isArray(a)) questions = a.map(String);
+    const a = JSON.parse(s);
+    return Array.isArray(a) ? (a as T[]) : [];
   } catch {
-    /* ignore */
+    return [];
   }
+}
+
+export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
   return {
     id: d.id,
     adAccountId: d.adAccountId,
@@ -125,10 +127,16 @@ export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
     websiteUrl: d.websiteUrl,
     privacyUrl: d.privacyUrl,
     imageUrl: d.imageUrl,
+    gender: d.gender,
+    ageMin: d.ageMin,
+    ageMax: d.ageMax,
+    tone: d.tone,
+    locations: safeArr(d.locationsJson),
+    interests: safeArr(d.interestsJson),
     headline: d.headline,
     primaryText: d.primaryText,
     creativeNote: d.creativeNote,
-    questions,
+    questions: safeArr<string>(d.questionsJson).map(String),
     status: d.status,
     launchError: d.launchError,
     metaCampaignId: d.metaCampaignId,

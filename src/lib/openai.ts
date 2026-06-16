@@ -212,67 +212,109 @@ export async function composeEmail(input: { to: string; instruction: string; con
   return { subject: (j.subject || "Nachricht").trim(), body: (j.body || "").trim() };
 }
 
-// ── Werbeanzeigen-Texte (Meta Ads) ───────────────────────────────────────
+// ── Werbeanzeigen-Texte (Meta Ads) – nach den Local-Ads-Guidelines ────────
 export interface AdCopyInput {
   goal: string; // leads | jobs | appointments | traffic
   offer: string;
-  region: string;
+  region: string; // freie Region/Stadt-Angabe (Anzeigentext)
+  city?: string; // konkreter Ort für die lokale Direktansprache (sonst aus region abgeleitet)
   benefit?: string;
   destination?: string; // lead_form | website
   formStyle?: string; // simple | qualified | callback
+  tone?: string; // "du" (Standard, nahbar) | "sie" (konservativ/B2B)
+  styleSample?: string; // optionaler eigener Beispieltext (Brand Voice)
 }
 export interface AdCopy {
   headline: string;
   primaryText: string;
-  creativeNote: string; // Bild-/Video-Idee
+  creativeNote: string; // Video-Skript / Bild-Idee
   questions: string[];
 }
 
-/** Deterministische Vorlage (kein KI-Key nötig) – portiert aus der bestehenden Ads-App. */
+const CTA_BY_GOAL: Record<string, string> = {
+  leads: "Anfrage senden",
+  jobs: "Jetzt bewerben",
+  appointments: "Termin anfragen",
+  traffic: "Mehr erfahren",
+};
+
+function cityFromInput(input: AdCopyInput): string {
+  if (input.city?.trim()) return input.city.trim();
+  // Erstes Wort der Region als grober Ort (z. B. "Klagenfurt und 30 km Umgebung" → "Klagenfurt")
+  const m = (input.region || "").trim().match(/^[\p{L}.\-]+/u);
+  return m ? m[0] : input.region || "deiner Region";
+}
+
+/** Die hochgeladenen Local-Ads-Guidelines als System-Prompt (PAS+CTA, lokale Ansprache, Du/Sie). */
+function adSystemPrompt(tone: string): string {
+  const du = tone !== "sie";
+  const anrede = du ? `Duze die Leser (per "du"), nahbar und auf Augenhöhe` : `Sieze die Leser (per "Sie"), seriös aber persönlich`;
+  return [
+    `Du bist Texter für LOKALE Meta-Werbeanzeigen (Facebook/Instagram Newsfeed) von regionalen Handwerks-/Dienstleistungsbetrieben in Österreich.`,
+    `Schreibe nach diesem bewährten Local-Ads-Framework:`,
+    `1) LOKALE DIREKTANSPRACHE ist Pflicht – in der Headline (Ort + Zielgruppe + Benefit) UND als allererste Zeile des Textes, z. B. "An alle [Zielgruppe] in [STADT] und Umgebung:".`,
+    `2) Struktur des Textes: PROBLEM (rhetorische Frage, die abholt) -> AGITATION (Schmerzpunkt verschärfen, gern mit "..., oder?") -> LÖSUNG (der Betrieb als einfache, lokale Lösung, kurzes Trust-Element/Referenzen vor Ort) -> KLARER CTA mit Erklärung des nächsten Schritts (z. B. "Klick auf den Button, hinterlass deine Nummer – wir melden uns kostenlos und unverbindlich").`,
+    `3) Optional am Ende ECHTE Verknappung (nur wenn glaubwürdig: "Nur noch 2 Plätze frei"). Persönliche Grußformel erlaubt.`,
+    `4) Tonalität: persönlich, gesprochen, Ich-/Wir-Form, kurze Absätze bzw. Ein-Satz-Zeilen, kein Fachjargon, kein Marketing-Blabla, nahbar statt hochglanz. ${anrede}.`,
+    `5) VERBOTEN: niemals andeuten, WARUM jemand die Anzeige sieht ("du siehst das, weil du aus ... bist"); kein Fachjargon; bei Photovoltaik NICHT das Thema Energiegemeinschaften ansprechen; kein Text im Werbebild.`,
+    `6) Bei Photovoltaik/Solar: Headline im Stil "PV-Anlage einfach prüfen lassen", Fokus auf einfache kostenlose Ersteinschätzung, Fragen inkl. Dachart und ungefähre Stromkosten.`,
+    `7) creativeNote = konkretes Video-Skript zum Selberdrehen (60–90 Sek, One-Take), mit Timing: 0–3s lokaler Hook vor lokalem Hintergrund, 3–10s Ergebnis/Arbeit zeigen, 10–17s Vorteil, 17–22s klarer CTA.`,
+    `8) questions = 2–4 kurze Lead-Formularfragen, IMMER mit Name, Telefonnummer und Ort; je nach Ziel ergänzen (Jobs: Berufserfahrung + Startzeitpunkt; Termine: Wunschtermin; PV: Dachart + Stromkosten).`,
+    `Gib NUR gültiges JSON zurück: { "headline": string (kurz, mit Ort+Zielgruppe), "primaryText": string (mehrere kurze Zeilen, lokale Ansprache zuerst, endet mit CTA), "creativeNote": string (Video-Skript mit Timing), "questions": string[] }.`,
+  ].join("\n");
+}
+
+/** Deterministische Vorlage (kein KI-Key nötig) – an die Guidelines angelehnt, mit lokaler Ansprache. */
 export function templateAdCopy(input: AdCopyInput): AdCopy {
-  const region = input.region || "Ihrer Region";
-  const offer = input.offer || "unser Angebot";
+  const du = input.tone !== "sie";
+  const city = cityFromInput(input);
+  const offer = input.offer || (du ? "unser Angebot" : "unser Angebot");
+  const cta = CTA_BY_GOAL[input.goal] || "Anfrage senden";
   const benefitLine = input.benefit ? `${input.benefit}. ` : "";
-  const cta = input.goal === "jobs" ? "Jetzt bewerben" : "Jetzt anfragen";
   const isPv = ["pv", "photovoltaik", "solar", "solaranlage"].some((t) => offer.toLowerCase().includes(t));
+  const youHave = du ? "Du suchst" : "Sie suchen";
+  const yourClick = du ? "Klick" : "Klicken Sie";
+  const weCall = du ? "wir melden uns" : "wir melden uns";
 
   let headline: string;
   let questions: string[];
   if (input.goal === "jobs") {
-    headline = "Jetzt im Team bewerben";
-    questions = ["Name", "Telefonnummer", "Ort", "Was machst du beruflich?"];
+    headline = `Für ${city}er: Jetzt im Team bewerben`;
+    questions = ["Name", "Telefonnummer", "Ort", "Berufserfahrung", "Wann können Sie starten?"];
   } else {
-    headline = "Kostenlose Anfrage in Ihrer Nähe";
+    headline = `Für ${city} & Umgebung: ${offer}`;
     questions = ["Name", "Telefonnummer", "Ort", "Worum geht es?"];
   }
-  if (input.formStyle === "qualified") questions = [...questions, "Wunschtermin", "Budgetrahmen"];
+  if (input.formStyle === "qualified") questions = [...questions, "Wann möchten Sie starten?"];
   else if (input.formStyle === "callback") questions = ["Name", "Telefonnummer", "Ort", "Beste Rückrufzeit"];
 
   let primaryText: string;
   let creativeNote: string;
   if (isPv) {
-    headline = "PV-Anlage einfach prüfen lassen";
+    headline = `PV in ${city}? Einfach prüfen lassen`;
     questions = ["Name", "Telefonnummer", "Ort", "Dachart", "ungefähre Stromkosten"];
     primaryText =
-      `Sie denken über eine PV-Anlage in ${region} nach? ${benefitLine}` +
-      `Wir prüfen, welche Lösung zu Haus, Dach und Verbrauch passt. ` +
-      `Klicken Sie auf „${cta}" und wir melden uns mit einer einfachen Ersteinschätzung.`;
+      `An alle Hausbesitzer in ${city} & Umgebung:\n\n` +
+      `${du ? "Denkst du" : "Denken Sie"} über eine PV-Anlage nach, ${du ? "weißt aber nicht" : "wissen aber nicht"}, ob sie sich beim eigenen Dach wirklich lohnt? ${benefitLine}\n` +
+      `Wir prüfen, welche Lösung zu Haus, Dach und Verbrauch passt – einfach und verständlich.\n\n` +
+      `${yourClick} unten auf „${cta}" und ${weCall} mit einer kostenlosen Ersteinschätzung.`;
     creativeNote =
-      "Dreh ein kurzes Video direkt vor einem Hausdach, Wechselrichter oder Speicher. " +
-      'Starte mit: „Sie überlegen, ob sich eine PV-Anlage bei Ihnen lohnt?" Kein Fachjargon.';
+      `Kurzes Handy-Video (60–90 Sek) direkt vor einem Hausdach in ${city}. ` +
+      `0–3s: „${du ? "Du überlegst" : "Sie überlegen"}, ob sich eine PV-Anlage bei dir lohnt?". 3–10s Dach/Speicher zeigen, 10–17s Vorteil, 17–22s CTA. Kein Fachjargon, kein Thema Energiegemeinschaften.`;
   } else {
     primaryText =
-      `Sie suchen eine einfache Lösung für ${offer} in ${region}? ${benefitLine}` +
-      `Wir helfen Ihnen schnell und unkompliziert weiter. ` +
-      `Klicken Sie auf „${cta}" und wir melden uns mit den nächsten Schritten.`;
+      `An alle in ${city} & Umgebung:\n\n` +
+      `${youHave} ${offer}? ${benefitLine}\n` +
+      `Wir helfen ${du ? "dir" : "Ihnen"} schnell und unkompliziert weiter – vom Betrieb direkt aus der Region.\n\n` +
+      `${yourClick} unten auf „${cta}" und ${weCall} mit den nächsten Schritten.`;
     creativeNote =
-      "Kurzes, ehrliches Handy-Video vom Inhaber oder ein klares Vorher/Nachher-Bild. " +
-      "Erste 3 Sekunden: das Problem des Kunden direkt ansprechen.";
+      `Ehrliches Handy-Video vom Inhaber vor einem lokalen Hintergrund in ${city} (oder klares Vorher/Nachher). ` +
+      `0–3s lokaler Hook („${city}, aufgepasst!"), 3–10s Arbeit/Ergebnis zeigen, 10–17s Vorteil, 17–22s CTA.`;
   }
   return { headline, primaryText, creativeNote, questions };
 }
 
-/** KI-Variante (OpenAI). Fällt ohne Key/bei Fehler auf templateAdCopy zurück. */
+/** KI-Variante (OpenAI, nach den Guidelines). Fällt ohne Key/bei Fehler auf templateAdCopy zurück. */
 export async function draftAdCopy(input: AdCopyInput): Promise<AdCopy> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return templateAdCopy(input);
@@ -281,25 +323,22 @@ export async function draftAdCopy(input: AdCopyInput): Promise<AdCopy> {
     const client = new OpenAI({ apiKey });
     const resp = await client.chat.completions.create({
       model,
-      temperature: 0.6,
+      temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "Du textest lokale Meta-Werbeanzeigen (Facebook/Instagram) für österreichische Handwerks-/Dienstleistungsbetriebe. " +
-            "Ziel: einfache, vertrauensvolle Anzeigen, die Anfragen/Leads in der Region bringen – Du-frei, klares Hochdeutsch, kein Marketing-Blabla, keine Emojis, keine Übertreibung. " +
-            'Gib NUR JSON zurück: { "headline": string (max 40 Zeichen), "primaryText": string (2-4 Sätze, endet mit Handlungsaufforderung), "creativeNote": string (konkrete Bild-/Video-Idee zum Selberdrehen), "questions": string[] (3-5 kurze Formularfragen, immer Name + Telefonnummer + Ort enthalten) }.',
-        },
+        { role: "system", content: adSystemPrompt(input.tone || "du") },
         {
           role: "user",
           content: [
-            `Ziel: ${input.goal}`,
+            `Ziel der Kampagne: ${input.goal}`,
             `Angebot/Leistung: ${input.offer}`,
-            `Region: ${input.region}`,
-            input.benefit ? `Vorteil: ${input.benefit}` : "",
-            `Ziel der Anzeige: ${input.destination === "website" ? "Klicks auf Website" : "Anfragen über Lead-Formular"}`,
-            "Schreibe Headline, Primärtext, eine Creative-Idee und die Formularfragen.",
+            `Ort für die lokale Ansprache: ${cityFromInput(input)}`,
+            `Region (Anzeigentext): ${input.region}`,
+            input.benefit ? `Vorteil/USP: ${input.benefit}` : "",
+            `Anzeigenziel: ${input.destination === "website" ? "Klicks auf Website" : "Anfragen über Lead-Sofortformular"}`,
+            `CTA-Button: ${CTA_BY_GOAL[input.goal] || "Anfrage senden"}`,
+            input.styleSample ? `Orientiere dich am Stil dieses Beispieltextes:\n"""${input.styleSample}"""` : "",
+            "Schreibe Headline, Anzeigentext (lokale Ansprache zuerst, PAS+CTA), ein Video-Skript und die Formularfragen.",
           ]
             .filter(Boolean)
             .join("\n"),
