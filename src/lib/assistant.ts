@@ -9,6 +9,7 @@ import { getConfig } from "./config";
 import { draftEmailReply, composeEmail } from "./openai";
 import { listEvents, createEvent, deleteEvent } from "./calendar";
 import { getThreadContext } from "./gmail";
+import { listFollowups } from "./followups";
 import { ASSISTANT_PERSONA } from "./persona";
 
 async function memoryContext(): Promise<string> {
@@ -178,6 +179,30 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       parameters: { type: "object", properties: { account: { type: "string", enum: ["firma", "privat"] }, event_id: { type: "string" } }, required: ["event_id"] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_followups",
+      description: "Firmenrelevante Mails, die seit Tagen unbeantwortet sind (Follow-up-Radar). Für 'wer wartet auf Antwort'.",
+      parameters: { type: "object", properties: { min_hours: { type: "number", description: "Mindestalter in Stunden, Standard 48" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "snooze_email",
+      description: "Stellt eine Mail zurück (Wiedervorlage) bis zu einem Zeitpunkt; sie meldet sich dann erneut.",
+      parameters: { type: "object", properties: { email_id: { type: "string" }, until: { type: "string", description: "YYYY-MM-DDTHH:MM:SS (Wiener Zeit)" } }, required: ["email_id", "until"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_reminder",
+      description: "Erstellt eine zeitliche Erinnerung ('erinnere mich Montag an X'). Meldet sich zum Zeitpunkt per Telegram.",
+      parameters: { type: "object", properties: { text: { type: "string" }, when: { type: "string", description: "YYYY-MM-DDTHH:MM:SS (Wiener Zeit)" } }, required: ["text", "when"] },
+    },
+  },
 ];
 
 interface Args {
@@ -204,6 +229,9 @@ interface Args {
   location?: string;
   description?: string;
   event_id?: string;
+  min_hours?: number;
+  until?: string;
+  when?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -369,6 +397,32 @@ async function runTool(name: string, a: Args): Promise<unknown> {
         return { error: (e as Error).message };
       }
     }
+    case "list_followups": {
+      const fups = await listFollowups(a.min_hours ?? 48);
+      return {
+        followups: fups.map((e) => ({
+          id: e.id,
+          from: e.fromName,
+          subject: e.subject,
+          since: e.receivedAt.toISOString().slice(0, 10),
+          customer: e.customer?.name ?? null,
+        })),
+      };
+    }
+    case "snooze_email": {
+      if (!a.email_id || !a.until) return { error: "email_id und until nötig" };
+      const until = new Date(a.until);
+      if (isNaN(until.getTime())) return { error: "ungültiges Datum" };
+      await prisma.email.update({ where: { id: a.email_id }, data: { snoozedUntil: until } });
+      return { ok: true, wiedervorlage: until.toISOString() };
+    }
+    case "set_reminder": {
+      if (!a.text || !a.when) return { error: "text und when nötig" };
+      const due = new Date(a.when);
+      if (isNaN(due.getTime())) return { error: "ungültiges Datum" };
+      await prisma.todo.create({ data: { text: a.text, dueAt: due } });
+      return { ok: true, erinnerung: a.text, am: due.toISOString() };
+    }
     default:
       return { error: "unbekanntes Tool" };
   }
@@ -433,14 +487,24 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   const history = (await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, take: 16 })).reverse();
   // Arbeits-Gedächtnis (zuletzt gezeigte Mails / aktiver Entwurf) – frisch ohne Cache laden.
   const convRow = await prisma.setting.findUnique({ where: { key: "CONV_STATE" } });
-  const convState = convRow?.value?.trim();
+  let convState = "";
+  if (convRow?.value) {
+    try {
+      const o = JSON.parse(convRow.value) as { ts?: number; text?: string };
+      if (o.ts && Date.now() - o.ts < 30 * 60 * 1000) convState = (o.text || "").trim();
+    } catch {
+      convState = "";
+    }
+  }
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     {
       role: "system",
       content:
         ASSISTANT_PERSONA.replace("{DATUM}", today).replace("{MEMORIES}", memText) +
-        "\n\nDu verwaltest auch die Google-Kalender beider Konten: Termine anzeigen (list_events), anlegen (create_event), löschen (delete_event). Rechne relative Angaben wie 'Donnerstag 14 Uhr' aus dem heutigen Datum in Wiener Zeit aus. Standard-Konto firma, außer der Nutzer meint privat.",
+        "\n\nDu verwaltest auch die Google-Kalender beider Konten: Termine anzeigen (list_events), anlegen (create_event), löschen (delete_event). Standard-Konto firma, außer der Nutzer meint privat. " +
+        "Weitere Fähigkeiten: list_followups (welche Mails warten seit Tagen auf Antwort), snooze_email (Mail zurückstellen/Wiedervorlage), set_reminder (zeitliche Erinnerung 'erinnere mich Montag an X'). " +
+        "Rechne alle Zeitpunkte (start/end/until/when) aus dem heutigen Datum in Wiener Zeit als 'YYYY-MM-DDTHH:MM:SS' aus.",
     },
     ...(convState
       ? [{ role: "system" as const, content: `Arbeits-Kontext der letzten Nachricht (für Bezüge wie 'die zweite', 'ordne die zu', 'antworte ihm'):\n${convState}` }]
@@ -506,7 +570,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   if (lastEmails.length) ctxParts.push("Zuletzt gezeigte Mails:\n" + lastEmails.map((e, i) => `  ${i + 1}) id=${e.id} | ${e.from}: ${e.subject}`).join("\n"));
   if (drafted) ctxParts.push(`Aktiver Antwort-Entwurf: email id=${drafted.emailId} an ${drafted.fromName}`);
   if (ctxParts.length) {
-    const v = ctxParts.join("\n");
+    const v = JSON.stringify({ ts: Date.now(), text: ctxParts.join("\n") });
     await prisma.setting.upsert({ where: { key: "CONV_STATE" }, create: { key: "CONV_STATE", value: v }, update: { value: v } });
   }
 

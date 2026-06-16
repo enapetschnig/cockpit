@@ -50,16 +50,20 @@ model Email {
   classifiedAt       DateTime?
 
   // ── Workflow ─────────────────────────────────────────────
-  filed      Boolean   @default(false) // in Buchhaltung abgelegt
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id])
-  todos      Todo[]
+  filed        Boolean   @default(false) // in Buchhaltung abgelegt
+  repliedAt    DateTime? // wann auf den Thread geantwortet wurde (Follow-up-Radar)
+  snoozedUntil DateTime? // bis wann zurückgestellt (Wiedervorlage)
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  todos        Todo[]
 }
 
 model Todo {
   id         String    @id @default(cuid())
   text       String
   done       Boolean   @default(false)
+  dueAt      DateTime? // optionaler Termin/Erinnerung für die Aufgabe
+  remindedAt DateTime? // wann an die fällige Aufgabe erinnert wurde
   createdAt  DateTime  @default(now())
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id])

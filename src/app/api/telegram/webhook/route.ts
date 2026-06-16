@@ -51,8 +51,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const update = (await req.json().catch(() => ({}))) as { message?: TgMessage; callback_query?: TgCallback };
+  const update = (await req.json().catch(() => ({}))) as { update_id?: number; message?: TgMessage; callback_query?: TgCallback };
   const chatId = await getConfig("TELEGRAM_CHAT_ID");
+
+  // Dedupe: Telegram stellt Updates bei Timeout erneut zu -> jedes nur einmal verarbeiten
+  if (typeof update.update_id === "number") {
+    const lr = await prisma.setting.findUnique({ where: { key: "LAST_TG_UPDATE" } });
+    const last = lr?.value ? Number(lr.value) : 0;
+    if (update.update_id <= last) return NextResponse.json({ ok: true });
+    await prisma.setting.upsert({ where: { key: "LAST_TG_UPDATE" }, create: { key: "LAST_TG_UPDATE", value: String(update.update_id) }, update: { value: String(update.update_id) } });
+  }
 
   // Button-Klick (Senden / Verwerfen)
   if (update.callback_query) {

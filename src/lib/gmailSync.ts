@@ -74,6 +74,14 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
           count++;
           res.imported++;
 
+          // Follow-up-Radar: bei einer gesendeten Mail den ganzen Thread als beantwortet markieren.
+          if (r.outgoing && r.threadId) {
+            await prisma.email.updateMany({
+              where: { threadId: r.threadId, outgoing: false, repliedAt: null },
+              data: { repliedAt: new Date() },
+            });
+          }
+
           // Push nur für eingehende, firmenrelevante Mails – und nur einmal (notifiedAt).
           if (notify && firmenrelevant && !r.outgoing) {
             const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";

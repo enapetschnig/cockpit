@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { sendTelegram } from "@/lib/telegram";
 import { listEvents } from "@/lib/calendar";
+import { listFollowups } from "@/lib/followups";
 import OpenAI from "openai";
 
 export const dynamic = "force-dynamic";
@@ -117,10 +118,19 @@ async function runBriefing(force: boolean) {
     }
   }
 
+  // Follow-ups: was wartet seit Tagen auf Antwort
+  let fupPart = "";
+  try {
+    const fups = await listFollowups(48, 8);
+    if (fups.length) fupPart = "\n\n🔔 <b>Wartet auf Antwort:</b>\n" + esc(fups.map((e) => `• ${e.fromName}: ${e.subject}`).join("\n"));
+  } catch {
+    /* ignore */
+  }
+
   const text =
-    mails.length === 0 && todays.length === 0
+    mails.length === 0 && todays.length === 0 && !fupPart
       ? "☀️ <b>Guten Morgen!</b>\nKeine neuen wichtigen Mails und keine Termine heute – entspannter Start! 👍"
-      : "☀️ <b>Guten Morgen!</b>\n\n" + mailPart + eventPart;
+      : "☀️ <b>Guten Morgen!</b>\n\n" + mailPart + eventPart + fupPart;
 
   const res = await sendTelegram(text);
   // Zeitstempel + Datum merken, damit das nächste Briefing nur Neueres zeigt.

@@ -62,5 +62,22 @@ async function runReminders() {
     create: { key: "REMINDED_EVENTS", value: JSON.stringify(reminded) },
     update: { value: JSON.stringify(reminded) },
   });
+
+  // Wiedervorlagen: Mails, deren Snooze abgelaufen ist -> erneut melden
+  const dueMails = await prisma.email.findMany({ where: { snoozedUntil: { not: null, lte: new Date() } }, take: 20 });
+  for (const e of dueMails) {
+    await sendTelegram(`🔔 <b>Wiedervorlage</b>\n<b>${esc(e.fromName)}</b>: ${esc(e.subject)}${e.summary ? "\n" + esc(e.summary) : ""}`);
+    await prisma.email.update({ where: { id: e.id }, data: { snoozedUntil: null } });
+    sent++;
+  }
+
+  // Fällige Aufgaben-Erinnerungen ("erinnere mich Montag an X")
+  const dueTodos = await prisma.todo.findMany({ where: { done: false, remindedAt: null, dueAt: { not: null, lte: new Date() } }, include: { customer: true }, take: 20 });
+  for (const t of dueTodos) {
+    await sendTelegram(`⏰ <b>Erinnerung</b>\n${esc(t.text)}${t.customer ? " (" + esc(t.customer.name) + ")" : ""}`);
+    await prisma.todo.update({ where: { id: t.id }, data: { remindedAt: new Date() } });
+    sent++;
+  }
+
   return { sent };
 }
