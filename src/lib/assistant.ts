@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { getConfig } from "./config";
 import { draftEmailReply, composeEmail } from "./openai";
+import { listEvents, createEvent, deleteEvent } from "./calendar";
 import { ASSISTANT_PERSONA } from "./persona";
 
 export interface AssistantResult {
@@ -136,6 +137,41 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_events",
+      description: "Zeigt anstehende Termine aus dem Google-Kalender eines Kontos ab jetzt (days = Zeitraum in Tagen, Standard 7; für heute/morgen days=1-2).",
+      parameters: { type: "object", properties: { account: { type: "string", enum: ["firma", "privat"] }, days: { type: "number" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_event",
+      description: "Legt einen Termin im Google-Kalender an. Zeiten in Wiener Zeit als 'YYYY-MM-DDTHH:MM:SS' (oder 'YYYY-MM-DD' für ganztägig). Berechne Datum/Uhrzeit aus dem heutigen Datum.",
+      parameters: {
+        type: "object",
+        properties: {
+          account: { type: "string", enum: ["firma", "privat"] },
+          title: { type: "string" },
+          start: { type: "string" },
+          end: { type: "string" },
+          location: { type: "string" },
+          description: { type: "string" },
+        },
+        required: ["title", "start", "end"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_event",
+      description: "Löscht einen Termin (event_id aus list_events).",
+      parameters: { type: "object", properties: { account: { type: "string", enum: ["firma", "privat"] }, event_id: { type: "string" } }, required: ["event_id"] },
+    },
+  },
 ];
 
 interface Args {
@@ -155,6 +191,13 @@ interface Args {
   todo_text?: string;
   to?: string;
   subject?: string;
+  days?: number;
+  title?: string;
+  start?: string;
+  end?: string;
+  location?: string;
+  description?: string;
+  event_id?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -291,6 +334,35 @@ async function runTool(name: string, a: Args): Promise<unknown> {
       const ms = await prisma.memory.findMany({ where, orderBy: { updatedAt: "desc" }, take: 30 });
       return { facts: ms.map((m) => ({ topic: m.topic, content: m.content })) };
     }
+    case "list_events": {
+      const account = a.account === "privat" ? "privat" : "firma";
+      try {
+        const events = await listEvents(account, { days: a.days ?? 7 });
+        return { account, events };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
+    case "create_event": {
+      if (!a.title || !a.start || !a.end) return { error: "title, start und end nötig" };
+      const account = a.account === "privat" ? "privat" : "firma";
+      try {
+        const ev = await createEvent(account, { title: a.title, start: a.start, end: a.end, location: a.location, description: a.description });
+        return { ok: true, account, angelegt: ev.summary, start: ev.start, end: ev.end, id: ev.id };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
+    case "delete_event": {
+      if (!a.event_id) return { error: "event_id nötig" };
+      const account = a.account === "privat" ? "privat" : "firma";
+      try {
+        await deleteEvent(account, a.event_id);
+        return { ok: true };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
     default:
       return { error: "unbekanntes Tool" };
   }
@@ -345,7 +417,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
 
   let drafted: AssistantResult["draftedFor"];
   let newEmail: AssistantResult["newEmail"];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat("de-AT", { timeZone: "Europe/Vienna", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   const memories = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 40 });
   const memText = memories.length ? memories.map((m) => `- ${m.topic ? "[" + m.topic + "] " : ""}${m.content}`).join("\n") : "(noch nichts gemerkt)";
@@ -355,7 +427,12 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   const convState = convRow?.value?.trim();
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: ASSISTANT_PERSONA.replace("{DATUM}", today).replace("{MEMORIES}", memText) },
+    {
+      role: "system",
+      content:
+        ASSISTANT_PERSONA.replace("{DATUM}", today).replace("{MEMORIES}", memText) +
+        "\n\nDu verwaltest auch die Google-Kalender beider Konten: Termine anzeigen (list_events), anlegen (create_event), löschen (delete_event). Rechne relative Angaben wie 'Donnerstag 14 Uhr' aus dem heutigen Datum in Wiener Zeit aus. Standard-Konto firma, außer der Nutzer meint privat.",
+    },
     ...(convState
       ? [{ role: "system" as const, content: `Arbeits-Kontext der letzten Nachricht (für Bezüge wie 'die zweite', 'ordne die zu', 'antworte ihm'):\n${convState}` }]
       : []),

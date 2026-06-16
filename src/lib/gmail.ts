@@ -27,10 +27,11 @@ export interface RawMail {
   outgoing: boolean; // true = selbst gesendet (Gmail-Label SENT)
 }
 
-// Lesen + Entwürfe erstellen (für die Telegram-Antwort-Funktion).
+// Mail lesen + senden, plus Kalender (Termine lesen/anlegen).
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/calendar.events",
 ];
 
 export async function isGmailConfigured(): Promise<boolean> {
