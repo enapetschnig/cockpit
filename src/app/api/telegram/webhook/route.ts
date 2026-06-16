@@ -4,6 +4,7 @@ import { getConfig } from "@/lib/config";
 import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage } from "@/lib/telegram";
 import { transcribeVoice } from "@/lib/openai";
 import { sendReply, sendNewEmail, type Account } from "@/lib/gmail";
+import { createEvent } from "@/lib/calendar";
 import { runAssistant } from "@/lib/assistant";
 
 export const dynamic = "force-dynamic";
@@ -195,6 +196,22 @@ async function handleCallback(cb: TgCallback) {
     const text = todos[0] || `Follow-up: ${email.subject}`;
     await prisma.todo.create({ data: { text, emailId: email.id, customerId: email.customerId } });
     await tgAnswerCallback(cb.id, "✓ Aufgabe angelegt");
+    return;
+  }
+  if (action === "cev") {
+    if (!email.proposedEventJson) {
+      await tgAnswerCallback(cb.id, "Kein Terminvorschlag");
+      return;
+    }
+    const pe = JSON.parse(email.proposedEventJson) as { title: string; start: string; end: string };
+    const ev = await createEvent(email.account === "privat" ? "privat" : "firma", {
+      title: pe.title,
+      start: pe.start,
+      end: pe.end,
+      description: `Aus Mail von ${email.fromName} <${email.fromAddr}>`,
+    });
+    await tgAnswerCallback(cb.id, "✓ Termin eingetragen");
+    await sendTelegram(`📅 <b>Termin eingetragen</b> (${email.account})\n${esc(ev.summary)} — ${ev.start.slice(0, 16).replace("T", " ")}`);
     return;
   }
 

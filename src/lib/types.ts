@@ -34,4 +34,5 @@ export interface ClassifyResult {
   firmenrelevant: boolean;
   priority: Priority;
   suggestedTodos: string[];
+  proposedEvent?: { title: string; start: string; end: string } | null;
 }

@@ -65,6 +65,7 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
               summary: c?.summary ?? null,
               labelsJson: JSON.stringify(c?.labels ?? []),
               suggestedTodosJson: JSON.stringify(c?.suggestedTodos ?? []),
+              proposedEventJson: c?.proposedEvent ? JSON.stringify(c.proposedEvent) : null,
               firmenrelevant,
               priority: c?.priority ?? "lo",
               classifiedAt: new Date(),
@@ -77,17 +78,20 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
           if (notify && firmenrelevant && !r.outgoing) {
             const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";
             const suggestion = (c!.suggestedTodos ?? [])[0];
+            const pe = c!.proposedEvent;
+            const peLine = pe ? `\n📅 <i>Termin erkannt: ${esc(pe.title)} (${pe.start.slice(0, 16).replace("T", " ")})</i>` : "";
+            const actionRow = [
+              { text: "✅ Aufgabe", data: `todo:${created.id}` },
+              { text: "💰 Buchhaltung", data: `file:${created.id}` },
+            ];
+            const buttons = pe ? [[{ text: "📅 Termin eintragen", data: `cev:${created.id}` }], actionRow] : [actionRow];
             const sent = await sendTelegram(
               `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
                 `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}` +
                 (suggestion ? `\n\n💡 <i>${esc(suggestion)}</i>` : "") +
+                peLine +
                 `\n\n<i>↩️ Antworte (Text/Sprache) für eine Antwort.</i>`,
-              {
-                buttons: [[
-                  { text: "✅ Aufgabe", data: `todo:${created.id}` },
-                  { text: "💰 Buchhaltung", data: `file:${created.id}` },
-                ]],
-              }
+              { buttons }
             );
             await prisma.email.update({
               where: { id: created.id },

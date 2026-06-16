@@ -15,7 +15,7 @@ const SYSTEM_PROMPT =
   "Du bist ein Assistent, der eingehende E-Mails für die österreichische Firma ePower GmbH einordnet. " +
   "Die Firma entwickelt individuelle Software für Handwerker. Antworte AUSSCHLIESSLICH mit gültigem JSON.";
 
-function buildUserPrompt(m: MailInput): string {
+function buildUserPrompt(m: MailInput, today: string): string {
   return [
     `Konto: ${m.account}`,
     `Von: ${m.fromName} <${m.fromAddr}>`,
@@ -23,6 +23,7 @@ function buildUserPrompt(m: MailInput): string {
     "",
     m.body,
     "",
+    `Heute ist ${today} (Wiener Zeit).`,
     "Gib JSON mit genau diesen Feldern zurück:",
     '- "summary": ein deutscher Satz, max. 20 Wörter',
     `- "labels": Teilmenge aus ${JSON.stringify(ALL_LABEL_KEYS)}`,
@@ -30,6 +31,8 @@ function buildUserPrompt(m: MailInput): string {
     "  ankommt, aber die Firma betrifft (z. B. Steuerberater, Lieferanten-/Server-Rechnung).",
     '- "priority": "hi" | "mid" | "lo"',
     '- "suggestedTodos": kurze deutsche Aufgaben (Array), leer wenn nichts zu tun ist',
+    '- "proposedEvent": {"title","start","end"} mit start/end als "YYYY-MM-DDTHH:MM:SS" – NUR wenn die Mail',
+    "  einen konkreten Termin/Besuch mit Datum UND Uhrzeit vorschlägt (relative Angaben wie 'Donnerstag' aus dem heutigen Datum berechnen); sonst null.",
   ].join("\n");
 }
 
@@ -37,6 +40,7 @@ export async function classifyEmail(m: MailInput): Promise<ClassifyResult> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return heuristic(m);
   const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  const today = new Intl.DateTimeFormat("de-AT", { timeZone: "Europe/Vienna", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   try {
     const client = new OpenAI({ apiKey });
@@ -46,7 +50,7 @@ export async function classifyEmail(m: MailInput): Promise<ClassifyResult> {
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(m) },
+        { role: "user", content: buildUserPrompt(m, today) },
       ],
     });
     const raw = resp.choices[0]?.message?.content ?? "{}";
@@ -65,12 +69,24 @@ function normalize(j: Record<string, unknown>, m: MailInput): ClassifyResult {
   const todos = Array.isArray(j.suggestedTodos)
     ? (j.suggestedTodos as unknown[]).map(String).filter(Boolean)
     : [];
+  let proposedEvent: ClassifyResult["proposedEvent"] = null;
+  if (j.proposedEvent && typeof j.proposedEvent === "object") {
+    const o = j.proposedEvent as Record<string, unknown>;
+    if (typeof o.start === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(o.start)) {
+      proposedEvent = {
+        title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : m.subject,
+        start: o.start,
+        end: typeof o.end === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(o.end) ? o.end : o.start,
+      };
+    }
+  }
   return {
     summary: typeof j.summary === "string" && j.summary.trim() ? j.summary.trim() : fallbackSummary(m),
     labels,
     firmenrelevant: typeof j.firmenrelevant === "boolean" ? j.firmenrelevant : labels.length > 0,
     priority,
     suggestedTodos: todos,
+    proposedEvent,
   };
 }
 

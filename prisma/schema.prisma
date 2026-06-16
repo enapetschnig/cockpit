@@ -44,6 +44,7 @@ model Email {
   summary            String? // Ein-Satz-Zusammenfassung
   labelsJson         String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
   suggestedTodosJson String   @default("[]") // KI-Aufgabenvorschläge (für 1-Klick "Aufgabe")
+  proposedEventJson  String? // KI-erkannter Terminvorschlag {title,start,end} (für 1-Klick "Termin eintragen")
   firmenrelevant     Boolean  @default(false) // KI-Entscheidung – auch für Privat-Mails!
   priority           String   @default("mid") // "hi" | "mid" | "lo"
   classifiedAt       DateTime?
