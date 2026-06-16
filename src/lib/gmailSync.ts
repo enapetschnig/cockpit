@@ -6,9 +6,11 @@
  * legt sie in der DB ab und pusht NEUE firmenrelevante Mails per Telegram.
  */
 import { prisma } from "./db";
-import { fetchNewRawMails, listAccounts, markSynced, isGmailConfigured, type Account } from "./gmail";
+import { fetchNewRawMails, listAccounts, markSynced, isGmailConfigured, type Account, type RawMail } from "./gmail";
 import { classifyEmail } from "./openai";
 import { sendTelegram } from "./telegram";
+import { looksLikeInvoice, captureBelegeFromEmail } from "./beleg";
+import { isStorageConfigured } from "./supabase/server";
 
 export interface SyncResult {
   imported: number;
@@ -106,6 +108,9 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
               data: { notifiedAt: new Date(), telegramMsgId: sent.messageId ? String(sent.messageId) : null },
             });
           }
+
+          // Buchhaltung: aus Rechnungs-Mails den Beleg (PDF) erfassen – nie den Sync sprengen.
+          if (!r.outgoing) await maybeCaptureBeleg(r, created.id, c?.labels ?? [], notify);
         } catch (e) {
           // Doppelte gmailId (Race local+Vercel) o. ä. -> diese Mail überspringen, Batch läuft weiter.
           if (!String((e as Error).message).includes("Unique constraint")) {
@@ -121,4 +126,37 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
     }
   }
   return res;
+}
+
+/**
+ * Erfasst – wenn die Mail wie eine Rechnung aussieht – den Beleg (PDF) in Storage + DB.
+ * Pusht NEUE Belege (Mail jünger als 2 Tage) per Telegram mit "An BMD senden"-Button.
+ * Vollständig in try/catch: schlägt die Erfassung fehl (z. B. Storage nicht konfiguriert),
+ * läuft der Sync normal weiter.
+ */
+async function maybeCaptureBeleg(r: RawMail, emailId: string, labels: string[], notify: boolean): Promise<void> {
+  try {
+    if (!looksLikeInvoice(r, labels)) return;
+    if (!(await isStorageConfigured())) return;
+    const beleg = await captureBelegeFromEmail(emailId, r);
+    if (!beleg) return; // schon erfasst (Dedup) oder kein PDF
+
+    const recent = Date.now() - r.receivedAt.getTime() < 2 * 24 * 3600_000;
+    if (notify && recent) {
+      const amt = beleg.amount != null ? ` · ${beleg.amount} ${beleg.currency}` : "";
+      const sent = await sendTelegram(
+        `🧾 <b>Rechnung erfasst</b> · ${esc(beleg.vendor)}${amt}\n<i>${esc(beleg.fileName || "")}</i>\nAn BMD senden?`,
+        {
+          buttons: [[
+            { text: "📤 An BMD senden", data: `bmd:${beleg.id}` },
+            { text: "🚫 Ignorieren", data: `bmdx:${beleg.id}` },
+          ]],
+        }
+      );
+      await prisma.beleg.update({ where: { id: beleg.id }, data: { notifiedAt: new Date() } }).catch(() => {});
+      void sent;
+    }
+  } catch (e) {
+    console.error("[sync] beleg-capture", r.gmailId, (e as Error).message);
+  }
 }

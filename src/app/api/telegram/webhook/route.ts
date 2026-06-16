@@ -6,6 +6,7 @@ import { transcribeVoice } from "@/lib/openai";
 import { sendReply, sendNewEmail, type Account } from "@/lib/gmail";
 import { createEvent } from "@/lib/calendar";
 import { runAssistant } from "@/lib/assistant";
+import { queueBeleg, approveAllCollected, retryBeleg, skipBeleg } from "@/lib/bmd/state";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -179,6 +180,34 @@ async function handleCallback(cb: TgCallback) {
     await prisma.pendingEmail.delete({ where: { id: p.id } });
     await tgAnswerCallback(cb.id, "Gesendet ✅");
     if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `✅ <b>Gesendet an ${esc(p.toAddr)}</b>\n<i>${esc(p.subject)}</i>\n\n${esc(p.body)}`);
+    return;
+  }
+
+  // Buchhaltung / BMD: Beleg freigeben / erneut / ignorieren (id = "all" oder belegId, KEINE Email).
+  if (action === "bmd" || action === "bmdr" || action === "bmdx") {
+    if (action === "bmd" && id === "all") {
+      const n = await approveAllCollected("telegram");
+      await tgAnswerCallback(cb.id, `✓ ${n} freigegeben`);
+      if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `📤 <b>${n} Beleg(e) an BMD freigegeben.</b>`);
+      return;
+    }
+    const beleg = id ? await prisma.beleg.findUnique({ where: { id } }) : null;
+    if (!beleg) {
+      await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
+      return;
+    }
+    if (action === "bmd") {
+      await queueBeleg(beleg.id, "telegram");
+      await tgAnswerCallback(cb.id, "✓ An BMD freigegeben");
+      if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `📤 <b>${esc(beleg.vendor)} an BMD freigegeben</b> – wird hochgeladen.`);
+    } else if (action === "bmdr") {
+      await retryBeleg(beleg.id);
+      await tgAnswerCallback(cb.id, "✓ Erneut eingereiht");
+    } else {
+      await skipBeleg(beleg.id);
+      await tgAnswerCallback(cb.id, "✓ Ignoriert");
+      if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `🚫 <b>${esc(beleg.vendor)} ignoriert.</b>`);
+    }
     return;
   }
 

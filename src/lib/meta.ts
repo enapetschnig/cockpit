@@ -1,0 +1,505 @@
+/**
+ * Meta (Facebook) Marketing Graph API – reine fetch-Portierung der erprobten Ads-App-Logik.
+ *
+ * - Graph-Version v25.0, access_token IMMER als Parameter (kein Bearer-Header).
+ * - Launch erstellt Campaign → Ad Set → Creative → Ad, ALLES status=PAUSED (nie sofort live).
+ * - Sync zieht Kampagnen + Insights (letzte 30 Tage), Ampel-Bewertung wie in der Ads-App.
+ *
+ * Tokens kommen verschlüsselt aus AdAccount.tokenCipher (siehe adsCrypto.ts).
+ */
+import type { AdAccount, AdDraft } from "@prisma/client";
+import { prisma } from "./db";
+import { decryptToken } from "./adsCrypto";
+
+const META_VERSION = "v25.0";
+const graphUrl = (path: string) => `https://graph.facebook.com/${META_VERSION}/${path.replace(/^\//, "")}`;
+
+// ── HTTP-Helfer ───────────────────────────────────────────────────────────
+function formatGraphError(data: unknown, fallback: string): string {
+  const err = (data as { error?: Record<string, string> })?.error;
+  if (err) {
+    const parts = [err.error_user_title, err.error_user_msg, err.message].filter((p) => p && p.trim());
+    if (parts.length) return parts.join(" · ");
+  }
+  return fallback;
+}
+
+async function graphGet(path: string, token: string, params: Record<string, string> = {}): Promise<Record<string, unknown>> {
+  const qs = new URLSearchParams({ ...params, access_token: token });
+  const res = await fetch(`${graphUrl(path)}?${qs.toString()}`, { method: "GET" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(formatGraphError(data, `Meta API Fehler (${res.status})`));
+  return data as Record<string, unknown>;
+}
+
+async function graphPost(path: string, token: string, body: Record<string, string>): Promise<Record<string, unknown>> {
+  const form = new URLSearchParams({ ...body, access_token: token });
+  const res = await fetch(graphUrl(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(formatGraphError(data, `Meta API Fehler (${res.status})`));
+  return data as Record<string, unknown>;
+}
+
+async function graphDelete(path: string, token: string): Promise<Record<string, unknown>> {
+  const qs = new URLSearchParams({ access_token: token });
+  const res = await fetch(`${graphUrl(path)}?${qs.toString()}`, { method: "DELETE" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(formatGraphError(data, `Meta API Fehler (${res.status})`));
+  return data as Record<string, unknown>;
+}
+
+async function accountToken(acc: AdAccount): Promise<string> {
+  if (!acc.tokenCipher) throw new Error("Kein Token hinterlegt – Konto erneut verbinden.");
+  return decryptToken(acc.tokenCipher);
+}
+
+/** Löscht eine Meta-Kampagne (komplett mit Ad Set/Creative/Ad). */
+export async function deleteCampaign(adAccountId: string, metaCampaignId: string): Promise<void> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  await graphDelete(metaCampaignId, token);
+}
+
+// ── Verbindung testen ─────────────────────────────────────────────────────
+export interface MetaAccountInfo {
+  id: string;
+  name?: string;
+  currency?: string;
+  timezone?: string;
+}
+
+/** Prüft Token + Konto und liefert die Stammdaten (Name/Währung/Zeitzone). Wirft bei Fehler. */
+export async function testConnection(token: string, metaAccountId: string): Promise<MetaAccountInfo> {
+  const d = await graphGet(metaAccountId, token, { fields: "name,currency,timezone_name,account_status" });
+  return {
+    id: String(d.id ?? metaAccountId),
+    name: d.name as string | undefined,
+    currency: d.currency as string | undefined,
+    timezone: d.timezone_name as string | undefined,
+  };
+}
+
+// ── Sync (Kampagnen + Insights letzte 30 Tage) ────────────────────────────
+const LEAD_ACTION_TYPES = [
+  "lead",
+  "onsite_conversion.lead_grouped",
+  "offsite_conversion.fb_pixel_lead",
+  "complete_registration",
+  "offsite_conversion.fb_pixel_complete_registration",
+  "contact",
+];
+
+type Action = { action_type?: string; value?: string | number };
+
+/** Maximum aller passenden actions[].value für die gegebenen action_types. */
+function actionValue(actions: Action[] | undefined, types: string[]): number {
+  if (!Array.isArray(actions)) return 0;
+  let max = 0;
+  for (const a of actions) {
+    if (a.action_type && types.includes(a.action_type)) {
+      const v = Number(a.value ?? 0);
+      if (Number.isFinite(v) && v > max) max = v;
+    }
+  }
+  return max;
+}
+
+/** Holt Kampagnen-Metadaten + 30-Tage-Insights und schreibt sie in AdCampaign (Upsert). */
+export async function syncCampaigns(adAccountId: string): Promise<{ count: number }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const act = acc.metaAccountId;
+
+  try {
+    const campResp = await graphGet(`${act}/campaigns`, token, {
+      fields: "id,name,objective,effective_status",
+      limit: "200",
+    });
+    const insightsResp = await graphGet(`${act}/insights`, token, {
+      level: "campaign",
+      date_preset: "last_30d",
+      fields: "campaign_id,spend,impressions,reach,clicks,ctr,frequency,actions",
+      limit: "200",
+    });
+
+    const campaigns = (campResp.data as Record<string, unknown>[]) ?? [];
+    const insights = (insightsResp.data as Record<string, unknown>[]) ?? [];
+    const byCampaign = new Map<string, Record<string, unknown>>();
+    for (const row of insights) byCampaign.set(String(row.campaign_id), row);
+
+    for (const c of campaigns) {
+      const id = String(c.id);
+      const ins = byCampaign.get(id) ?? {};
+      const spend = Number(ins.spend ?? 0) || 0;
+      const impressions = Math.round(Number(ins.impressions ?? 0)) || 0;
+      const reach = Math.round(Number(ins.reach ?? 0)) || 0;
+      const clicks = Math.round(Number(ins.clicks ?? 0)) || 0;
+      const ctr = ins.ctr != null && Number.isFinite(Number(ins.ctr)) ? Number(ins.ctr) : null;
+      const frequency = ins.frequency != null && Number.isFinite(Number(ins.frequency)) ? Number(ins.frequency) : null;
+      const actions = ins.actions as Action[] | undefined;
+      const leads = Math.round(actionValue(actions, LEAD_ACTION_TYPES));
+      const linkClicks = Math.round(actionValue(actions, ["link_click"]));
+      const cpa = leads > 0 ? Math.round((spend / leads) * 100) / 100 : null;
+
+      const dataRow = {
+        adAccountId: acc.id,
+        name: String(c.name ?? "(ohne Namen)"),
+        objective: (c.objective as string) ?? null,
+        effectiveStatus: (c.effective_status as string) ?? null,
+        spend,
+        impressions,
+        reach,
+        clicks,
+        linkClicks,
+        leads,
+        cpa,
+        ctr,
+        frequency,
+      };
+      await prisma.adCampaign.upsert({
+        where: { id },
+        create: { id, ...dataRow },
+        update: dataRow,
+      });
+    }
+
+    await prisma.adAccount.update({
+      where: { id: acc.id },
+      data: { status: "connected", lastError: null, lastSyncAt: new Date() },
+    });
+    return { count: campaigns.length };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await prisma.adAccount.update({ where: { id: acc.id }, data: { status: "error", lastError: msg } });
+    throw e;
+  }
+}
+
+// ── Ampel-Bewertung (portiert aus campaign_score) ─────────────────────────
+const CTR_STRONG = 2.8;
+const CTR_OK = 1.5;
+const MIN_DECISION_SPEND = 20;
+const NO_RESULT_SPEND = 40;
+const CPA_STRONG = 25;
+const CPA_OK = 50;
+const PAUSED_STATUSES = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"];
+
+export type AdState = "good" | "warn" | "bad" | "info" | "muted";
+export interface CampaignHealth {
+  state: AdState;
+  label: string;
+  reason: string;
+}
+
+interface ScoreInput {
+  effectiveStatus?: string | null;
+  spend: number;
+  clicks: number;
+  leads: number;
+  cpa?: number | null;
+  ctr?: number | null;
+}
+
+export function campaignHealth(c: ScoreInput): CampaignHealth {
+  if (c.effectiveStatus && PAUSED_STATUSES.includes(c.effectiveStatus)) {
+    return { state: "muted", label: "Pausiert", reason: "Diese Kampagne läuft gerade nicht." };
+  }
+  if (c.spend < MIN_DECISION_SPEND) {
+    return { state: "info", label: "Sammeln", reason: "Noch zu wenig Daten für eine Bewertung." };
+  }
+  let points = 0;
+  const ctr = c.ctr ?? 0;
+  if (ctr >= CTR_STRONG) points += 2;
+  else if (ctr >= CTR_OK) points += 1;
+  else if (ctr > 0) points -= 1;
+
+  if (c.leads > 0) {
+    points += 2;
+    const cpa = c.cpa ?? 9999;
+    if (cpa <= CPA_STRONG) points += 2;
+    else if (cpa <= CPA_OK) points += 1;
+    else points -= 1;
+  } else {
+    if (c.spend >= NO_RESULT_SPEND && c.clicks >= 50) points -= 3;
+    else if (c.spend >= NO_RESULT_SPEND) points -= 2;
+    else if (c.clicks >= 50) points -= 1;
+  }
+
+  if (points >= 4) return { state: "good", label: "Gut", reason: "Läuft stark – Skalierung prüfen." };
+  if (points <= -2) return { state: "bad", label: "Handeln", reason: "Schwache Leistung – nicht weiter Budget geben." };
+  return { state: "warn", label: "Beobachten", reason: "Im Mittelfeld – weiter beobachten." };
+}
+
+const RANK: Record<AdState, number> = { bad: 0, good: 1, warn: 2, info: 3, muted: 4 };
+/** Sortierung: handlungsbedürftige zuerst, dann nach Ausgaben, dann Name. */
+export function campaignSortKey(a: { health: CampaignHealth; spend: number; name: string }, b: { health: CampaignHealth; spend: number; name: string }): number {
+  const r = RANK[a.health.state] - RANK[b.health.state];
+  if (r !== 0) return r;
+  if (b.spend !== a.spend) return b.spend - a.spend;
+  return a.name.localeCompare(b.name);
+}
+
+/** Bis zu 3 kurze Handlungsempfehlungen aus den bewerteten Kampagnen. */
+export function dashboardRecommendations(items: { name: string; health: CampaignHealth; cpa?: number | null }[]): string[] {
+  const recs: string[] = [];
+  for (const it of items) {
+    if (recs.length >= 3) break;
+    if (it.health.state === "bad") recs.push(`„${it.name}" schwächelt – Creative tauschen oder pausieren.`);
+    else if (it.health.state === "good") recs.push(`„${it.name}" läuft stark${it.cpa ? ` (${it.cpa} €/Lead)` : ""} – Budget erhöhen.`);
+  }
+  return recs;
+}
+
+// ── Launch-Logik (Campaign → Ad Set → Creative → Ad, alles PAUSED) ─────────
+function disabledAdvantageCreativeSpec() {
+  // Keine automatischen Meta-Umgestaltungen. Hinweis: `standard_enhancements` ist
+  // bei Meta inzwischen veraltet und führt zu einem Fehler – daher NICHT mehr setzen.
+  return {
+    creative_features_spec: {
+      advantage_plus_creative: { enroll_status: "OPT_OUT" },
+      text_optimizations: { enroll_status: "OPT_OUT" },
+      video_auto_crop: { enroll_status: "OPT_OUT" },
+      image_templates: { enroll_status: "OPT_OUT" },
+    },
+  };
+}
+
+function buildLaunchTargeting(d: AdDraft) {
+  const t: Record<string, unknown> = {
+    age_min: d.ageMin,
+    age_max: d.ageMax,
+    geo_locations: { countries: [(d.country || "AT").toUpperCase()] },
+    publisher_platforms: ["facebook", "instagram"],
+    facebook_positions: ["feed"],
+    instagram_positions: ["stream"],
+  };
+  if (d.latitude != null && d.longitude != null && d.radiusKm != null) {
+    t.geo_locations = {
+      custom_locations: [{ latitude: d.latitude, longitude: d.longitude, radius: d.radiusKm, distance_unit: "kilometer" }],
+    };
+  }
+  if (d.gender === "men") t.genders = [1];
+  else if (d.gender === "women") t.genders = [2];
+  return t;
+}
+
+function slug(s: string, max = 40): string {
+  // Wie das Original (safe_filename → "-"→"_"): Nicht-[a-z0-9._-] → "-", dann "-" → "_". Kein NFKD.
+  const cleaned = s
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, max);
+  return cleaned || "frage";
+}
+
+type MetaQuestion = { type: string; key?: string; label?: string };
+function questionsToMeta(questions: string[]): MetaQuestion[] {
+  if (!questions.length) return [{ type: "FULL_NAME" }, { type: "PHONE" }, { type: "CITY" }];
+  return questions.map((q) => {
+    const low = q.toLowerCase();
+    if (low.includes("name")) return { type: "FULL_NAME" };
+    if (low.includes("telefon") || low.includes("phone")) return { type: "PHONE" };
+    if (low.includes("email") || low.includes("e-mail")) return { type: "EMAIL" };
+    return { type: "CUSTOM", key: slug(q), label: q.slice(0, 80) };
+  });
+}
+
+async function defaultPageForLaunch(token: string, preferredPageId?: string | null): Promise<{ pageId: string; pageToken: string }> {
+  const d = await graphGet("me/accounts", token, { fields: "id,name,access_token", limit: "100" });
+  const pages = (d.data as Record<string, unknown>[]) ?? [];
+  if (!pages.length) throw new Error("Keine Facebook-Seite mit diesem Token gefunden (Seiten-Rechte fehlen).");
+  let page = pages[0];
+  if (preferredPageId) {
+    const found = pages.find((p) => String(p.id) === preferredPageId);
+    if (!found) throw new Error(`Bevorzugte Seite ${preferredPageId} nicht in den Seiten des Tokens.`);
+    page = found;
+  }
+  return { pageId: String(page.id), pageToken: String(page.access_token ?? token) };
+}
+
+function draftQuestions(d: AdDraft): string[] {
+  try {
+    const a = JSON.parse(d.questionsJson);
+    return Array.isArray(a) ? a.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface LaunchResult {
+  campaignId: string;
+  adsetId: string;
+  creativeId: string;
+  adId: string;
+  leadFormId?: string;
+}
+
+/** Erstellt aus einem Entwurf eine vollständige (pausierte) Meta-Kampagne. */
+export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> {
+  const draft = await prisma.adDraft.findUnique({ where: { id: draftId }, include: { adAccount: true } });
+  if (!draft) throw new Error("Entwurf nicht gefunden.");
+
+  // Bereits gelauncht? Nicht erneut erstellen (sonst Duplikat-Kampagnen) – idempotent zurückgeben.
+  if (draft.status === "launched" && draft.metaCampaignId) {
+    return {
+      campaignId: draft.metaCampaignId,
+      adsetId: draft.metaAdsetId || "",
+      creativeId: draft.metaCreativeId || "",
+      adId: draft.metaAdId || "",
+      leadFormId: draft.leadFormId || undefined,
+    };
+  }
+
+  const acc = draft.adAccount;
+  const destination = draft.destination === "website" ? "website" : "lead_form";
+  const budgetCents = Math.max(100, Math.round(draft.budget * 100));
+  const primaryText = draft.primaryText || draft.offer;
+  const headline = draft.headline || draft.offer;
+  const websiteUrl = (draft.websiteUrl || "").trim();
+  const imageUrl = (draft.imageUrl || "").trim();
+  const country = (draft.country || "AT").toUpperCase();
+
+  // Der gesamte Ablauf liegt in try/catch – so wird launchError IMMER persistiert
+  // (auch bei frühen Validierungs-/Seiten-/Lead-Form-Fehlern).
+  let campaignId = "";
+  try {
+    const token = await accountToken(acc);
+    const act = acc.metaAccountId;
+
+    // Vorab-Validierung – sauberer Frühabbruch statt halb erstellter Kampagne
+    if (country.length !== 2) throw new Error("Land muss ein 2-Buchstaben-Code sein (z. B. AT).");
+    if (draft.ageMin < 18 || draft.ageMax < draft.ageMin) throw new Error("Altersangabe ungültig (min. 18, max ≥ min).");
+    if (destination === "website" && !/^https?:\/\//i.test(websiteUrl)) {
+      throw new Error("Für ein Website-Ziel ist eine gültige Website-URL (http/https) nötig.");
+    }
+
+    // 1) Facebook-Seite – für Lead-Form-Creatives UND Website-Creatives zwingend (page_id im object_story_spec)
+    const page = await defaultPageForLaunch(token, acc.pageId);
+    const pageId = page.pageId;
+    const pageToken = page.pageToken;
+
+    // 2) Lead-Formular (nur lead_form, falls noch keins existiert)
+    let leadFormId = draft.leadFormId || "";
+    if (destination === "lead_form" && !leadFormId) {
+      const privacy = (draft.privacyUrl || websiteUrl).trim();
+      if (!/^https?:\/\//i.test(privacy)) {
+        throw new Error("Für ein Lead-Formular ist ein Datenschutz-/Website-Link (http/https) nötig.");
+      }
+      const questions = questionsToMeta(draftQuestions(draft));
+      const formRes = await graphPost(`${pageId}/leadgen_forms`, pageToken, {
+        // Formularname muss pro Seite eindeutig sein → Entwurfs-ID anhängen.
+        name: `LocalAds | ${draft.offer} | ${draft.region} | ${draft.id.slice(-6)}`.slice(0, 120),
+        locale: "de_DE",
+        questions: JSON.stringify(questions),
+        privacy_policy: JSON.stringify({ url: privacy, link_text: "Datenschutz" }),
+        follow_up_action_url: privacy,
+        status: "ACTIVE",
+      });
+      leadFormId = String(formRes.id ?? "");
+      if (!leadFormId) throw new Error("Lead-Formular konnte nicht erstellt werden.");
+    }
+
+    // 3) Kampagne (ab hier alles PAUSED). special_ad_categories wie im erprobten Original = [].
+    // (Hinweis: echte Stellenanzeigen brauchen perspektivisch EMPLOYMENT + angepasstes Targeting.)
+    const campaign = await graphPost(`${act}/campaigns`, token, {
+      name: `LocalAds | ${headline} | ${draft.region}`.slice(0, 200),
+      objective: destination === "lead_form" ? "OUTCOME_LEADS" : "OUTCOME_TRAFFIC",
+      buying_type: "AUCTION",
+      special_ad_categories: "[]",
+      // Budget liegt auf Ad-Set-Ebene (kein CBO) – Meta verlangt dieses Flag explizit.
+      is_adset_budget_sharing_enabled: "false",
+      status: "PAUSED",
+    });
+    campaignId = String(campaign.id);
+
+    // 4) Ad Set
+    const adsetBody: Record<string, string> = {
+      name: `${draft.region} | ${draft.budget} EUR/Tag | pausiert`.slice(0, 200),
+      campaign_id: campaignId,
+      daily_budget: String(budgetCents),
+      billing_event: "IMPRESSIONS",
+      optimization_goal: destination === "lead_form" ? "LEAD_GENERATION" : "LINK_CLICKS",
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+      targeting: JSON.stringify(buildLaunchTargeting(draft)),
+      status: "PAUSED",
+    };
+    if (destination === "lead_form") {
+      adsetBody.promoted_object = JSON.stringify({ page_id: pageId });
+      adsetBody.destination_type = "ON_AD"; // Sofort-Lead-Formular (Instant Form)
+    }
+    const adset = await graphPost(`${act}/adsets`, token, adsetBody);
+    const adsetId = String(adset.id);
+
+    // 5) Creative (object_story_spec). Meta verlangt im link_data ein Pflicht-`link`;
+    // bei Lead-Anzeigen ohne Website nehmen wir den Datenschutz-Link als gültigen Fallback.
+    const linkUrl = websiteUrl || (draft.privacyUrl || "").trim();
+    if (!/^https?:\/\//i.test(linkUrl)) {
+      throw new Error("Es fehlt ein gültiger Link (Website- oder Datenschutz-Link, http/https).");
+    }
+    const linkData: Record<string, unknown> = {
+      link: linkUrl,
+      message: primaryText,
+      name: headline,
+      description: `${draft.offer} in ${draft.region}`,
+    };
+    if (imageUrl) linkData.picture = imageUrl;
+
+    if (destination === "lead_form") {
+      linkData.call_to_action = { type: "SIGN_UP", value: { lead_gen_form_id: leadFormId, link: linkUrl } };
+    } else {
+      linkData.call_to_action = { type: "LEARN_MORE", value: { link: linkUrl } };
+    }
+    const story = { page_id: pageId, link_data: linkData };
+
+    const creative = await graphPost(`${act}/adcreatives`, token, {
+      name: `Creative | ${headline}`.slice(0, 200),
+      object_story_spec: JSON.stringify(story),
+      degrees_of_freedom_spec: JSON.stringify(disabledAdvantageCreativeSpec()),
+    });
+    const creativeId = String(creative.id);
+
+    // 6) Anzeige
+    const ad = await graphPost(`${act}/ads`, token, {
+      name: `Ad | ${headline}`.slice(0, 200),
+      adset_id: adsetId,
+      creative: JSON.stringify({ creative_id: creativeId }),
+      status: "PAUSED",
+    });
+    const adId = String(ad.id);
+
+    await prisma.adDraft.update({
+      where: { id: draft.id },
+      data: {
+        status: "launched",
+        metaCampaignId: campaignId,
+        metaAdsetId: adsetId,
+        metaCreativeId: creativeId,
+        metaAdId: adId,
+        leadFormId: leadFormId || null,
+        launchError: null,
+        launchedAt: new Date(),
+      },
+    });
+
+    // Best-Effort: frisch syncen, damit die neue (pausierte) Kampagne sofort auftaucht.
+    await syncCampaigns(acc.id).catch(() => {});
+    return { campaignId, adsetId, creativeId, adId, leadFormId: leadFormId || undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await prisma.adDraft
+      .update({
+        where: { id: draft.id },
+        data: { status: "launch_error", metaCampaignId: campaignId || null, launchError: msg },
+      })
+      .catch(() => {});
+    throw new Error(msg);
+  }
+}

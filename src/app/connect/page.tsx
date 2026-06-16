@@ -24,6 +24,10 @@ export default function ConnectPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [adAccts, setAdAccts] = useState<{ id: string; label: string; metaAccountId: string; accountName: string | null; status: string; hasToken: boolean; lastError: string | null }[]>([]);
+  const [adForm, setAdForm] = useState({ label: "", metaAccountId: "", token: "", pageId: "" });
+  const [adBusy, setAdBusy] = useState(false);
+  const [adMsg, setAdMsg] = useState<string | null>(null);
 
   async function loadSettings() {
     try {
@@ -62,6 +66,40 @@ export default function ConnectPage() {
     }
   }
 
+  async function loadAdAccounts() {
+    try {
+      const r = await fetch("/api/ads");
+      const d = await r.json();
+      setAdAccts(d.accounts || []);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function connectAd() {
+    if (!adForm.metaAccountId.trim() || !adForm.token.trim()) {
+      setAdMsg("Konto-ID (act_…) und Access-Token sind nötig.");
+      return;
+    }
+    setAdBusy(true);
+    setAdMsg(null);
+    try {
+      const r = await fetch("/api/ads/account", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adForm) });
+      const d = await r.json();
+      if (d.ok) {
+        setAdMsg(`✅ ${d.account.label} verbunden${d.account.accountName ? ` (${d.account.accountName})` : ""}.`);
+        setAdForm({ label: "", metaAccountId: "", token: "", pageId: "" });
+        loadAdAccounts();
+      } else {
+        setAdMsg("❌ " + (d.error || "Verbinden fehlgeschlagen"));
+      }
+    } catch (e) {
+      setAdMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setAdBusy(false);
+    }
+  }
+
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (q.get("connected")) {
@@ -73,6 +111,7 @@ export default function ConnectPage() {
     window.history.replaceState({}, "", "/connect");
     loadStatus();
     loadSettings();
+    loadAdAccounts();
   }, []);
 
   const KEY_LABEL: Record<string, string> = {
@@ -82,6 +121,14 @@ export default function ConnectPage() {
     GOOGLE_CLIENT_SECRET: "Google Client-Secret",
     TELEGRAM_BOT_TOKEN: "Telegram Bot-Token",
     TELEGRAM_CHAT_ID: "Telegram Chat-ID",
+    ADS_TOKEN_KEY: "Werbeanzeigen: Token-Schlüssel (zufälliger langer Wert)",
+    SUPABASE_URL: "Buchhaltung: Supabase Projekt-URL",
+    SUPABASE_SERVICE_ROLE_KEY: "Buchhaltung: Supabase Service-Role-Key (Storage)",
+    BROWSER_USE_API_KEY: "Buchhaltung: browser-use Cloud API-Key (BMD-Upload)",
+    BMD_PORTAL_URL: "Buchhaltung: BMD-Portal Login-URL",
+    BMD_PORTAL_CUSTOMER: "Buchhaltung: BMD Kundennummer/Mandant",
+    BMD_PORTAL_USER: "Buchhaltung: BMD-Portal Benutzer",
+    BMD_PORTAL_PASSWORD: "Buchhaltung: BMD-Portal Passwort",
   };
 
   async function logout() {
@@ -155,6 +202,7 @@ export default function ConnectPage() {
 
   const card: React.CSSProperties = { background: "#fff", border: "1px solid #ece8e0", borderRadius: 14, padding: 18, marginBottom: 14 };
   const btn: React.CSSProperties = { display: "inline-block", padding: "10px 16px", borderRadius: 10, border: "none", fontWeight: 700, cursor: "pointer", fontSize: 14 };
+  const inp: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ddd6cb", fontSize: 14 };
 
   return (
     <main style={{ maxWidth: 560, margin: "0 auto", padding: "28px 18px", fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color: "#2b2723" }}>
@@ -268,6 +316,38 @@ export default function ConnectPage() {
           {savingSettings ? "Speichere …" : "Einstellungen speichern"}
         </button>
         {settingsMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{settingsMsg}</p>}
+      </div>
+
+      <div style={{ ...card }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Werbekonten (Meta)</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 12 }}>
+          Verbinde oder erneuere ein Meta-Werbekonto mit einem Access-Token. Der Token wird verschlüsselt in Supabase gespeichert
+          (setze zuvor unter <b>Einstellungen</b> den <code>ADS_TOKEN_KEY</code>). Wichtig: Der Token muss aus einer
+          <b> veröffentlichten</b> Meta-App stammen, sonst lassen sich Anzeigen anlegen, aber nicht schalten.
+        </div>
+        {adAccts.map((a) => (
+          <div key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderTop: "1px solid #efece6" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{a.label}</div>
+              <div style={{ color: a.status === "connected" ? "#1f9d63" : a.status === "error" ? "#e0533d" : "#6b6358", fontSize: 12.5 }}>
+                {a.metaAccountId} · {a.status === "connected" ? "verbunden" : a.status === "error" ? "Token prüfen / erneuern" : "nicht verbunden"}
+              </div>
+            </div>
+            <button onClick={() => { setAdForm({ label: a.label, metaAccountId: a.metaAccountId, token: "", pageId: "" }); setAdMsg(null); }} style={{ ...btn, background: "#efece6", color: "#2b2723", padding: "7px 12px", fontSize: 13 }}>
+              Token erneuern
+            </button>
+          </div>
+        ))}
+        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          <input placeholder="Bezeichnung (z. B. Christoph Werbung)" value={adForm.label} onChange={(e) => setAdForm((f) => ({ ...f, label: e.target.value }))} style={inp} />
+          <input placeholder="Konto-ID (act_…)" value={adForm.metaAccountId} onChange={(e) => setAdForm((f) => ({ ...f, metaAccountId: e.target.value }))} style={inp} />
+          <input type="password" placeholder="Access-Token (wird verschlüsselt gespeichert)" value={adForm.token} onChange={(e) => setAdForm((f) => ({ ...f, token: e.target.value }))} style={inp} />
+          <input placeholder="Seiten-ID (optional, für Lead-Formulare)" value={adForm.pageId} onChange={(e) => setAdForm((f) => ({ ...f, pageId: e.target.value }))} style={inp} />
+        </div>
+        <button onClick={connectAd} disabled={adBusy} style={{ ...btn, background: "#9a4fc4", color: "#fff", width: "100%", marginTop: 10, opacity: adBusy ? 0.6 : 1 }}>
+          {adBusy ? "Teste & verbinde …" : "Testen & verbinden"}
+        </button>
+        {adMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{adMsg}</p>}
       </div>
     </main>
   );

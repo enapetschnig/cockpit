@@ -10,17 +10,18 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL") // Supabase Pooler (Transaction, Port 6543) – App-Laufzeit
-  directUrl = env("DIRECT_URL")   // Supabase Session (Port 5432) – Migrationen / db push
+  directUrl = env("DIRECT_URL") // Supabase Session (Port 5432) – Migrationen / db push
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  meta      String? // kurze Beschreibung, z. B. "Lagerverwaltungs-Software"
-  color     String? // Akzentfarbe für Avatar im Cockpit
-  createdAt DateTime @default(now())
-  emails    Email[]
-  todos     Todo[]
+  id         String      @id @default(cuid())
+  name       String
+  meta       String? // kurze Beschreibung, z. B. "Lagerverwaltungs-Software"
+  color      String? // Akzentfarbe für Avatar im Cockpit
+  createdAt  DateTime    @default(now())
+  emails     Email[]
+  todos      Todo[]
+  adAccounts AdAccount[]
 }
 
 model Email {
@@ -33,8 +34,8 @@ model Email {
   receivedAt DateTime @default(now())
 
   // ── Gmail-Herkunft (Phase 1b) ────────────────────────────
-  gmailId    String?   @unique // Gmail message id – verhindert Duplikate beim Sync
-  threadId   String? // Gmail thread id (für spätere Konversationsansicht)
+  gmailId       String?   @unique // Gmail message id – verhindert Duplikate beim Sync
+  threadId      String? // Gmail thread id (für spätere Konversationsansicht)
   outgoing      Boolean   @default(false) // true = von mir gesendet (Gmail-Label SENT)
   notifiedAt    DateTime? // wann per Telegram gepusht – verhindert Mehrfach-Push
   telegramMsgId String? // message_id des Telegram-Pushes – für "Antworten" im Chat
@@ -42,11 +43,11 @@ model Email {
 
   // ── von der KI (OpenAI) befüllt ──────────────────────────
   summary            String? // Ein-Satz-Zusammenfassung
-  labelsJson         String   @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
-  suggestedTodosJson String   @default("[]") // KI-Aufgabenvorschläge (für 1-Klick "Aufgabe")
+  labelsJson         String    @default("[]") // JSON-Array, z. B. ["buchhaltung","aufgabe"]
+  suggestedTodosJson String    @default("[]") // KI-Aufgabenvorschläge (für 1-Klick "Aufgabe")
   proposedEventJson  String? // KI-erkannter Terminvorschlag {title,start,end} (für 1-Klick "Termin eintragen")
-  firmenrelevant     Boolean  @default(false) // KI-Entscheidung – auch für Privat-Mails!
-  priority           String   @default("mid") // "hi" | "mid" | "lo"
+  firmenrelevant     Boolean   @default(false) // KI-Entscheidung – auch für Privat-Mails!
+  priority           String    @default("mid") // "hi" | "mid" | "lo"
   classifiedAt       DateTime?
 
   // ── Workflow ─────────────────────────────────────────────
@@ -56,6 +57,7 @@ model Email {
   customerId   String?
   customer     Customer? @relation(fields: [customerId], references: [id])
   todos        Todo[]
+  belege       Beleg[]
 }
 
 model Todo {
@@ -118,4 +120,179 @@ model Memory {
   content   String
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
+}
+
+// ── Buchhaltung (Belege → BMD-Upload + Kontoauszug-Abgleich) ──────────────
+// Ein an BMD abzulegendes Dokument: eine Rechnung ODER ein Kontoauszug/Kreditkarten-Abrechnung.
+// kind hält beides in DERSELBEN Upload-State-Machine (der Worker bleibt uniform).
+model Beleg {
+  id   String @id @default(cuid())
+  kind String @default("rechnung") // "rechnung" | "kontoauszug" | "kreditkarte"
+
+  // Herkunft
+  source        String // "email" | "portal" | "upload"
+  sourceEmailId String?
+  sourceEmail   Email?  @relation(fields: [sourceEmailId], references: [id])
+  vendor        String // Anzeigename: "OpenAI", "Anthropic", "A1", "Kontoauszug" …
+  vendorKey     String? // stabiler Slug: "openai" – Dedup/Gruppierung
+
+  // Rechnungs-Metadaten (best effort, von Mail/KI befüllt)
+  invoiceNumber String?
+  invoiceDate   DateTime?
+  periodMonth   String? // "2026-06" – denormalisiert fürs Monats-Grouping
+  amount        Decimal?  @db.Decimal(10, 2)
+  currency      String    @default("EUR")
+
+  // Datei (in Supabase Storage Bucket "belege")
+  fileName    String?
+  fileMime    String?
+  fileSize    Int?
+  storagePath String? // z. B. "rechnung/2026-06/<sha>-Invoice.pdf"
+  fileSha     String? @unique // sha256 der Bytes – HARTER Dedup/Idempotenz-Key
+  sourceUrl   String? // Hosted-Invoice-Link (Stripe), falls (noch) keine Bytes
+
+  // Workflow / BMD State-Machine
+  status        String    @default("collected")
+  // "collected"|"needs_review"|"queued"|"uploading"|"uploaded"|"failed"|"skipped"
+  attempts      Int       @default(0)
+  taskId        String? // browser-use Cloud Task-/Session-ID (durable Poll-Handle)
+  taskStartedAt DateTime? // für Stuck-Detection
+  bmdUploadedAt DateTime?
+  bmdError      String? // letzte Fehlermeldung – für "Erneut versuchen"
+  confirmation  String? // Bestätigungsnummer/-token aus BMD (Erfolgsnachweis)
+
+  notifiedAt  DateTime? // Telegram einmalig (analog Email.notifiedAt)
+  approvedAt  DateTime?
+  approvedVia String? // "telegram" | "app"
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  buchungen      Buchung[] @relation("StatementLines") // Zeilen, die AUS diesem Auszug stammen
+  matchedByLines Buchung[] @relation("MatchedInvoice") // Buchungen, die AUF diese Rechnung zeigen
+
+  @@index([status])
+  @@index([periodMonth])
+  @@index([kind, periodMonth])
+  @@index([vendorKey, invoiceNumber])
+}
+
+// Eine geparste Zeile aus einem Kontoauszug / einer Kreditkartenabrechnung.
+model Buchung {
+  id           String   @id @default(cuid())
+  belegId      String
+  beleg        Beleg    @relation("StatementLines", fields: [belegId], references: [id], onDelete: Cascade)
+  bookingDate  DateTime
+  amount       Decimal  @db.Decimal(10, 2) // negativ = Ausgabe
+  currency     String   @default("EUR")
+  counterparty String?
+  purpose      String?
+  reference    String?
+  raw          String // Original-Zeile (CSV-Row JSON) – Audit/Reparse + Dedup
+
+  matchedBelegId  String?
+  matchedBeleg    Beleg?   @relation("MatchedInvoice", fields: [matchedBelegId], references: [id], onDelete: SetNull)
+  matchStatus     String   @default("unmatched") // "unmatched" | "matched" | "ignored"
+  matchConfidence Int? // 0..100 vom Auto-Matcher; null bei manueller Zuordnung
+  createdAt       DateTime @default(now())
+
+  @@index([belegId])
+  @@index([matchedBelegId])
+  @@index([matchStatus])
+}
+
+// ── Werbeanzeigen (Meta / Facebook Ads) ───────────────────────────────────
+// Ein verbundenes Meta-Werbekonto. 1 Konto : 1 Token (wie die bestehende Ads-App).
+// Token liegt NUR verschlüsselt (AES-256-GCM, Key = Setting/Env ADS_TOKEN_KEY) in tokenCipher.
+model AdAccount {
+  id            String    @id @default(cuid())
+  label         String // "Christoph Werbung", "ET König Werbung"
+  metaAccountId String    @unique // "act_240480832228461"
+  accountName   String? // Name laut Meta
+  currency      String?
+  timezoneName  String?
+  tokenCipher   String? // AES-256-GCM(iv:tag:cipher, base64) – nie im Klartext
+  pageId        String? // bevorzugte Facebook-Page für Lead-Formulare
+  status        String    @default("not_connected") // not_connected | connected | error
+  lastError     String?
+  lastSyncAt    DateTime?
+
+  // Mandant (für späteren Kunden-Zugriff): wer dieses Konto sehen darf.
+  ownerUserId String? // Supabase user.id des Kunden (null = nur ePower/Admin)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @default(now()) @updatedAt
+  campaigns AdCampaign[]
+  drafts    AdDraft[]
+}
+
+// Insights-Cache (letzte 30 Tage), vom Sync gefüllt – das Dashboard liest NUR diese Tabelle.
+model AdCampaign {
+  id              String    @id // Meta campaign id (global eindeutig)
+  adAccountId     String
+  adAccount       AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  name            String
+  objective       String?
+  effectiveStatus String? // ACTIVE | PAUSED | ...
+  spend           Float     @default(0)
+  impressions     Int       @default(0)
+  reach           Int       @default(0)
+  clicks          Int       @default(0)
+  linkClicks      Int       @default(0)
+  leads           Int       @default(0)
+  cpa             Float? // Kosten pro Lead = spend/leads (lokal berechnet)
+  ctr             Float?
+  frequency       Float? // Ad-Fatigue-Frühwarnung
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@index([adAccountId])
+}
+
+// Entwurf vor dem Launch (KI/Vorlagen-Text + Launch-Parameter). Status-Maschine wie die Ads-App.
+model AdDraft {
+  id          String    @id @default(cuid())
+  adAccountId String
+  adAccount   AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  createdBy   String? // Supabase user.id (Kunde oder Admin)
+
+  // Eingaben
+  goal        String // leads | jobs | appointments | traffic
+  offer       String
+  region      String
+  benefit     String?
+  budget      Int // EUR/Tag
+  destination String  @default("lead_form") // lead_form | website
+  websiteUrl  String?
+  privacyUrl  String?
+  imageUrl    String? // optionale Bild-URL → link_data.picture (Datei-Upload kommt später)
+  country     String  @default("AT")
+  ageMin      Int     @default(25)
+  ageMax      Int     @default(65)
+  gender      String? // men | women | null
+  radiusKm    Float?
+  latitude    Float?
+  longitude   Float?
+
+  // KI/Vorlagen-Output
+  headline      String?
+  primaryText   String?
+  creativeNote  String? // Video-/Bild-Idee
+  audienceNote  String?
+  questionsJson String  @default("[]") // JSON-Array der Formularfragen (Strings)
+
+  // Launch-Ergebnis
+  status         String    @default("needs_review") // needs_review | launched | launch_error
+  metaCampaignId String?
+  metaAdsetId    String?
+  metaCreativeId String?
+  metaAdId       String?
+  leadFormId     String?
+  launchError    String?
+  launchedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([adAccountId])
 }

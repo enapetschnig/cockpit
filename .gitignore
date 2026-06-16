@@ -20,6 +20,9 @@ prisma/dev.db-journal
 .env
 .env*.local
 
+# Lokaler Meta-Ads-Analyse-Ordner – enthält ECHTE Access-Tokens, niemals committen
+/New project/
+
 # misc
 .DS_Store
 *.pem

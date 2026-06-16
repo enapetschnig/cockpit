@@ -211,3 +211,112 @@ export async function composeEmail(input: { to: string; instruction: string; con
   const j = JSON.parse(resp.choices[0]?.message?.content ?? "{}") as { subject?: string; body?: string };
   return { subject: (j.subject || "Nachricht").trim(), body: (j.body || "").trim() };
 }
+
+// ── Werbeanzeigen-Texte (Meta Ads) ───────────────────────────────────────
+export interface AdCopyInput {
+  goal: string; // leads | jobs | appointments | traffic
+  offer: string;
+  region: string;
+  benefit?: string;
+  destination?: string; // lead_form | website
+  formStyle?: string; // simple | qualified | callback
+}
+export interface AdCopy {
+  headline: string;
+  primaryText: string;
+  creativeNote: string; // Bild-/Video-Idee
+  questions: string[];
+}
+
+/** Deterministische Vorlage (kein KI-Key nötig) – portiert aus der bestehenden Ads-App. */
+export function templateAdCopy(input: AdCopyInput): AdCopy {
+  const region = input.region || "Ihrer Region";
+  const offer = input.offer || "unser Angebot";
+  const benefitLine = input.benefit ? `${input.benefit}. ` : "";
+  const cta = input.goal === "jobs" ? "Jetzt bewerben" : "Jetzt anfragen";
+  const isPv = ["pv", "photovoltaik", "solar", "solaranlage"].some((t) => offer.toLowerCase().includes(t));
+
+  let headline: string;
+  let questions: string[];
+  if (input.goal === "jobs") {
+    headline = "Jetzt im Team bewerben";
+    questions = ["Name", "Telefonnummer", "Ort", "Was machst du beruflich?"];
+  } else {
+    headline = "Kostenlose Anfrage in Ihrer Nähe";
+    questions = ["Name", "Telefonnummer", "Ort", "Worum geht es?"];
+  }
+  if (input.formStyle === "qualified") questions = [...questions, "Wunschtermin", "Budgetrahmen"];
+  else if (input.formStyle === "callback") questions = ["Name", "Telefonnummer", "Ort", "Beste Rückrufzeit"];
+
+  let primaryText: string;
+  let creativeNote: string;
+  if (isPv) {
+    headline = "PV-Anlage einfach prüfen lassen";
+    questions = ["Name", "Telefonnummer", "Ort", "Dachart", "ungefähre Stromkosten"];
+    primaryText =
+      `Sie denken über eine PV-Anlage in ${region} nach? ${benefitLine}` +
+      `Wir prüfen, welche Lösung zu Haus, Dach und Verbrauch passt. ` +
+      `Klicken Sie auf „${cta}" und wir melden uns mit einer einfachen Ersteinschätzung.`;
+    creativeNote =
+      "Dreh ein kurzes Video direkt vor einem Hausdach, Wechselrichter oder Speicher. " +
+      'Starte mit: „Sie überlegen, ob sich eine PV-Anlage bei Ihnen lohnt?" Kein Fachjargon.';
+  } else {
+    primaryText =
+      `Sie suchen eine einfache Lösung für ${offer} in ${region}? ${benefitLine}` +
+      `Wir helfen Ihnen schnell und unkompliziert weiter. ` +
+      `Klicken Sie auf „${cta}" und wir melden uns mit den nächsten Schritten.`;
+    creativeNote =
+      "Kurzes, ehrliches Handy-Video vom Inhaber oder ein klares Vorher/Nachher-Bild. " +
+      "Erste 3 Sekunden: das Problem des Kunden direkt ansprechen.";
+  }
+  return { headline, primaryText, creativeNote, questions };
+}
+
+/** KI-Variante (OpenAI). Fällt ohne Key/bei Fehler auf templateAdCopy zurück. */
+export async function draftAdCopy(input: AdCopyInput): Promise<AdCopy> {
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) return templateAdCopy(input);
+  const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
+  try {
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model,
+      temperature: 0.6,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Du textest lokale Meta-Werbeanzeigen (Facebook/Instagram) für österreichische Handwerks-/Dienstleistungsbetriebe. " +
+            "Ziel: einfache, vertrauensvolle Anzeigen, die Anfragen/Leads in der Region bringen – Du-frei, klares Hochdeutsch, kein Marketing-Blabla, keine Emojis, keine Übertreibung. " +
+            'Gib NUR JSON zurück: { "headline": string (max 40 Zeichen), "primaryText": string (2-4 Sätze, endet mit Handlungsaufforderung), "creativeNote": string (konkrete Bild-/Video-Idee zum Selberdrehen), "questions": string[] (3-5 kurze Formularfragen, immer Name + Telefonnummer + Ort enthalten) }.',
+        },
+        {
+          role: "user",
+          content: [
+            `Ziel: ${input.goal}`,
+            `Angebot/Leistung: ${input.offer}`,
+            `Region: ${input.region}`,
+            input.benefit ? `Vorteil: ${input.benefit}` : "",
+            `Ziel der Anzeige: ${input.destination === "website" ? "Klicks auf Website" : "Anfragen über Lead-Formular"}`,
+            "Schreibe Headline, Primärtext, eine Creative-Idee und die Formularfragen.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      ],
+    });
+    const j = JSON.parse(resp.choices[0]?.message?.content ?? "{}") as Partial<AdCopy>;
+    const tmpl = templateAdCopy(input);
+    const questions = Array.isArray(j.questions) && j.questions.length ? j.questions.map(String).filter(Boolean) : tmpl.questions;
+    return {
+      headline: (j.headline || tmpl.headline).trim(),
+      primaryText: (j.primaryText || tmpl.primaryText).trim(),
+      creativeNote: (j.creativeNote || tmpl.creativeNote).trim(),
+      questions,
+    };
+  } catch (e) {
+    console.error("[openai] Ad-Text fehlgeschlagen – nutze Vorlage:", e);
+    return templateAdCopy(input);
+  }
+}

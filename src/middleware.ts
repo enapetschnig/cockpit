@@ -10,8 +10,8 @@ export const config = {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Cron darf Sync + Briefing + Reminders auch ohne Login (per CRON_SECRET)
-  if (pathname === "/api/gmail/sync" || pathname === "/api/briefing" || pathname === "/api/reminders") {
+  // Cron darf Sync + Briefing + Reminders + BMD-Worker auch ohne Login (per CRON_SECRET)
+  if (pathname === "/api/gmail/sync" || pathname === "/api/briefing" || pathname === "/api/reminders" || pathname === "/api/buchhaltung/worker") {
     const cron = process.env.CRON_SECRET;
     const bearer = req.headers.get("authorization") === `Bearer ${cron}`;
     const keyParam = req.nextUrl.searchParams.get("key") === cron;

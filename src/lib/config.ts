@@ -13,6 +13,16 @@ export const SETTING_KEYS = [
   "GOOGLE_CLIENT_SECRET",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
+  // ── Buchhaltung / BMD ────────────────────────────────────
+  "SUPABASE_URL", // Supabase-Projekt-URL (für Storage-Server-Client)
+  "SUPABASE_SERVICE_ROLE_KEY", // schreibt in den privaten "belege"-Bucket
+  "BROWSER_USE_API_KEY", // browser-use Cloud (BMD-Upload)
+  "BMD_PORTAL_URL", // Login-URL des BMD-Com-Webportals
+  "BMD_PORTAL_CUSTOMER", // Kundennummer/Mandant (falls ≠ Benutzer)
+  "BMD_PORTAL_USER",
+  "BMD_PORTAL_PASSWORD",
+  // ── Werbeanzeigen (Meta Ads) ─────────────────────────────
+  "ADS_TOKEN_KEY", // Schlüssel zum Ver-/Entschlüsseln der Meta-Access-Tokens
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 

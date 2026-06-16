@@ -15,6 +15,13 @@ import { getConfig } from "./config";
 
 export type Account = "firma" | "privat";
 
+export interface MailAttachment {
+  filename: string;
+  mimeType: string;
+  attachmentId: string;
+  size: number;
+}
+
 export interface RawMail {
   account: Account;
   gmailId: string;
@@ -25,6 +32,7 @@ export interface RawMail {
   body: string;
   receivedAt: Date;
   outgoing: boolean; // true = selbst gesendet (Gmail-Label SENT)
+  attachments: MailAttachment[]; // Datei-Anhänge (für die Buchhaltung: PDFs)
 }
 
 // Mail lesen + senden, plus Kalender (Termine lesen/anlegen).
@@ -127,22 +135,46 @@ export async function fetchNewRawMails(account: Account, opts?: { max?: number; 
   const out: RawMail[] = [];
   for (const id of fresh) {
     const msg = await gmail.users.messages.get({ userId: "me", id, format: "full" });
-    const payload = msg.data.payload;
-    const headers = payload?.headers ?? [];
-    const from = parseFrom(decodeMimeWords(header(headers, "From")));
-    out.push({
-      account,
-      gmailId: id,
-      threadId: msg.data.threadId ?? id,
-      fromAddr: from.addr,
-      fromName: from.name,
-      subject: decodeMimeWords(header(headers, "Subject")) || "(kein Betreff)",
-      body: extractBody(payload) || msg.data.snippet || "",
-      receivedAt: msg.data.internalDate ? new Date(Number(msg.data.internalDate)) : new Date(),
-      outgoing: (msg.data.labelIds ?? []).includes("SENT"),
-    });
+    out.push(toRawMail(account, id, msg.data));
   }
   return out;
+}
+
+/** Holt EINE Nachricht (mit Anhängen) erneut – z. B. um nachträglich einen Beleg zu erfassen. */
+export async function fetchRawMail(account: Account, gmailId: string): Promise<RawMail> {
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: acc.refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: client });
+  const msg = await gmail.users.messages.get({ userId: "me", id: gmailId, format: "full" });
+  return toRawMail(account, gmailId, msg.data);
+}
+
+interface GmailMessageData {
+  payload?: MimePart | null;
+  threadId?: string | null;
+  snippet?: string | null;
+  internalDate?: string | null;
+  labelIds?: string[] | null;
+}
+
+function toRawMail(account: Account, gmailId: string, data: GmailMessageData): RawMail {
+  const payload = data.payload;
+  const headers = payload?.headers ?? [];
+  const from = parseFrom(decodeMimeWords(header(headers, "From")));
+  return {
+    account,
+    gmailId,
+    threadId: data.threadId ?? gmailId,
+    fromAddr: from.addr,
+    fromName: from.name,
+    subject: decodeMimeWords(header(headers, "Subject")) || "(kein Betreff)",
+    body: extractBody(payload) || data.snippet || "",
+    receivedAt: data.internalDate ? new Date(Number(data.internalDate)) : new Date(),
+    outgoing: (data.labelIds ?? []).includes("SENT"),
+    attachments: collectAttachments(payload),
+  };
 }
 
 export async function markSynced(account: Account): Promise<void> {
@@ -197,7 +229,9 @@ function decodeB64(data: string): string {
 
 interface MimePart {
   mimeType?: string | null;
-  body?: { data?: string | null } | null;
+  filename?: string | null;
+  headers?: Header[] | null;
+  body?: { data?: string | null; attachmentId?: string | null; size?: number | null } | null;
   parts?: MimePart[] | null;
 }
 
@@ -209,6 +243,35 @@ function findPart(part: MimePart | null | undefined, mime: string): MimePart | n
     if (found) return found;
   }
   return null;
+}
+
+/** Sammelt alle echten Datei-Anhänge (filename + attachmentId) rekursiv. */
+function collectAttachments(part: MimePart | null | undefined, out: MailAttachment[] = []): MailAttachment[] {
+  if (!part) return out;
+  const id = part.body?.attachmentId;
+  if (id && part.filename && part.filename.trim()) {
+    out.push({
+      filename: decodeMimeWords(part.filename),
+      mimeType: part.mimeType ?? "application/octet-stream",
+      attachmentId: id,
+      size: part.body?.size ?? 0,
+    });
+  }
+  for (const p of part.parts ?? []) collectAttachments(p, out);
+  return out;
+}
+
+/** Lädt die Bytes eines Mail-Anhangs (für die Buchhaltung: das Rechnungs-PDF). */
+export async function fetchAttachment(account: Account, gmailId: string, attachmentId: string): Promise<Buffer> {
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: acc.refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: client });
+  const res = await gmail.users.messages.attachments.get({ userId: "me", messageId: gmailId, id: attachmentId });
+  const data = res.data.data;
+  if (!data) throw new Error("Anhang ohne Daten");
+  return Buffer.from(data, "base64url");
 }
 
 function extractBody(payload: MimePart | null | undefined): string {
