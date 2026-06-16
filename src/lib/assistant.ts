@@ -8,7 +8,13 @@ import { prisma } from "./db";
 import { getConfig } from "./config";
 import { draftEmailReply, composeEmail } from "./openai";
 import { listEvents, createEvent, deleteEvent } from "./calendar";
+import { getThreadContext } from "./gmail";
 import { ASSISTANT_PERSONA } from "./persona";
+
+async function memoryContext(): Promise<string> {
+  const ms = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 25 });
+  return ms.map((m) => `- ${m.topic ? "[" + m.topic + "] " : ""}${m.content}`).join("\n");
+}
 
 export interface AssistantResult {
   reply: string;
@@ -371,7 +377,10 @@ async function runTool(name: string, a: Args): Promise<unknown> {
 async function doDraft(emailId: string, instruction: string): Promise<{ result: unknown; drafted?: AssistantResult["draftedFor"] }> {
   const email = await prisma.email.findUnique({ where: { id: emailId } });
   if (!email) return { result: { error: "E-Mail nicht gefunden" } };
-  const text = await draftEmailReply({ fromName: email.fromName, fromAddr: email.fromAddr, subject: email.subject, body: email.body, instruction });
+  const memText = await memoryContext();
+  const thread = email.threadId ? await getThreadContext(email.account === "privat" ? "privat" : "firma", email.threadId) : "";
+  const context = [thread ? "Bisheriger Mail-Verlauf:\n" + thread : "", memText ? "Gemerktes Wissen:\n" + memText : ""].filter(Boolean).join("\n\n");
+  const text = await draftEmailReply({ fromName: email.fromName, fromAddr: email.fromAddr, subject: email.subject, body: email.body, instruction, context: context || undefined });
   const acc = await prisma.gmailAccount.findUnique({ where: { account: email.account } });
   const subject = /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`;
   return {
@@ -399,7 +408,7 @@ async function doDraftNew(a: Args): Promise<{ result: unknown; newEmail?: Assist
   const account = a.account === "privat" ? "privat" : "firma";
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) return { result: { error: `Postfach ${account} ist nicht verbunden.` } };
-  const composed = await composeEmail({ to: toName || toAddr, instruction: a.instruction || a.subject || "" });
+  const composed = await composeEmail({ to: toName || toAddr, instruction: a.instruction || a.subject || "", context: (await memoryContext()) || undefined });
   const subject = (a.subject || "").trim() || composed.subject;
   const body = composed.body;
   const pending = await prisma.pendingEmail.create({ data: { account, toAddr, toName, subject, body } });

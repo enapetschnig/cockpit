@@ -159,6 +159,7 @@ export async function draftEmailReply(input: {
   subject: string;
   body: string;
   instruction: string;
+  context?: string;
 }): Promise<string> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OpenAI-Key fehlt.");
@@ -172,7 +173,8 @@ export async function draftEmailReply(input: {
         role: "system",
         content:
           "Du formulierst professionelle, freundliche deutsche E-Mail-Antworten für die ePower GmbH (Software für Handwerker). " +
-          "Gib NUR den Antworttext aus – keine Betreffzeile, keine Anführungszeichen, keine Erklärungen. Höflich, knapp, mit passender Anrede und Grußformel.",
+          "Gib NUR den Antworttext aus – keine Betreffzeile, keine Anführungszeichen, keine Erklärungen. Höflich, knapp, mit passender Anrede und Grußformel." +
+          (input.context ? "\n\nBerücksichtige diesen Kontext (Mail-Verlauf + Wissen über Nutzer/Kunde), damit die Antwort genau passt:\n" + input.context : ""),
       },
       {
         role: "user",
@@ -186,7 +188,7 @@ export async function draftEmailReply(input: {
 }
 
 /** Verfasst eine komplett neue deutsche E-Mail (Betreff + Text) aus einem Auftrag. */
-export async function composeEmail(input: { to: string; instruction: string }): Promise<{ subject: string; body: string }> {
+export async function composeEmail(input: { to: string; instruction: string; context?: string }): Promise<{ subject: string; body: string }> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OpenAI-Key fehlt.");
   const model = (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
@@ -200,7 +202,8 @@ export async function composeEmail(input: { to: string; instruction: string }): 
         role: "system",
         content:
           "Du schreibst professionelle, freundliche deutsche E-Mails für die ePower GmbH (Software für Handwerker). " +
-          'Gib NUR JSON zurück: { "subject": "...", "body": "..." }. Der Body hat passende Anrede und Grußformel, kein Markdown, keine Platzhalter wie [Name].',
+          'Gib NUR JSON zurück: { "subject": "...", "body": "..." }. Der Body hat passende Anrede und Grußformel, kein Markdown, keine Platzhalter wie [Name].' +
+          (input.context ? "\n\nBerücksichtige dieses Wissen über Nutzer/Kunde:\n" + input.context : ""),
       },
       { role: "user", content: `Empfänger: ${input.to}\nAuftrag: ${input.instruction}\n\nSchreibe Betreff und Mailtext.` },
     ],

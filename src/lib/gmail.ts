@@ -271,6 +271,30 @@ export async function sendReply(
   return { to, subject };
 }
 
+/** Liefert die letzten Nachrichten eines Threads als Kontext-Text (für bessere Antworten). */
+export async function getThreadContext(account: Account, threadId: string, maxMessages = 4): Promise<string> {
+  try {
+    const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+    if (!acc?.refreshToken) return "";
+    const client = await oauthClient();
+    client.setCredentials({ refresh_token: acc.refreshToken });
+    const gmail = google.gmail({ version: "v1", auth: client });
+    const t = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
+    const msgs = (t.data.messages ?? []).slice(-maxMessages);
+    return msgs
+      .map((msg) => {
+        const h = (msg.payload?.headers ?? []) as Header[];
+        const from = decodeMimeWords(header(h, "From"));
+        const date = header(h, "Date");
+        const body = (extractBody(msg.payload as MimePart) || msg.snippet || "").slice(0, 600);
+        return `— ${from} (${date}):\n${body}`;
+      })
+      .join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
 /** Sendet eine KOMPLETT NEUE E-Mail (kein Reply). */
 export async function sendNewEmail(account: Account, to: string, subject: string, body: string): Promise<void> {
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
