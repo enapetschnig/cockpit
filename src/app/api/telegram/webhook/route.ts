@@ -5,7 +5,8 @@ import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage } from "@
 import { transcribeVoice } from "@/lib/openai";
 import { sendReply, sendNewEmail, type Account } from "@/lib/gmail";
 import { createEvent } from "@/lib/calendar";
-import { runAssistant } from "@/lib/assistant";
+import { runAssistant, buildReplyDraft } from "@/lib/assistant";
+import { listFollowups } from "@/lib/followups";
 import { queueBeleg, approveAllCollected, retryBeleg, skipBeleg } from "@/lib/bmd/state";
 
 export const dynamic = "force-dynamic";
@@ -38,13 +39,62 @@ function stripMd(s: string): string {
 
 const HELP = [
   "👋 <b>ePower Cockpit Bot</b>",
-  "Frag mich einfach etwas zu deinen Mails – z. B.:",
+  "Frag mich einfach etwas – z. B.:",
   "• Welche Mails habe ich heute bekommen?",
-  "• Gibt es offene Rechnungen?",
+  "• <b>/offen</b> – offene Aufgaben & Follow-ups zum Abhaken",
+  "• Trag mir Donnerstag 14 Uhr einen Termin mit Müller ein",
   "• Was ist von Pachlinger offen?",
   "",
+  "📅 Termine trage ich direkt in den Google-Kalender ein.",
   "Antworte direkt auf eine Mail-Benachrichtigung (Text oder 🎤 Sprache) – ich formuliere die Antwort, du sendest per Klick.",
 ].join("\n");
+
+function short(s: string, n = 26): string {
+  const t = (s || "").trim();
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
+/** Baut die abhakbare Offen-Übersicht (Aufgaben + wartende Follow-ups) mit Knöpfen. */
+async function buildOpenOverview(): Promise<{ text: string; buttons: { text: string; data: string }[][] }> {
+  const [todos, fups] = await Promise.all([
+    prisma.todo.findMany({ where: { done: false }, include: { customer: true }, orderBy: { createdAt: "desc" }, take: 20 }),
+    listFollowups(48, 8),
+  ]);
+  const lines: string[] = ["🗂 <b>Offene Punkte</b>"];
+  const buttons: { text: string; data: string }[][] = [];
+
+  if (todos.length) {
+    lines.push("", "<b>Aufgaben</b> – tippe ✅ zum Abhaken");
+    for (const t of todos) {
+      lines.push(`• ${esc(t.text)}${t.customer ? " — " + esc(t.customer.name) : ""}`);
+      buttons.push([{ text: "✅ " + short(t.text), data: "tdone:" + t.id }]);
+    }
+  }
+  if (fups.length) {
+    lines.push("", "<b>Wartet auf Antwort</b>");
+    for (const f of fups) {
+      lines.push(`• ${esc(f.fromName)}: ${esc(f.subject)}`);
+      buttons.push([
+        { text: "✍️ " + short(f.fromName, 16), data: "frep:" + f.id },
+        { text: "✓ erledigt", data: "fdone:" + f.id },
+      ]);
+    }
+  }
+  if (!todos.length && !fups.length) lines.push("", "🎉 Nichts offen – alles erledigt!");
+  return { text: lines.join("\n"), buttons };
+}
+
+async function sendOpenOverview(): Promise<void> {
+  const { text, buttons } = await buildOpenOverview();
+  await sendTelegram(text, buttons.length ? { buttons } : undefined);
+}
+
+/** Aktualisiert die bestehende Offen-Liste nach dem Abhaken (Knöpfe neu aufbauen). */
+async function refreshOverview(cb: TgCallback): Promise<void> {
+  if (!cb.message) return;
+  const { text, buttons } = await buildOpenOverview();
+  await tgEditMessage(cb.message.chat.id, cb.message.message_id, text, buttons.length ? buttons : undefined);
+}
 
 export async function POST(req: Request) {
   const secret = await getConfig("TELEGRAM_WEBHOOK_SECRET");
@@ -99,6 +149,10 @@ async function handleMessage(msg: TgMessage) {
     await sendTelegram(HELP);
     return;
   }
+  if (text.startsWith("/offen") || text.startsWith("/aufgaben") || text.startsWith("/todos")) {
+    await sendOpenOverview();
+    return;
+  }
 
   // Anweisung aus Text oder Sprachnachricht
   let instruction = text.trim();
@@ -121,6 +175,13 @@ async function handleMessage(msg: TgMessage) {
   }
 
   const result = await runAssistant(instruction, { replyEmailId });
+
+  if (result.openOverview) {
+    const intro = stripMd(result.reply || "").trim();
+    if (intro && intro.length < 200) await sendTelegram(esc(intro));
+    await sendOpenOverview();
+    return;
+  }
 
   if (result.draftedFor) {
     const d = result.draftedFor;
@@ -208,6 +269,42 @@ async function handleCallback(cb: TgCallback) {
       await tgAnswerCallback(cb.id, "✓ Ignoriert");
       if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, `🚫 <b>${esc(beleg.vendor)} ignoriert.</b>`);
     }
+    return;
+  }
+
+  // Offen-Liste: Aufgabe abhaken / Follow-up erledigt / Follow-up beantworten
+  if (action === "tdone") {
+    const t = id ? await prisma.todo.findUnique({ where: { id } }) : null;
+    if (t && !t.done) await prisma.todo.update({ where: { id: t.id }, data: { done: true } });
+    await tgAnswerCallback(cb.id, t ? "✓ erledigt: " + short(t.text, 30) : "Schon weg");
+    await refreshOverview(cb);
+    return;
+  }
+  if (action === "fdone") {
+    const e = id ? await prisma.email.findUnique({ where: { id } }) : null;
+    if (e) await prisma.email.update({ where: { id: e.id }, data: { repliedAt: new Date() } });
+    await tgAnswerCallback(cb.id, "✓ Als erledigt markiert");
+    await refreshOverview(cb);
+    return;
+  }
+  if (action === "frep") {
+    const e = id ? await prisma.email.findUnique({ where: { id } }) : null;
+    if (!e) {
+      await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
+      return;
+    }
+    await tgAnswerCallback(cb.id, "✍️ Entwurf wird erstellt …");
+    const d = await buildReplyDraft(e.id, "Antworte freundlich, knapp und passend auf diese Mail.");
+    if (!d) {
+      await sendTelegram("⚠️ Konnte keinen Entwurf erstellen.");
+      return;
+    }
+    await prisma.email.update({ where: { id: d.emailId }, data: { pendingReply: d.text } });
+    const accLabel = d.account === "firma" ? "Firma" : "Privat";
+    await sendTelegram(
+      `✍️ <b>Antwort vorbereitet</b>\n📤 Von: ${esc(d.fromEmail)} (${accLabel})\n📥 An: ${esc(d.fromName)} &lt;${esc(d.toAddr)}&gt;\n📝 ${esc(d.subject)}\n\n${esc(d.text)}\n\n<i>Bitte kontrollieren:</i>`,
+      { buttons: [[{ text: "✅ Senden", data: `send:${d.emailId}` }, { text: "🗑 Verwerfen", data: `del:${d.emailId}` }]] }
+    );
     return;
   }
 

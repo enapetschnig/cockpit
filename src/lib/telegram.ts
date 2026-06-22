@@ -118,13 +118,22 @@ export async function tgAnswerCallback(callbackId: string, text?: string): Promi
   });
 }
 
-/** Ersetzt den Text einer bestehenden Nachricht (z. B. nach „Senden" – Buttons verschwinden). */
-export async function tgEditMessage(chatId: number | string, messageId: number, text: string): Promise<void> {
+/** Ersetzt den Text (und optional die Knöpfe) einer bestehenden Nachricht. Ohne buttons verschwinden sie. */
+export async function tgEditMessage(
+  chatId: number | string,
+  messageId: number,
+  text: string,
+  buttons?: { text: string; data: string }[][]
+): Promise<void> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
   if (!token) return;
+  const body: Record<string, unknown> = { chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", disable_web_page_preview: true };
+  if (buttons && buttons.length) {
+    body.reply_markup = { inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) };
+  }
   await fetch(`${API(token)}/editMessageText`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    body: JSON.stringify(body),
   });
 }

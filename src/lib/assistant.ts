@@ -21,6 +21,7 @@ export interface AssistantResult {
   reply: string;
   draftedFor?: { emailId: string; text: string; fromName: string; toAddr: string; fromEmail: string; account: string; subject: string };
   newEmail?: { pendingId: string; account: string; fromEmail: string; toAddr: string; toName?: string; subject: string; body: string };
+  openOverview?: boolean; // Telegram soll die abhakbare Offen-Liste mit Knöpfen senden
 }
 
 const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -59,6 +60,15 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: { name: "list_open_todos", description: "Listet alle offenen Aufgaben (optional je Kunde).", parameters: { type: "object", properties: { customer_name: { type: "string" } } } },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_open_overview",
+      description:
+        "Zeigt dem Nutzer eine ABHAKBARE Übersicht aller offenen Punkte (offene Aufgaben + wartende Follow-up-Mails) mit Knöpfen zum Abhaken/Antworten. Nutze das IMMER, wenn der Nutzer offene Dinge sehen, durchgehen oder abhaken will (z. B. 'was ist offen?', 'zeig meine Aufgaben', 'was muss ich noch erledigen').",
+      parameters: { type: "object", properties: {} },
+    },
   },
   {
     type: "function",
@@ -156,18 +166,19 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "create_event",
-      description: "Legt einen Termin im Google-Kalender an. Zeiten in Wiener Zeit als 'YYYY-MM-DDTHH:MM:SS' (oder 'YYYY-MM-DD' für ganztägig). Berechne Datum/Uhrzeit aus dem heutigen Datum.",
+      description:
+        "Trägt einen Termin/Meeting/Besuch/Anruf in den Google-Kalender ein. IMMER hierfür benutzen, sobald es einen Termin zu einer Uhrzeit gibt (nicht set_reminder!). Standard-Konto firma. Zeiten in Wiener Zeit als 'YYYY-MM-DDTHH:MM:SS' (oder 'YYYY-MM-DD' ganztägig); end ist optional – ohne end nehme ich 1 Stunde. Berechne Datum/Uhrzeit aus dem heutigen Datum und trage direkt ein.",
       parameters: {
         type: "object",
         properties: {
           account: { type: "string", enum: ["firma", "privat"] },
           title: { type: "string" },
           start: { type: "string" },
-          end: { type: "string" },
+          end: { type: "string", description: "optional; ohne Angabe = start + 1 Stunde" },
           location: { type: "string" },
           description: { type: "string" },
         },
-        required: ["title", "start", "end"],
+        required: ["title", "start"],
       },
     },
   },
@@ -378,11 +389,24 @@ async function runTool(name: string, a: Args): Promise<unknown> {
       }
     }
     case "create_event": {
-      if (!a.title || !a.start || !a.end) return { error: "title, start und end nötig" };
+      if (!a.title || !a.start) return { error: "title und start nötig" };
       const account = a.account === "privat" ? "privat" : "firma";
+      // Endzeit fehlt → bei Uhrzeit +1 Stunde, bei ganztägig derselbe Tag.
+      let end = a.end;
+      if (!end) {
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(a.start)) {
+          const d = new Date(a.start);
+          if (!isNaN(d.getTime())) {
+            d.setHours(d.getHours() + 1);
+            const p = (n: number) => String(n).padStart(2, "0");
+            end = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
+          }
+        }
+        if (!end) end = a.start;
+      }
       try {
-        const ev = await createEvent(account, { title: a.title, start: a.start, end: a.end, location: a.location, description: a.description });
-        return { ok: true, account, angelegt: ev.summary, start: ev.start, end: ev.end, id: ev.id };
+        const ev = await createEvent(account, { title: a.title, start: a.start, end, location: a.location, description: a.description });
+        return { ok: true, account, angelegt: ev.summary, start: ev.start, end: ev.end, id: ev.id, kalender: "Google-Kalender (" + account + ")" };
       } catch (e) {
         return { error: (e as Error).message };
       }
@@ -480,7 +504,23 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
 
   let drafted: AssistantResult["draftedFor"];
   let newEmail: AssistantResult["newEmail"];
+  let openOverview = false;
   const today = new Intl.DateTimeFormat("de-AT", { timeZone: "Europe/Vienna", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // Exakte Datums-Tabelle der nächsten 14 Tage (Wiener Zeit) – damit relative Angaben
+  // ('morgen', 'Donnerstag', 'nächste Woche') zuverlässig auf das richtige YYYY-MM-DD treffen.
+  const dateHints = (() => {
+    const now = new Date();
+    const isoVienna = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    const wdVienna = (d: Date) => new Intl.DateTimeFormat("de-AT", { timeZone: "Europe/Vienna", weekday: "long" }).format(d);
+    const labels = ["Heute", "Morgen", "Übermorgen"];
+    const rows: string[] = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(now.getTime() + i * 86400000);
+      const prefix = labels[i] ? labels[i] + " = " : "";
+      rows.push(`${prefix}${wdVienna(d)} ${isoVienna(d)}`);
+    }
+    return rows.join("; ");
+  })();
 
   const memories = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 40 });
   const memText = memories.length ? memories.map((m) => `- ${m.topic ? "[" + m.topic + "] " : ""}${m.content}`).join("\n") : "(noch nichts gemerkt)";
@@ -503,8 +543,11 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
       content:
         ASSISTANT_PERSONA.replace("{DATUM}", today).replace("{MEMORIES}", memText) +
         "\n\nDu verwaltest auch die Google-Kalender beider Konten: Termine anzeigen (list_events), anlegen (create_event), löschen (delete_event). Standard-Konto firma, außer der Nutzer meint privat. " +
-        "Weitere Fähigkeiten: list_followups (welche Mails warten seit Tagen auf Antwort), snooze_email (Mail zurückstellen/Wiedervorlage), set_reminder (zeitliche Erinnerung 'erinnere mich Montag an X'). " +
-        "Rechne alle Zeitpunkte (start/end/until/when) aus dem heutigen Datum in Wiener Zeit als 'YYYY-MM-DDTHH:MM:SS' aus.",
+        "WICHTIG – Termine: Sobald es um einen Termin/Meeting/Besuch/Anruf zu einer Uhrzeit geht (auch 'trag mir … ein', 'mach mir … aus', 'ich hab am … einen Termin'), trägst du ihn SOFORT mit create_event in den Google-Kalender ein – NICHT bloß als Erinnerung. Frag nicht lang nach, nimm sinnvolle Annahmen (Standardkonto firma, 1 Stunde Dauer) und bestätige kurz mit Datum/Uhrzeit. set_reminder ist NUR für reine Anstupser ohne Kalendereintrag ('erinnere mich Montag an X'). " +
+        "Wenn der Nutzer offene Dinge sehen oder abhaken will, rufe show_open_overview auf (zeigt eine abhakbare Liste mit Knöpfen). Aus einer offenen Aufgabe einen Termin machen: create_event anlegen UND die Aufgabe mit complete_todo abhaken. " +
+        "Nutze für alle Zeitpunkte (start/end/until/when) AUSSCHLIESSLICH diese exakte Datums-Tabelle (Wiener Zeit), niemals selbst rechnen:\n" +
+        dateHints +
+        "\nFormat 'YYYY-MM-DDTHH:MM:SS'. Beispiel: 'morgen 15 Uhr' → nimm das Datum hinter 'Morgen =' und hänge 'T15:00:00' an.",
     },
     ...(convState
       ? [{ role: "system" as const, content: `Arbeits-Kontext der letzten Nachricht (für Bezüge wie 'die zweite', 'ordne die zu', 'antworte ihm'):\n${convState}` }]
@@ -540,6 +583,9 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
           const r = await doDraftNew(args);
           newEmail = r.newEmail ?? newEmail;
           result = r.result;
+        } else if (tc.function.name === "show_open_overview") {
+          openOverview = true;
+          result = { ok: true, hinweis: "Die abhakbare Liste mit Knöpfen wird dem Nutzer direkt angezeigt – fasse dich kurz oder antworte nur knapp." };
         } else {
           result = await runTool(tc.function.name, args);
         }
@@ -574,5 +620,11 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
     await prisma.setting.upsert({ where: { key: "CONV_STATE" }, create: { key: "CONV_STATE", value: v }, update: { value: v } });
   }
 
-  return { reply: finalReply, draftedFor: drafted, newEmail };
+  return { reply: finalReply, draftedFor: drafted, newEmail, openOverview };
+}
+
+/** Bereitet einen Antwort-Entwurf für eine Mail vor (für den Telegram-„Antwort"-Knopf). */
+export async function buildReplyDraft(emailId: string, instruction: string): Promise<AssistantResult["draftedFor"] | null> {
+  const r = await doDraft(emailId, instruction);
+  return r.drafted ?? null;
 }
