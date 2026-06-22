@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LABELS } from "@/lib/labels";
-import type { EmailDTO, CustomerDTO, AdAccountDTO, AdCampaignDTO, AdDraftDTO, AdLocation, AdInterest } from "@/lib/types";
+import type { EmailDTO, CustomerDTO } from "@/lib/types";
 
 type Tab = "firmenrelevant" | "wichtig" | "buchhaltung" | "zuordnen" | "alle";
 type Acc = "alle" | "firma" | "privat";
-type View = "inbox" | "email" | "kunden" | "kunde" | "gesendet" | "kalender" | "werbeanzeigen" | "anzeige_neu";
+type View = "inbox" | "email" | "kunden" | "kunde" | "gesendet" | "kalender";
 type CalEv = { id: string; summary: string; start: string; end: string; location?: string; allDay: boolean; account: string };
 
 const PALETTE = ["#2f6df0", "#1f9d63", "#d8932a", "#e0533d", "#9a4fc4", "#1c8a90", "#5a6675"];
@@ -21,49 +21,6 @@ function colorFor(e: EmailDTO) {
   return PALETTE[h % PALETTE.length];
 }
 const json = { "Content-Type": "application/json" };
-
-type AdFormState = {
-  adAccountId: string;
-  goal: string;
-  offer: string;
-  region: string;
-  benefit: string;
-  budget: number;
-  destination: string;
-  websiteUrl: string;
-  privacyUrl: string;
-  imageUrl: string;
-  tone: string; // du | sie
-  gender: string; // "" | men | women
-  ageMin: number;
-  ageMax: number;
-  locations: AdLocation[];
-  interests: AdInterest[];
-};
-const emptyAdForm: AdFormState = {
-  adAccountId: "",
-  goal: "leads",
-  offer: "",
-  region: "",
-  benefit: "",
-  budget: 20,
-  destination: "lead_form",
-  websiteUrl: "",
-  privacyUrl: "",
-  imageUrl: "",
-  tone: "du",
-  gender: "",
-  ageMin: 25,
-  ageMax: 65,
-  locations: [],
-  interests: [],
-};
-const AD_GOALS: { v: string; t: string }[] = [
-  { v: "leads", t: "Anfragen / Leads" },
-  { v: "appointments", t: "Termine" },
-  { v: "jobs", t: "Mitarbeiter / Bewerbungen" },
-  { v: "traffic", t: "Website-Besuche" },
-];
 
 export default function Cockpit() {
   const [emails, setEmails] = useState<EmailDTO[]>([]);
@@ -87,22 +44,6 @@ export default function Cockpit() {
   // Kalender (Web)
   const [events, setEvents] = useState<CalEv[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
-  // Werbeanzeigen (Web)
-  const [adAccounts, setAdAccounts] = useState<AdAccountDTO[]>([]);
-  const [adCampaigns, setAdCampaigns] = useState<AdCampaignDTO[]>([]);
-  const [adDrafts, setAdDrafts] = useState<AdDraftDTO[]>([]);
-  const [adRecs, setAdRecs] = useState<string[]>([]);
-  const [adsLoading, setAdsLoading] = useState(false);
-  const [adsSyncing, setAdsSyncing] = useState(false);
-  // Neue Anzeige (Formular + Entwurf)
-  const [adForm, setAdForm] = useState<AdFormState>(emptyAdForm);
-  const [adDraft, setAdDraft] = useState<AdDraftDTO | null>(null);
-  const [adBusy, setAdBusy] = useState(false);
-  // Facebook-Targeting-Suche (Orte + Interessen)
-  const [locQuery, setLocQuery] = useState("");
-  const [locResults, setLocResults] = useState<{ key: string; name: string; type: string; region?: string; country?: string }[]>([]);
-  const [intQuery, setIntQuery] = useState("");
-  const [intResults, setIntResults] = useState<{ id: string; name: string; audienceSize?: number; path?: string }[]>([]);
 
   async function loadEmails() {
     const r = await fetch("/api/emails");
@@ -129,6 +70,12 @@ export default function Cockpit() {
       .catch(() => {});
   }, []);
 
+  // Direktsprung in eine Ansicht via ?view= (z. B. Nav-Links von /werbung zurück).
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get("view");
+    if (v === "kunden" || v === "gesendet" || v === "kalender") setView(v);
+  }, []);
+
   // Kalender laden, sobald die Kalender-Ansicht geöffnet wird.
   useEffect(() => {
     if (view !== "kalender") return;
@@ -139,177 +86,6 @@ export default function Cockpit() {
       .catch(() => {})
       .finally(() => setEventsLoading(false));
   }, [view]);
-
-  // Werbeanzeigen laden, sobald die Ansicht geöffnet wird.
-  useEffect(() => {
-    if (view !== "werbeanzeigen") return;
-    loadAds();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
-
-  async function loadAds() {
-    setAdsLoading(true);
-    try {
-      const r = await fetch("/api/ads");
-      const d = await r.json();
-      setAdAccounts(d.accounts || []);
-      setAdCampaigns(d.campaigns || []);
-      setAdDrafts(d.drafts || []);
-      setAdRecs(d.recommendations || []);
-    } catch {
-      /* ignore */
-    } finally {
-      setAdsLoading(false);
-    }
-  }
-
-  async function syncAds() {
-    setAdsSyncing(true);
-    try {
-      await fetch("/api/ads/sync", { method: "POST", headers: json, body: "{}" });
-      await loadAds();
-      pushToast("Aktualisiert", "Zahlen frisch von Meta geladen.");
-    } catch {
-      pushToast("Fehler", "Aktualisieren fehlgeschlagen.");
-    } finally {
-      setAdsSyncing(false);
-    }
-  }
-
-  function startNewAd() {
-    const firstConnected = adAccounts.find((a) => a.hasToken);
-    setAdForm({ ...emptyAdForm, adAccountId: firstConnected?.id || "" });
-    setAdDraft(null);
-    setLocQuery("");
-    setLocResults([]);
-    setIntQuery("");
-    setIntResults([]);
-    setView("anzeige_neu");
-  }
-
-  // Orte live aus Facebook suchen (debounced)
-  useEffect(() => {
-    const q = locQuery.trim();
-    if (q.length < 2) { setLocResults([]); return; }
-    const t = setTimeout(async () => {
-      try {
-        const r = await fetch(`/api/ads/targeting?kind=location&q=${encodeURIComponent(q)}&accountId=${adForm.adAccountId}`);
-        const d = await r.json();
-        setLocResults(d.results || []);
-      } catch {
-        /* ignore */
-      }
-    }, 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locQuery]);
-
-  // Interessen live aus Facebook suchen (debounced)
-  useEffect(() => {
-    const q = intQuery.trim();
-    if (q.length < 2) { setIntResults([]); return; }
-    const t = setTimeout(async () => {
-      try {
-        const r = await fetch(`/api/ads/targeting?kind=interest&q=${encodeURIComponent(q)}&accountId=${adForm.adAccountId}`);
-        const d = await r.json();
-        setIntResults(d.results || []);
-      } catch {
-        /* ignore */
-      }
-    }, 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intQuery]);
-
-  function addLocation(r: { key: string; name: string; type: string }) {
-    if (adForm.locations.some((l) => l.key === r.key)) return;
-    setAdForm((f) => ({ ...f, locations: [...f.locations, { type: r.type, key: r.key, name: r.name, radiusKm: r.type === "city" ? 30 : undefined }] }));
-    setLocQuery("");
-    setLocResults([]);
-  }
-  function removeLocation(key?: string) {
-    setAdForm((f) => ({ ...f, locations: f.locations.filter((l) => l.key !== key) }));
-  }
-  function setLocRadius(key: string | undefined, km: number) {
-    setAdForm((f) => ({ ...f, locations: f.locations.map((l) => (l.key === key ? { ...l, radiusKm: km } : l)) }));
-  }
-  function addInterest(r: { id: string; name: string }) {
-    if (adForm.interests.some((i) => i.id === r.id)) return;
-    setAdForm((f) => ({ ...f, interests: [...f.interests, { id: r.id, name: r.name }] }));
-    setIntQuery("");
-    setIntResults([]);
-  }
-  function removeInterest(id: string) {
-    setAdForm((f) => ({ ...f, interests: f.interests.filter((i) => i.id !== id) }));
-  }
-
-  async function createDraft(mode: "ki" | "vorlage") {
-    if (!adForm.adAccountId) return pushToast("Konto fehlt", "Bitte ein Werbekonto wählen.");
-    if (!adForm.offer.trim() || !adForm.region.trim()) return pushToast("Angabe fehlt", "Angebot und Region sind nötig.");
-    setAdBusy(true);
-    try {
-      const r = await fetch("/api/ads/draft", { method: "POST", headers: json, body: JSON.stringify({ ...adForm, mode }) });
-      const d = await r.json();
-      if (r.ok) {
-        setAdDraft(d);
-        loadAds(); // Entwurf taucht in der Übersichtsliste auf
-      } else pushToast("Fehler", d.error || "Entwurf fehlgeschlagen");
-    } catch {
-      pushToast("Fehler", "Entwurf fehlgeschlagen");
-    } finally {
-      setAdBusy(false);
-    }
-  }
-
-  async function patchDraft(fields: Record<string, unknown>) {
-    if (!adDraft) return;
-    setAdBusy(true);
-    try {
-      const r = await fetch(`/api/ads/draft/${adDraft.id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) });
-      const d = await r.json();
-      if (r.ok) setAdDraft(d);
-      else pushToast("Fehler", d.error || "Speichern fehlgeschlagen");
-    } catch {
-      pushToast("Fehler", "Speichern fehlgeschlagen");
-    } finally {
-      setAdBusy(false);
-    }
-  }
-
-  async function launchDraft() {
-    if (!adDraft) return;
-    setAdBusy(true);
-    try {
-      // Edits aus der Vorschau zuerst sichern
-      await fetch(`/api/ads/draft/${adDraft.id}`, {
-        method: "PATCH",
-        headers: json,
-        body: JSON.stringify({
-          headline: adDraft.headline,
-          primaryText: adDraft.primaryText,
-          websiteUrl: adDraft.websiteUrl,
-          privacyUrl: adDraft.privacyUrl,
-          imageUrl: adDraft.imageUrl,
-        }),
-      }).catch(() => {});
-      const r = await fetch(`/api/ads/draft/${adDraft.id}/launch`, { method: "POST", headers: json });
-      const d = await r.json();
-      if (d.ok) {
-        pushToast("Pausiert erstellt", "Anzeige liegt pausiert in Meta – dort final freigeben.");
-        setAdDraft(null);
-        setView("werbeanzeigen");
-        loadAds();
-      } else {
-        // Fehler im Entwurf nachladen, damit launchError sichtbar ist
-        setAdDraft({ ...adDraft, status: "launch_error", launchError: d.error || "Launch fehlgeschlagen" });
-        pushToast("Meta meldet", d.error || "Launch fehlgeschlagen");
-      }
-    } catch {
-      pushToast("Fehler", "Launch fehlgeschlagen");
-    } finally {
-      setAdBusy(false);
-    }
-  }
 
   // Demo-Push beim ersten Laden: zeigt eine firmenrelevante Mail aus dem Privat-Postfach
   useEffect(() => {
@@ -775,276 +551,6 @@ export default function Cockpit() {
         </div>
       </div>
 
-      {/* Werbeanzeigen – Übersicht */}
-      <div className={"view" + (view === "werbeanzeigen" ? " open" : "")}>
-        <div className="vhead">
-          <button className="back" onClick={() => setView("inbox")}>‹ Cockpit</button>
-          <strong style={{ fontSize: 16 }}>Werbeanzeigen</strong>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button className="btn ghost" style={{ flex: "none", padding: "8px 12px" }} disabled={adsSyncing} onClick={syncAds}>{adsSyncing ? "…" : "↻"}</button>
-            <button className="btn primary" style={{ flex: "none", padding: "8px 14px" }} onClick={startNewAd}>+ Neue</button>
-          </div>
-        </div>
-        <div className="vbody">
-          {adsLoading ? (
-            <div className="muted">Lade Werbedaten …</div>
-          ) : adAccounts.length === 0 ? (
-            <div className="muted">Noch kein Werbekonto verbunden. Token-Schlüssel unter <a href="/connect">/connect</a> setzen, dann <code>npm run db:seedAds</code>.</div>
-          ) : (
-            <>
-              {adRecs.length > 0 && (
-                <div className="card ad-recs">
-                  <div className="ad-recs-title">💡 Empfehlungen</div>
-                  {adRecs.map((t) => (
-                    <div key={t} className="ad-rec">{t}</div>
-                  ))}
-                </div>
-              )}
-              {adAccounts.map((acc) => {
-                const camps = adCampaigns.filter((c) => c.adAccountId === acc.id);
-                return (
-                  <div key={acc.id} className="ad-acct">
-                    <div className="ad-acct-head">
-                      <strong>{acc.label}</strong>
-                      <span className={"pill " + (acc.status === "connected" ? "pill-firma" : "p-none")}>{acc.status === "connected" ? "verbunden" : acc.status === "error" ? "Token prüfen" : "nicht verbunden"}</span>
-                    </div>
-                    {acc.status === "error" && (
-                      <div className="ad-err">Verbindung fehlt: {acc.lastError || "Token abgelaufen"}. Neu verbinden über <a href="/connect">/connect</a>.</div>
-                    )}
-                    {camps.length === 0 ? (
-                      <div className="muted" style={{ padding: "4px 2px 10px" }}>Noch keine Kampagnen.</div>
-                    ) : (
-                      camps.map((c) => (
-                        <div key={c.id} className="ad-camp">
-                          <span className={"ampel ad-" + c.health.state} title={c.health.reason}>{c.health.label}</span>
-                          <div className="ad-camp-main">
-                            <div className="ad-camp-name">{c.name}</div>
-                            <div className="ad-metrics">
-                              <span><b>{eur(c.spend)}</b> Ausgaben</span>
-                              <span><b>{c.leads}</b> Leads</span>
-                              <span><b>{c.cpa != null ? eur(c.cpa) : "–"}</b> /Lead</span>
-                              <span><b>{c.ctr != null ? c.ctr.toFixed(1) + "%" : "–"}</b> CTR</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                );
-              })}
-              {adDrafts.filter((d) => d.status !== "launched").length > 0 && (
-                <div className="card">
-                  <div className="ad-recs-title">Entwürfe</div>
-                  {adDrafts.filter((d) => d.status !== "launched").map((d) => (
-                    <div key={d.id} className="ad-draft-chip" onClick={() => { setAdDraft(d); setView("anzeige_neu"); }}>
-                      <span className="ad-draft-offer">{d.offer}</span>
-                      <span className={"pill " + (d.status === "launch_error" ? "p-none" : "p-acct")}>{d.status === "launch_error" ? "Fehler" : "Entwurf"}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Neue Anzeige – Erstellen + Vorschau */}
-      <div className={"view" + (view === "anzeige_neu" ? " open" : "")}>
-        <div className="vhead"><button className="back" onClick={() => setView("werbeanzeigen")}>‹ Werbeanzeigen</button><strong style={{ fontSize: 16 }}>Neue Anzeige</strong></div>
-        <div className="vbody">
-          {!adDraft ? (
-            <div className="card">
-              <label className="ad-lbl">Werbekonto</label>
-              <select className="ad-inp" value={adForm.adAccountId} onChange={(e) => setAdForm({ ...adForm, adAccountId: e.target.value })}>
-                <option value="">– wählen –</option>
-                {adAccounts.map((a) => (
-                  <option key={a.id} value={a.id} disabled={!a.hasToken}>{a.label}{a.hasToken ? "" : " (Token fehlt)"}</option>
-                ))}
-              </select>
-
-              <label className="ad-lbl">Ziel</label>
-              <select className="ad-inp" value={adForm.goal} onChange={(e) => setAdForm({ ...adForm, goal: e.target.value })}>
-                {AD_GOALS.map((g) => <option key={g.v} value={g.v}>{g.t}</option>)}
-              </select>
-
-              <label className="ad-lbl">Angebot / Leistung</label>
-              <input className="ad-inp" placeholder="z. B. PV-Anlagen, Badsanierung, Dachcheck" value={adForm.offer} onChange={(e) => setAdForm({ ...adForm, offer: e.target.value })} />
-
-              <label className="ad-lbl">Region</label>
-              <input className="ad-inp" placeholder="z. B. Klagenfurt und 30 km Umgebung" value={adForm.region} onChange={(e) => setAdForm({ ...adForm, region: e.target.value })} />
-
-              <label className="ad-lbl">Vorteil (optional)</label>
-              <input className="ad-inp" placeholder="z. B. kostenlose Erstberatung" value={adForm.benefit} onChange={(e) => setAdForm({ ...adForm, benefit: e.target.value })} />
-
-              <div className="ad-row2">
-                <div style={{ flex: 1 }}>
-                  <label className="ad-lbl">Tagesbudget</label>
-                  <select className="ad-inp" value={adForm.budget} onChange={(e) => setAdForm({ ...adForm, budget: Number(e.target.value) })}>
-                    {[10, 20, 30, 50, 100].map((b) => <option key={b} value={b}>{b} € / Tag</option>)}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label className="ad-lbl">Anzeigenziel</label>
-                  <select className="ad-inp" value={adForm.destination} onChange={(e) => setAdForm({ ...adForm, destination: e.target.value })}>
-                    <option value="lead_form">Lead-Formular</option>
-                    <option value="website">Website-Besuch</option>
-                  </select>
-                </div>
-              </div>
-
-              {adForm.destination === "website" ? (
-                <>
-                  <label className="ad-lbl">Website-Link</label>
-                  <input className="ad-inp" placeholder="https://…" value={adForm.websiteUrl} onChange={(e) => setAdForm({ ...adForm, websiteUrl: e.target.value })} />
-                </>
-              ) : (
-                <>
-                  <label className="ad-lbl">Datenschutz-Link (für Lead-Formular nötig)</label>
-                  <input className="ad-inp" placeholder="https://…/datenschutz" value={adForm.privacyUrl} onChange={(e) => setAdForm({ ...adForm, privacyUrl: e.target.value })} />
-                </>
-              )}
-
-              <label className="ad-lbl">Bild-URL (optional)</label>
-              <input className="ad-inp" placeholder="https://… (Datei-Upload kommt bald)" value={adForm.imageUrl} onChange={(e) => setAdForm({ ...adForm, imageUrl: e.target.value })} />
-
-              {/* Standorte – direkt aus Facebook */}
-              <div className="ad-sep">Zielgruppe & Standorte <span className="ad-sep-hint">direkt aus Facebook</span></div>
-              <label className="ad-lbl">Standorte (Ort + Umkreis)</label>
-              {adForm.locations.length > 0 && (
-                <div className="ad-chips">
-                  {adForm.locations.map((l) => (
-                    <span key={l.key} className="ad-chip">
-                      📍 {l.name}
-                      {l.type === "city" && (
-                        <select className="ad-chip-radius" value={l.radiusKm ?? 30} onChange={(e) => setLocRadius(l.key, Number(e.target.value))}>
-                          {[10, 15, 20, 25, 30, 40, 50, 80].map((km) => <option key={km} value={km}>+{km} km</option>)}
-                        </select>
-                      )}
-                      <button className="ad-chip-x" onClick={() => removeLocation(l.key)}>×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <input className="ad-inp" placeholder="Ort suchen (z. B. Klagenfurt) …" value={locQuery} onChange={(e) => setLocQuery(e.target.value)} />
-              {locResults.length > 0 && (
-                <div className="ad-results">
-                  {locResults.map((r) => (
-                    <div key={r.key} className="ad-result" onClick={() => addLocation(r)}>
-                      <span>{r.name}</span>
-                      <span className="ad-result-meta">{r.type === "city" ? "Stadt" : r.type === "region" ? "Region" : r.type}{r.region ? ` · ${r.region}` : ""}{r.country ? ` · ${r.country}` : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {adForm.locations.length === 0 && <div className="ad-mini">Ohne Auswahl: ganz Österreich.</div>}
-
-              <label className="ad-lbl">Zielgruppen / Interessen</label>
-              {adForm.interests.length > 0 && (
-                <div className="ad-chips">
-                  {adForm.interests.map((i) => (
-                    <span key={i.id} className="ad-chip">🎯 {i.name}<button className="ad-chip-x" onClick={() => removeInterest(i.id)}>×</button></span>
-                  ))}
-                </div>
-              )}
-              <input className="ad-inp" placeholder="Interesse suchen (z. B. Photovoltaik, Eigenheim) …" value={intQuery} onChange={(e) => setIntQuery(e.target.value)} />
-              {intResults.length > 0 && (
-                <div className="ad-results">
-                  {intResults.map((r) => (
-                    <div key={r.id} className="ad-result" onClick={() => addInterest(r)}>
-                      <span>{r.name}</span>
-                      <span className="ad-result-meta">{r.audienceSize ? `${Math.round(r.audienceSize / 1000)}k` : ""}{r.path ? ` · ${r.path.split(" › ").slice(-1)[0]}` : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {adForm.interests.length === 0 && <div className="ad-mini">Optional – ohne Interessen wird breiter ausgespielt.</div>}
-
-              <div className="ad-row2" style={{ marginTop: 6 }}>
-                <div style={{ flex: 1 }}>
-                  <label className="ad-lbl">Geschlecht</label>
-                  <select className="ad-inp" value={adForm.gender} onChange={(e) => setAdForm({ ...adForm, gender: e.target.value })}>
-                    <option value="">Alle</option>
-                    <option value="men">Männer</option>
-                    <option value="women">Frauen</option>
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label className="ad-lbl">Alter</label>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input className="ad-inp" type="number" min={18} max={65} value={adForm.ageMin} onChange={(e) => setAdForm({ ...adForm, ageMin: Number(e.target.value) })} />
-                    <span style={{ color: "var(--sub)" }}>–</span>
-                    <input className="ad-inp" type="number" min={18} max={65} value={adForm.ageMax} onChange={(e) => setAdForm({ ...adForm, ageMax: Number(e.target.value) })} />
-                  </div>
-                </div>
-              </div>
-
-              <label className="ad-lbl">Anrede im Text</label>
-              <div className="ad-toggle">
-                <button className={"ad-toggle-b" + (adForm.tone === "du" ? " on" : "")} onClick={() => setAdForm({ ...adForm, tone: "du" })}>Du (nahbar)</button>
-                <button className={"ad-toggle-b" + (adForm.tone === "sie" ? " on" : "")} onClick={() => setAdForm({ ...adForm, tone: "sie" })}>Sie (seriös)</button>
-              </div>
-
-              <div className="actions" style={{ marginTop: 14 }}>
-                <button className="btn ai" disabled={adBusy} onClick={() => createDraft("ki")}>{adBusy ? "…" : "✨ Mit KI erstellen"}</button>
-                <button className="btn ghost" disabled={adBusy} onClick={() => createDraft("vorlage")}>Vorlage nutzen</button>
-              </div>
-            </div>
-          ) : (
-            <div className="aicard">
-              <div className="ai-label">Anzeigenvorschlag · {adDraft.destination === "website" ? "Website" : "Lead-Formular"} · {adDraft.budget} €/Tag</div>
-
-              <label className="ad-lbl">Headline</label>
-              <input className="ad-inp" value={adDraft.headline || ""} onChange={(e) => setAdDraft({ ...adDraft, headline: e.target.value })} />
-
-              <label className="ad-lbl">Anzeigentext</label>
-              <textarea className="ad-inp" rows={5} value={adDraft.primaryText || ""} onChange={(e) => setAdDraft({ ...adDraft, primaryText: e.target.value })} />
-
-              {adDraft.creativeNote && (
-                <div className="ad-note"><b>🎬 Idee:</b> {adDraft.creativeNote}</div>
-              )}
-              {adDraft.questions.length > 0 && (
-                <div className="ad-note"><b>📋 Formular:</b> {adDraft.questions.join(" · ")}</div>
-              )}
-              <div className="ad-note">
-                <b>🎯 Zielgruppe:</b>{" "}
-                {adDraft.locations.length ? adDraft.locations.map((l) => l.name + (l.radiusKm ? ` +${l.radiusKm}km` : "")).join(", ") : "ganz Österreich"}
-                {" · "}{adDraft.ageMin}–{adDraft.ageMax} J.{adDraft.gender === "men" ? " · Männer" : adDraft.gender === "women" ? " · Frauen" : ""}
-                {adDraft.interests.length ? " · " + adDraft.interests.map((i) => i.name).join(", ") : ""}
-              </div>
-
-              {adDraft.destination === "website" ? (
-                <>
-                  <label className="ad-lbl">Website-Link</label>
-                  <input className="ad-inp" placeholder="https://…" value={adDraft.websiteUrl || ""} onChange={(e) => setAdDraft({ ...adDraft, websiteUrl: e.target.value })} />
-                </>
-              ) : (
-                <>
-                  <label className="ad-lbl">Datenschutz-Link</label>
-                  <input className="ad-inp" placeholder="https://…/datenschutz" value={adDraft.privacyUrl || ""} onChange={(e) => setAdDraft({ ...adDraft, privacyUrl: e.target.value })} />
-                </>
-              )}
-              <label className="ad-lbl">Bild-URL (optional)</label>
-              <input className="ad-inp" placeholder="https://…" value={adDraft.imageUrl || ""} onChange={(e) => setAdDraft({ ...adDraft, imageUrl: e.target.value })} />
-
-              <div className="addrow" style={{ marginTop: 6 }}>
-                <button className="btn ghost" style={{ flex: 1 }} disabled={adBusy} onClick={() => patchDraft({ regenerate: "ki" })}>✨ Neu mit KI</button>
-                <button className="btn ghost" style={{ flex: 1 }} disabled={adBusy} onClick={() => patchDraft({ regenerate: "vorlage" })}>↻ Vorlage</button>
-              </div>
-
-              {adDraft.status === "launch_error" && adDraft.launchError && (
-                <div className="ad-err" style={{ marginTop: 10 }}>Meta meldet: {adDraft.launchError}</div>
-              )}
-
-              <div className="actions" style={{ marginTop: 12 }}>
-                <button className="btn primary" disabled={adBusy} onClick={launchDraft}>{adBusy ? "…" : "Pausiert an Meta senden"}</button>
-                <button className="btn ghost" disabled={adBusy} onClick={() => { setAdDraft(null); }}>Zurück zum Formular</button>
-              </div>
-              <div className="ad-hint">Die Anzeige wird <b>pausiert</b> erstellt – die finale Freigabe machst du in Meta.</div>
-            </div>
-          )}
-        </div>
-      </div>
-
       {view === "inbox" && <div className="vphold">Wähle links eine Mail, um sie hier zu öffnen.</div>}
 
       {/* Bottom-Nav */}
@@ -1061,9 +567,9 @@ export default function Cockpit() {
         <button className={"navi" + (view === "kalender" ? " active" : "")} onClick={() => setView("kalender")}>
           <svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" /></svg>Kalender
         </button>
-        <button className={"navi" + (view === "werbeanzeigen" || view === "anzeige_neu" ? " active" : "")} onClick={() => setView("werbeanzeigen")}>
+        <a className="navi" href="/werbung" style={{ textDecoration: "none" }}>
           <svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" /><path d="M15 9a3 3 0 0 1 0 6" /></svg>Werbung
-        </button>
+        </a>
         <a className="navi" href="/buchhaltung" style={{ textDecoration: "none" }}>
           <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" /></svg>Buchhaltung
         </a>
@@ -1079,11 +585,6 @@ function timeAgo(iso: string): string {
   if (diff < 86400) return Math.floor(diff / 3600) + " Std";
   if (diff < 7 * 86400) return Math.floor(diff / 86400) + " Tg";
   return d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
-}
-
-// Euro kompakt (ganzzahlig) für die Werbe-Kennzahlen.
-function eur(n: number): string {
-  return Math.round(n).toLocaleString("de-AT") + " €";
 }
 
 // Termine nach Kalendertag (YYYY-MM-DD) gruppieren, chronologisch.
