@@ -286,9 +286,11 @@ function buildLaunchTargeting(d: AdDraft) {
   const t: Record<string, unknown> = {
     age_min: d.ageMin,
     age_max: d.ageMax,
+    // Wie die bewährten Alt-Anzeigen: Facebook + Instagram, automatische Platzierungen
+    // (Feed, Reels, Stories) – keine Beschränkung auf nur Feed.
     publisher_platforms: ["facebook", "instagram"],
-    facebook_positions: ["feed"],
-    instagram_positions: ["stream"],
+    // Sprache Deutsch (locale 5) – wie in den bestehenden Konten gesetzt.
+    locales: [5],
     // Advantage+ Audience AUS – exakt die gewählte Zielgruppe, kein automatisches Aufblähen.
     targeting_automation: { advantage_audience: 0 },
   };
@@ -382,6 +384,176 @@ export async function searchInterests(adAccountId: string, q: string): Promise<I
     audienceSize: (r.audience_size_upper_bound as number) ?? (r.audience_size as number) ?? undefined,
     path: Array.isArray(r.path) ? (r.path as string[]).join(" › ") : undefined,
   }));
+}
+
+// ── Kennzahlen mit Zeitraum (Übersicht + Anzeigen + Leads + Zielgruppen) ────
+function timeParams(since?: string, until?: string): Record<string, string> {
+  if (since && until) return { time_range: JSON.stringify({ since, until }) };
+  return { date_preset: "last_30d" };
+}
+const INSIGHT_FIELDS = "spend,impressions,reach,clicks,ctr,cpm,frequency,actions";
+
+function metricsFromRow(r: Record<string, unknown>) {
+  const spend = Number(r.spend ?? 0) || 0;
+  const impressions = Math.round(Number(r.impressions ?? 0)) || 0;
+  const reach = Math.round(Number(r.reach ?? 0)) || 0;
+  const clicks = Math.round(Number(r.clicks ?? 0)) || 0;
+  const actions = r.actions as Action[] | undefined;
+  const leads = Math.round(actionValue(actions, LEAD_ACTION_TYPES));
+  const linkClicks = Math.round(actionValue(actions, ["link_click"]));
+  const ctr = r.ctr != null && Number.isFinite(Number(r.ctr)) ? Number(r.ctr) : null;
+  const cpm = r.cpm != null && Number.isFinite(Number(r.cpm)) ? Number(r.cpm) : null;
+  const frequency = r.frequency != null && Number.isFinite(Number(r.frequency)) ? Number(r.frequency) : null;
+  const cpl = leads > 0 ? Math.round((spend / leads) * 100) / 100 : null;
+  return { spend, impressions, reach, clicks, linkClicks, leads, ctr, cpm, frequency, cpl };
+}
+
+export interface OverviewTotals {
+  spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; cpm: number | null;
+}
+export interface OverviewCampaign {
+  id: string; name: string; effectiveStatus: string | null; spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; frequency: number | null; health: CampaignHealth;
+}
+
+/** Konto-Kennzahlen + je Kampagne für einen Zeitraum (live), optional nur aktive. */
+export async function fetchOverview(adAccountId: string, opts: { since?: string; until?: string; activeOnly?: boolean }): Promise<{ totals: OverviewTotals; campaigns: OverviewCampaign[] }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const act = acc.metaAccountId;
+  const tr = timeParams(opts.since, opts.until);
+
+  const [insResp, campResp] = await Promise.all([
+    graphGet(`${act}/insights`, token, { level: "campaign", ...tr, fields: `campaign_id,campaign_name,${INSIGHT_FIELDS}`, limit: "400" }),
+    graphGet(`${act}/campaigns`, token, { fields: "id,name,effective_status", limit: "400" }),
+  ]);
+  const statusById = new Map<string, { name: string; status: string | null }>();
+  for (const c of (campResp.data as Record<string, unknown>[]) ?? []) statusById.set(String(c.id), { name: String(c.name ?? ""), status: (c.effective_status as string) ?? null });
+
+  const totals: OverviewTotals = { spend: 0, impressions: 0, reach: 0, clicks: 0, linkClicks: 0, leads: 0, cpl: null, ctr: null, cpm: null };
+  let campaigns: OverviewCampaign[] = [];
+  for (const row of (insResp.data as Record<string, unknown>[]) ?? []) {
+    const id = String(row.campaign_id);
+    const m = metricsFromRow(row);
+    const meta = statusById.get(id);
+    const status = meta?.status ?? null;
+    if (opts.activeOnly && status !== "ACTIVE") continue;
+    totals.spend += m.spend; totals.impressions += m.impressions; totals.reach += m.reach; totals.clicks += m.clicks; totals.linkClicks += m.linkClicks; totals.leads += m.leads;
+    const health = campaignHealth({ effectiveStatus: status, spend: m.spend, clicks: m.clicks, leads: m.leads, cpa: m.cpl, ctr: m.ctr });
+    campaigns.push({ id, name: meta?.name || String(row.campaign_name ?? "(Kampagne)"), effectiveStatus: status, spend: m.spend, impressions: m.impressions, reach: m.reach, clicks: m.clicks, linkClicks: m.linkClicks, leads: m.leads, cpl: m.cpl, ctr: m.ctr, frequency: m.frequency, health });
+  }
+  totals.cpl = totals.leads > 0 ? Math.round((totals.spend / totals.leads) * 100) / 100 : null;
+  totals.ctr = totals.impressions > 0 ? Math.round((totals.clicks / totals.impressions) * 1000) / 10 : null;
+  totals.cpm = totals.impressions > 0 ? Math.round((totals.spend / totals.impressions) * 100000) / 100 : null;
+  campaigns = campaigns.sort((a, b) => campaignSortKey({ health: a.health, spend: a.spend, name: a.name }, { health: b.health, spend: b.spend, name: b.name }));
+  return { totals, campaigns };
+}
+
+export interface AdRow {
+  id: string; name: string; effectiveStatus: string | null; campaign: string | null; thumbnailUrl: string | null; objectType: string | null;
+  spend: number; impressions: number; reach: number; leads: number; cpl: number | null; ctr: number | null;
+}
+
+/** Einzelne Anzeigen (mit Creative-Vorschaubild) + Kennzahlen für einen Zeitraum. */
+export async function listAdsWithInsights(adAccountId: string, opts: { since?: string; until?: string; activeOnly?: boolean }): Promise<AdRow[]> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const act = acc.metaAccountId;
+  const tr = timeParams(opts.since, opts.until);
+
+  const [adsResp, insResp] = await Promise.all([
+    graphGet(`${act}/ads`, token, { fields: "id,name,effective_status,campaign{name},creative{thumbnail_url,object_type,video_id}", limit: "200" }),
+    graphGet(`${act}/insights`, token, { level: "ad", ...tr, fields: `ad_id,${INSIGHT_FIELDS}`, limit: "500" }),
+  ]);
+  const byAd = new Map<string, Record<string, unknown>>();
+  for (const r of (insResp.data as Record<string, unknown>[]) ?? []) byAd.set(String(r.ad_id), r);
+
+  const rows: AdRow[] = [];
+  for (const ad of (adsResp.data as Record<string, unknown>[]) ?? []) {
+    const status = (ad.effective_status as string) ?? null;
+    if (opts.activeOnly && status !== "ACTIVE") continue;
+    const creative = (ad.creative as Record<string, unknown>) ?? {};
+    const m = metricsFromRow(byAd.get(String(ad.id)) ?? {});
+    rows.push({
+      id: String(ad.id), name: String(ad.name ?? "(Anzeige)"), effectiveStatus: status,
+      campaign: ((ad.campaign as Record<string, unknown>)?.name as string) ?? null,
+      thumbnailUrl: (creative.thumbnail_url as string) ?? null,
+      objectType: (creative.object_type as string) ?? (creative.video_id ? "VIDEO" : null),
+      spend: m.spend, impressions: m.impressions, reach: m.reach, leads: m.leads, cpl: m.cpl, ctr: m.ctr,
+    });
+  }
+  return rows.sort((a, b) => b.spend - a.spend);
+}
+
+export interface LeadRow { id: string; createdTime: string; form: string; name?: string; phone?: string; email?: string; city?: string; fields: { key: string; value: string }[]; }
+
+/** Echte Leads aus den Sofortformularen (über alle Seiten des Tokens). */
+export async function listLeads(adAccountId: string, take = 50): Promise<{ leads: LeadRow[]; totalForms: number; note?: string }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const pagesResp = await graphGet("me/accounts", token, { fields: "id,name,access_token", limit: "25" });
+  const pages = (pagesResp.data as Record<string, unknown>[]) ?? [];
+  const leads: LeadRow[] = [];
+  let totalForms = 0;
+  let permissionBlocked = false;
+  for (const page of pages) {
+    const pageToken = String(page.access_token ?? token);
+    const formsResp = await graphGet(`${page.id}/leadgen_forms`, pageToken, { fields: "id,name,leads_count", limit: "100" }).catch(() => ({ data: [] }));
+    const allForms = (formsResp.data as Record<string, unknown>[]) ?? [];
+    totalForms += allForms.length;
+    // Formulare mit (bekannten) Leads zuerst; leads_count fehlt manchmal → dann alle versuchen.
+    const forms = [...allForms].sort((a, b) => Number(b.leads_count ?? 0) - Number(a.leads_count ?? 0)).slice(0, 20);
+    for (const form of forms) {
+      const leadsResp = await graphGet(`${form.id}/leads`, pageToken, { fields: "created_time,field_data", limit: String(take) }).catch((e) => {
+        if (/leads_retrieval|#200/i.test(e instanceof Error ? e.message : "")) permissionBlocked = true;
+        return { data: [] };
+      });
+      for (const l of (leadsResp.data as Record<string, unknown>[]) ?? []) {
+        const fd = (l.field_data as { name: string; values: string[] }[]) ?? [];
+        const get = (...keys: string[]) => fd.find((f) => keys.some((k) => (f.name || "").toLowerCase().includes(k)))?.values?.[0];
+        leads.push({
+          id: String(l.id ?? Math.random()), createdTime: String(l.created_time ?? ""), form: String(form.name ?? ""),
+          name: get("full_name", "name"), phone: get("phone"), email: get("email"), city: get("city", "ort"),
+          fields: fd.map((f) => ({ key: f.name, value: (f.values || []).join(", ") })),
+        });
+      }
+    }
+  }
+  leads.sort((a, b) => (a.createdTime < b.createdTime ? 1 : -1));
+  let note: string | undefined;
+  if (leads.length === 0) {
+    if (permissionBlocked) note = `Einzelne Kontaktdaten brauchen den Lead-Zugriff auf Seiten-Ebene (Business-Einstellungen → Integrationen → Lead-Zugriff → Seite → System-User hinzufügen). Die Lead-Anzahl siehst du oben.`;
+    else if (totalForms === 0) note = "Keine Sofortformulare – Leads laufen über Website-Conversions (Pixel).";
+    else note = "Noch keine Formular-Leads abrufbar (oder Leads laufen über Website-Conversions).";
+  }
+  return { leads: leads.slice(0, take), totalForms, note };
+}
+
+export interface SavedAudience { id: string; name: string; size?: number; summary: string; targeting?: unknown; }
+
+/** Gespeicherte Zielgruppen des Kontos (zum Übernehmen für neue Anzeigen). */
+export async function listSavedAudiences(adAccountId: string): Promise<SavedAudience[]> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const d = await graphGet(`${acc.metaAccountId}/saved_audiences`, token, { fields: "id,name,approximate_count_lower_bound,targeting", limit: "100" }).catch(() => ({ data: [] }));
+  return ((d.data as Record<string, unknown>[]) ?? []).map((s) => {
+    const t = (s.targeting as Record<string, unknown>) ?? {};
+    const geo = (t.geo_locations as Record<string, unknown>) ?? {};
+    const parts: string[] = [];
+    const regs = (geo.regions as { name?: string }[]) ?? [];
+    const cits = (geo.cities as { name?: string }[]) ?? [];
+    const ctrs = (geo.countries as string[]) ?? [];
+    if (regs.length) parts.push(regs.map((r) => r.name).filter(Boolean).join(", "));
+    if (cits.length) parts.push(cits.map((c) => c.name).filter(Boolean).join(", "));
+    if (!regs.length && !cits.length && ctrs.length) parts.push(ctrs.join(", "));
+    const ints = ((t.flexible_spec as { interests?: { name?: string }[] }[]) ?? []).flatMap((f) => (f.interests ?? []).map((i) => i.name)).filter(Boolean);
+    if (ints.length) parts.push(ints.slice(0, 4).join(", ") + (ints.length > 4 ? " …" : ""));
+    if (t.age_min || t.age_max) parts.push(`${t.age_min ?? 18}–${t.age_max ?? 65} J.`);
+    return { id: String(s.id), name: String(s.name ?? ""), size: (s.approximate_count_lower_bound as number) ?? undefined, summary: parts.join(" · ") || "Zielgruppe", targeting: t };
+  });
 }
 
 function slug(s: string, max = 40): string {

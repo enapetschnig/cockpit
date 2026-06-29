@@ -217,6 +217,56 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
 .wdraft:first-of-type{border-top:none}
 .wtoast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1f2430;color:#fff;border-radius:12px;padding:11px 16px;font-size:13.5px;font-weight:600;box-shadow:0 12px 30px rgba(0,0,0,.3);z-index:50;max-width:90%}
 
+/* Kontrollen (Konto, Zeitraum, aktiv) */
+.wctrls{margin-bottom:14px}
+.wpills{display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+.wpill{font-size:13px;font-weight:700;padding:7px 13px;border-radius:20px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer}
+.wpill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.wctrl-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.wchips{display:flex;gap:6px}
+.wchip{font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:18px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer}
+.wchip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.wchip.toggle.on{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+.wdates{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--sub)}
+.wdates input{border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:13px;font-family:inherit}
+
+/* KPI-Kacheln */
+.wkpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.wkpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 15px}
+.wkpi.big{background:var(--ink);color:#fff;border-color:var(--ink)}
+.wkpi-v{font-size:20px;font-weight:800;letter-spacing:-.4px}
+.wkpi.big .wkpi-v{font-size:23px}
+.wkpi-l{font-size:11px;color:var(--sub);margin-top:2px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+.wkpi.big .wkpi-l{color:rgba(255,255,255,.7)}
+
+/* Tabs */
+.wtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.wtab{font-size:14px;font-weight:700;color:var(--sub);background:none;border:none;padding:9px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* Anzeigen */
+.wads{display:flex;flex-direction:column;gap:9px}
+.wad{display:flex;gap:12px;background:#fff;border:1px solid var(--line);border-radius:13px;padding:11px;align-items:center}
+.wad-thumb{width:54px;height:54px;border-radius:10px;background:#f0ede6;flex:none;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:18px}
+.wad-thumb img{width:100%;height:100%;object-fit:cover}
+.wad-main{flex:1;min-width:0}
+.wad-name{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wad-sub{font-size:11px;color:var(--sub);margin:1px 0 5px}
+.wad-metrics{display:flex;gap:13px;font-size:12px;color:var(--sub)}
+.wad-metrics b{color:var(--ink);font-weight:700}
+
+/* Leads */
+.wlead-sum{font-size:15px;font-weight:700;margin-bottom:12px}
+.wleads{display:flex;flex-direction:column;gap:7px}
+.wlead{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 13px}
+.wlead-main{font-size:13.5px}
+.wlead-meta{font-size:11px;color:var(--sub);margin-top:2px}
+
+/* Gespeicherte Zielgruppen */
+.wauds{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+.waud{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;background:var(--amber-soft);border:1px solid #f0dca8;border-radius:11px;padding:8px 12px;cursor:pointer;color:var(--amber);font-weight:700;font-size:13px;max-width:100%}
+.waud span{font-weight:500;color:var(--sub);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+
 /* Wizard */
 .wiz-head{margin-bottom:14px}
 .wlink{background:none;border:none;color:var(--accent);font-weight:600;font-size:13.5px;cursor:pointer;padding:0;margin-bottom:12px;display:block}
@@ -253,6 +303,8 @@ textarea.winp{resize:vertical;line-height:1.55}
   .wmain{padding:30px 36px 40px;max-width:none;overflow-y:auto;height:100vh}
   .whead h1{font-size:26px}
   .wgrid{grid-template-columns:1fr 1fr}
+  .wkpis{grid-template-columns:repeat(6,1fr)}
+  .wads{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 }
 
 /* ===================== Desktop / PC-Ansicht ===================== */
