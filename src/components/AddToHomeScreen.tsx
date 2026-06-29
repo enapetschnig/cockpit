@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 const DISMISS_KEY = "a2hs_dismissed_v1";
 
-type Mode = "ios" | "ios-other" | "android";
+type Mode = "ios-safari" | "ios-chrome" | "android";
 
 // Zeigt beim ersten mobilen Login eine Anleitung, wie man das Cockpit
 // als App auf den Start-/Home-Bildschirm legt (iPhone: Safari-Teilen-Menü).
@@ -30,7 +30,7 @@ export default function AddToHomeScreen() {
     const isSafari = /safari/i.test(ua) && !/crios|fxios|edgios|opios/i.test(ua);
 
     let m: Mode | null = null;
-    if (isIOS) m = isSafari ? "ios" : "ios-other";
+    if (isIOS) m = isSafari ? "ios-safari" : "ios-chrome"; // ab iOS 16.4 können auch Chrome/Edge/Firefox
     else if (isAndroid) m = "android";
     if (!m) return; // Desktop: keine Anleitung
 
@@ -72,7 +72,7 @@ export default function AddToHomeScreen() {
           </div>
         </div>
 
-        {mode === "ios" && (
+        {mode === "ios-safari" && (
           <ol className="a2hs-steps">
             <li>Tippe unten in Safari auf das <b>Teilen-Symbol</b> <ShareGlyph />.</li>
             <li>Etwas nach unten wischen und auf <b>„Zum Home-Bildschirm"</b> tippen.</li>
@@ -80,11 +80,12 @@ export default function AddToHomeScreen() {
           </ol>
         )}
 
-        {mode === "ios-other" && (
-          <div className="a2hs-note">
-            Öffne diese Seite einmal in <b>Safari</b>, um die App auf den Home-Bildschirm zu legen
-            (in Chrome/anderen Browsern bietet das iPhone diese Funktion leider nicht an).
-          </div>
+        {mode === "ios-chrome" && (
+          <ol className="a2hs-steps">
+            <li>Tippe <b>oben rechts</b> neben der Adressleiste auf das <b>Teilen-Symbol</b> <ShareGlyph />.</li>
+            <li>Falls nötig auf <b>„Mehr anzeigen"</b> tippen, dann auf <b>„Zum Home-Bildschirm"</b>.</li>
+            <li>Oben rechts auf <b>„Hinzufügen"</b> tippen – fertig! 🎉</li>
+          </ol>
         )}
 
         {mode === "android" && (
@@ -98,7 +99,7 @@ export default function AddToHomeScreen() {
           )
         )}
 
-        <button className="a2hs-ok" onClick={dismiss}>{mode === "ios-other" ? "Verstanden" : "Alles klar"}</button>
+        <button className="a2hs-ok" onClick={dismiss}>Alles klar</button>
       </div>
     </div>
   );
