@@ -521,3 +521,24 @@ textarea.winp{resize:vertical;line-height:1.55}
   /* Toast oben rechts statt über volle Breite */
   .toast{left:auto; right:24px; top:20px; width:360px}
 }
+
+/* "Zur Startseite hinzufügen"-Anleitung (PWA) */
+.a2hs{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-end;justify-content:center;background:rgba(20,18,16,.34);padding:0}
+.a2hs-card{position:relative;background:#fff;width:100%;max-width:460px;border-radius:18px 18px 0 0;padding:20px 18px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -6px 30px rgba(0,0,0,.16);animation:a2hs-up .25s ease}
+@keyframes a2hs-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.a2hs-x{position:absolute;top:12px;right:12px;border:none;background:#f1eee8;width:30px;height:30px;border-radius:50%;font-size:15px;cursor:pointer;color:#6b6358}
+.a2hs-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.a2hs-icon{flex:none;width:46px;height:46px;border-radius:12px;overflow:hidden;display:flex;box-shadow:0 2px 8px rgba(47,109,240,.25)}
+.a2hs-title{font-size:16.5px;font-weight:800;letter-spacing:-.2px}
+.a2hs-sub{font-size:12.5px;color:#6b6358;margin-top:1px;line-height:1.35}
+.a2hs-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px}
+.a2hs-steps li{font-size:14px;line-height:1.5;color:#2b2723}
+.a2hs-steps b{font-weight:700}
+.a2hs-share{vertical-align:-3px;margin:0 1px}
+.a2hs-note{font-size:14px;line-height:1.55;color:#2b2723;background:#fbf6e9;border:1px solid #f0e2b8;border-radius:12px;padding:12px 13px}
+.a2hs-install{width:100%;margin-top:16px;padding:13px;border:none;border-radius:12px;background:#2f6df0;color:#fff;font-size:15px;font-weight:700;cursor:pointer}
+.a2hs-ok{width:100%;margin-top:12px;padding:12px;border:1px solid #e6e1d8;border-radius:12px;background:#fff;color:#2b2723;font-size:14.5px;font-weight:700;cursor:pointer}
+@media (min-width:600px){
+  .a2hs{align-items:center}
+  .a2hs-card{border-radius:18px;max-width:420px;padding-bottom:22px}
+}
