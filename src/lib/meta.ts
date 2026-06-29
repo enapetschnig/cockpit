@@ -489,13 +489,14 @@ export async function listAdsWithInsights(adAccountId: string, opts: { since?: s
 export interface LeadRow { id: string; createdTime: string; form: string; name?: string; phone?: string; email?: string; city?: string; fields: { key: string; value: string }[]; }
 
 /** Echte Leads aus den Sofortformularen (über alle Seiten des Tokens). */
-export async function listLeads(adAccountId: string, take = 50): Promise<{ leads: LeadRow[]; totalForms: number; note?: string }> {
+export async function listLeads(adAccountId: string, take = 50): Promise<{ leads: LeadRow[]; totalForms: number; forms: { name: string; count: number }[]; note?: string }> {
   const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
   if (!acc) throw new Error("Werbekonto nicht gefunden.");
   const token = await accountToken(acc);
   const pagesResp = await graphGet("me/accounts", token, { fields: "id,name,access_token", limit: "25" });
   const pages = (pagesResp.data as Record<string, unknown>[]) ?? [];
   const leads: LeadRow[] = [];
+  const formCounts: { name: string; count: number }[] = [];
   let totalForms = 0;
   let permissionBlocked = false;
   for (const page of pages) {
@@ -503,6 +504,7 @@ export async function listLeads(adAccountId: string, take = 50): Promise<{ leads
     const formsResp = await graphGet(`${page.id}/leadgen_forms`, pageToken, { fields: "id,name,leads_count", limit: "100" }).catch(() => ({ data: [] }));
     const allForms = (formsResp.data as Record<string, unknown>[]) ?? [];
     totalForms += allForms.length;
+    for (const f of allForms) if (Number(f.leads_count ?? 0) > 0) formCounts.push({ name: String(f.name ?? "Formular"), count: Number(f.leads_count) });
     // Formulare mit (bekannten) Leads zuerst; leads_count fehlt manchmal → dann alle versuchen.
     const forms = [...allForms].sort((a, b) => Number(b.leads_count ?? 0) - Number(a.leads_count ?? 0)).slice(0, 20);
     for (const form of forms) {
@@ -522,13 +524,14 @@ export async function listLeads(adAccountId: string, take = 50): Promise<{ leads
     }
   }
   leads.sort((a, b) => (a.createdTime < b.createdTime ? 1 : -1));
+  formCounts.sort((a, b) => b.count - a.count);
   let note: string | undefined;
   if (leads.length === 0) {
-    if (permissionBlocked) note = `Einzelne Kontaktdaten brauchen den Lead-Zugriff auf Seiten-Ebene (Business-Einstellungen → Integrationen → Lead-Zugriff → Seite → System-User hinzufügen). Die Lead-Anzahl siehst du oben.`;
+    if (permissionBlocked) note = `Die Kontaktdaten brauchen den Lead-Zugriff auf Seiten-Ebene für den System-User (Business-Einstellungen → Integrationen → Lead-Zugriff → Seite). Wirkt evtl. erst nach ein paar Minuten. Die Anzahl pro Formular siehst du schon.`;
     else if (totalForms === 0) note = "Keine Sofortformulare – Leads laufen über Website-Conversions (Pixel).";
-    else note = "Noch keine Formular-Leads abrufbar (oder Leads laufen über Website-Conversions).";
+    else if (formCounts.length === 0) note = "Noch keine Formular-Leads (oder Leads laufen über Website-Conversions).";
   }
-  return { leads: leads.slice(0, take), totalForms, note };
+  return { leads: leads.slice(0, take), totalForms, forms: formCounts.slice(0, 30), note };
 }
 
 export interface SavedAudience { id: string; name: string; size?: number; summary: string; targeting?: unknown; }

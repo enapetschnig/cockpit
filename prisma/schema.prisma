@@ -265,7 +265,8 @@ model AdDraft {
   destination String  @default("lead_form") // lead_form | website
   websiteUrl  String?
   privacyUrl  String?
-  imageUrl    String? // optionale Bild-URL → link_data.picture (Datei-Upload kommt später)
+  imageUrl    String? // optionale Bild-URL → link_data.picture
+  videoId     String? // hochgeladenes Meta-Video (object_story_spec.video_data)
   country     String  @default("AT")
   ageMin      Int     @default(25)
   ageMax      Int     @default(65)

@@ -59,7 +59,7 @@ export default function Werbung() {
   const [totals, setTotals] = useState<OverviewTotals | null>(null);
   const [campaigns, setCampaigns] = useState<OverviewCampaign[]>([]);
   const [ads, setAds] = useState<AdRow[]>([]);
-  const [leads, setLeads] = useState<{ leads: LeadRow[]; totalForms: number; note?: string } | null>(null);
+  const [leads, setLeads] = useState<{ leads: LeadRow[]; totalForms: number; forms?: { name: string; count: number }[]; note?: string } | null>(null);
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
 
@@ -294,8 +294,7 @@ export default function Werbung() {
                     <div className="wlead-sum">{totals ? num(totals.leads) : "0"} Leads im Zeitraum{totals?.cpl != null ? ` · ${eur(totals.cpl)} pro Lead` : ""}</div>
                     {!leads ? <div className="wmuted">Lade Leads …</div> : (
                       <>
-                        {leads.note && <div className="ad-note" style={{ marginBottom: 10 }}>ℹ️ {leads.note}</div>}
-                        {leads.leads.length === 0 ? null : (
+                        {leads.leads.length > 0 ? (
                           <div className="wleads">
                             {leads.leads.map((l) => (
                               <div key={l.id} className="wlead">
@@ -304,6 +303,20 @@ export default function Werbung() {
                               </div>
                             ))}
                           </div>
+                        ) : (
+                          <>
+                            {leads.forms && leads.forms.length > 0 && (
+                              <div className="wleads">
+                                {leads.forms.map((f, i) => (
+                                  <div key={i} className="wlead">
+                                    <div className="wlead-main"><b>{f.count}</b> Leads</div>
+                                    <div className="wlead-meta">{f.name}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {leads.note && <div className="ad-note" style={{ marginTop: 10 }}>ℹ️ {leads.note}</div>}
+                          </>
                         )}
                       </>
                     )}
@@ -349,6 +362,18 @@ function Wizard(props: {
   const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences } = props;
   const STEPS = ["Ziel", "Zielgruppe", "Budget", "Text & schalten"];
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
+
+  // Live-Vorschau-Werte (Facebook-Stil)
+  const CTA: Record<string, string> = { leads: "Anfrage senden", jobs: "Jetzt bewerben", appointments: "Termin anfragen", traffic: "Mehr erfahren" };
+  const pageName = accounts.find((a) => a.id === form.adAccountId)?.label || "Deine Seite";
+  const prevHeadline = (draft?.headline || form.offer || "Deine Überschrift").trim();
+  const prevText = draft?.primaryText || "";
+  const prevImage = draft?.imageUrl || form.imageUrl || "";
+  const prevCta = CTA[form.goal] || "Mehr erfahren";
+  const dest = draft?.destination || form.destination;
+  const linkUrl = dest === "website" ? draft?.websiteUrl || form.websiteUrl : draft?.privacyUrl || form.privacyUrl;
+  let prevDomain = "Sofortformular";
+  try { if (dest === "website" && linkUrl) prevDomain = new URL(linkUrl).host.replace(/^www\./, ""); } catch { /* */ }
 
   function addLocation(r: { key: string; name: string; type: string }) {
     if (form.locations.some((l) => l.key === r.key)) return;
@@ -500,6 +525,30 @@ function Wizard(props: {
           </>)}
         </>)}
       </div>
+
+      <div className="wiz-preview">
+        <div className="wprev-label">Vorschau</div>
+        {draft || step >= 3 ? (
+          <div className="fbprev">
+            <div className="fbprev-head">
+              <div className="fbprev-av">{(pageName[0] || "E").toUpperCase()}</div>
+              <div><div className="fbprev-name">{pageName}</div><div className="fbprev-sub">Gesponsert · 🌐</div></div>
+            </div>
+            {prevText && <div className="fbprev-text">{prevText}</div>}
+            <div className="fbprev-media">{prevImage ? <img src={prevImage} alt="" /> : <span>🖼</span>}</div>
+            <div className="fbprev-foot">
+              <div className="fbprev-foot-main">
+                <div className="fbprev-domain">{prevDomain}</div>
+                <div className="fbprev-headline">{prevHeadline}</div>
+              </div>
+              <button className="fbprev-cta">{prevCta}</button>
+            </div>
+          </div>
+        ) : (
+          <div className="wprev-hint">Hier siehst du deine fertige Anzeige – sobald Text & Bild stehen.</div>
+        )}
+      </div>
+
       <div className="wiz-foot">
         {step > 1 ? <button className="wbtn ghost" onClick={() => setStep(step - 1)} disabled={busy}>‹ Zurück</button> : <span />}
         {step < 4 ? <button className="wbtn primary" disabled={!stepOk(step)} onClick={next}>Weiter ›</button> : <button className="wbtn primary" disabled={busy || !draft} onClick={launch}>{busy ? "…" : "Pausiert an Meta senden"}</button>}
