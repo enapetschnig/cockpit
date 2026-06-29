@@ -36,14 +36,24 @@ interface Spec {
 
 export const SPECS: Record<string, Spec> = {
   ctr: {
-    label: "CTR (Klickrate)",
-    explain: "Zeigt, wie viele von 100 Menschen, die Ihre Anzeige sehen, auch wirklich darauf klicken.",
+    label: "CTR gesamt",
+    explain: "Klickrate über ALLE Klicks (Bild, Name, Button usw.): Von 100 Menschen, die die Anzeige sehen, klicken so viele irgendwo darauf.",
     higherIsBetter: true,
     good: 2,
     ok: 1,
     goodL: { short: "starke Klickrate", text: "Starke Klickrate – Ihre Anzeige spricht die Leute an." },
     okL: { short: "solide Klickrate", text: "Solide Klickrate im normalen Bereich. Mit einem frischeren Bild oder Text geht oft noch mehr." },
     weakL: { short: "niedrige Klickrate", text: "Schwache Klickrate – viele sehen die Anzeige, kaum jemand reagiert. Bild, Text oder Zielgruppe sollten überarbeitet werden." },
+  },
+  linkCtr: {
+    label: "Link-CTR",
+    explain: "Klickrate nur für echte Klicks auf den Link/Button (z.B. zum Formular). Aussagekräftiger als die Gesamt-CTR und liegt naturgemäß niedriger.",
+    higherIsBetter: true,
+    good: 1,
+    ok: 0.5,
+    goodL: { short: "starke Link-Klickrate", text: "Viele klicken wirklich auf den Link/Button – die Anzeige führt gut zum Ziel." },
+    okL: { short: "solide Link-Klickrate", text: "Im normalen Bereich. Ein klarer Button-Text oder ein stärkeres Angebot kann noch mehr herausholen." },
+    weakL: { short: "niedrige Link-Klickrate", text: "Wenige klicken tatsächlich auf den Link. Angebot, Button-Text oder Zielgruppe überprüfen." },
   },
   cpl: {
     label: "Kosten pro Anfrage",
@@ -106,6 +116,20 @@ export function overallRating(m: { ctr: number | null; cpl: number | null; frequ
   const short = level === "good" ? "läuft gut" : level === "ok" ? "läuft okay" : "Optimierung sinnvoll";
   return { level, short, text: "", color: RATE_COLORS[level] };
 }
+
+// Glossar fürs Dashboard: erklärt jede Kennzahl in einfacher Sprache.
+export const GLOSSARY: { term: string; text: string }[] = [
+  { term: "Ausgaben", text: "Wie viel Budget im gewählten Zeitraum für die Anzeigen ausgegeben wurde." },
+  { term: "Leads (Anfragen)", text: "Wie viele Menschen das Kontaktformular ausgefüllt und abgeschickt haben." },
+  { term: "Kosten / Lead", text: SPECS.cpl.explain },
+  { term: "CTR gesamt", text: SPECS.ctr.explain },
+  { term: "Link-CTR", text: SPECS.linkCtr.explain },
+  { term: "Reichweite", text: "Wie viele verschiedene Personen die Anzeige mindestens einmal gesehen haben." },
+  { term: "Impressionen", text: "Wie oft die Anzeige insgesamt eingeblendet wurde – eine Person kann mehrfach zählen." },
+  { term: "CPC (Kosten / Klick)", text: SPECS.cpc.explain },
+  { term: "CPM (Kosten / 1.000 Einbl.)", text: SPECS.cpm.explain },
+  { term: "Frequenz", text: SPECS.frequency.explain },
+];
 
 // Konkrete Verbesserungs-Tipps: Klartext zu allen schwachen (und auffälligen) Kennzahlen.
 export function adTips(m: { ctr: number | null; cpl: number | null; cpc: number | null; cpm: number | null; frequency: number | null }): { label: string; level: RateLevel; text: string }[] {

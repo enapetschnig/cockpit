@@ -398,7 +398,7 @@ function timeParams(opts: { since?: string; until?: string; preset?: string }): 
   if (opts.since && opts.until) return { time_range: JSON.stringify({ since: opts.since, until: opts.until }) };
   return { date_preset: "last_30d" };
 }
-const INSIGHT_FIELDS = "spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions";
+const INSIGHT_FIELDS = "spend,impressions,reach,clicks,ctr,inline_link_click_ctr,cpc,cpm,frequency,actions";
 
 const num = (v: unknown) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
 
@@ -411,18 +411,19 @@ function metricsFromRow(r: Record<string, unknown>) {
   const leads = Math.round(actionValue(actions, LEAD_ACTION_TYPES));
   const linkClicks = Math.round(actionValue(actions, ["link_click"]));
   const ctr = num(r.ctr);
+  const linkCtr = num(r.inline_link_click_ctr) ?? (impressions > 0 ? Math.round((linkClicks / impressions) * 1000) / 10 : null);
   const cpc = num(r.cpc);
   const cpm = num(r.cpm);
   const frequency = num(r.frequency);
   const cpl = leads > 0 ? Math.round((spend / leads) * 100) / 100 : null;
-  return { spend, impressions, reach, clicks, linkClicks, leads, ctr, cpc, cpm, frequency, cpl };
+  return { spend, impressions, reach, clicks, linkClicks, leads, ctr, linkCtr, cpc, cpm, frequency, cpl };
 }
 
 export interface OverviewTotals {
-  spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; cpm: number | null;
+  spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; linkCtr: number | null; cpm: number | null;
 }
 export interface OverviewCampaign {
-  id: string; name: string; effectiveStatus: string | null; spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; frequency: number | null; health: CampaignHealth;
+  id: string; name: string; effectiveStatus: string | null; spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number; cpl: number | null; ctr: number | null; linkCtr: number | null; frequency: number | null; health: CampaignHealth;
 }
 
 /** Konto-Kennzahlen + je Kampagne für einen Zeitraum (live), optional nur aktive. */
@@ -440,7 +441,7 @@ export async function fetchOverview(adAccountId: string, opts: { since?: string;
   const statusById = new Map<string, { name: string; status: string | null }>();
   for (const c of (campResp.data as Record<string, unknown>[]) ?? []) statusById.set(String(c.id), { name: String(c.name ?? ""), status: (c.effective_status as string) ?? null });
 
-  const totals: OverviewTotals = { spend: 0, impressions: 0, reach: 0, clicks: 0, linkClicks: 0, leads: 0, cpl: null, ctr: null, cpm: null };
+  const totals: OverviewTotals = { spend: 0, impressions: 0, reach: 0, clicks: 0, linkClicks: 0, leads: 0, cpl: null, ctr: null, linkCtr: null, cpm: null };
   let campaigns: OverviewCampaign[] = [];
   for (const row of (insResp.data as Record<string, unknown>[]) ?? []) {
     const id = String(row.campaign_id);
@@ -450,10 +451,11 @@ export async function fetchOverview(adAccountId: string, opts: { since?: string;
     if (opts.activeOnly && status !== "ACTIVE") continue;
     totals.spend += m.spend; totals.impressions += m.impressions; totals.reach += m.reach; totals.clicks += m.clicks; totals.linkClicks += m.linkClicks; totals.leads += m.leads;
     const health = campaignHealth({ effectiveStatus: status, spend: m.spend, clicks: m.clicks, leads: m.leads, cpa: m.cpl, ctr: m.ctr });
-    campaigns.push({ id, name: meta?.name || String(row.campaign_name ?? "(Kampagne)"), effectiveStatus: status, spend: m.spend, impressions: m.impressions, reach: m.reach, clicks: m.clicks, linkClicks: m.linkClicks, leads: m.leads, cpl: m.cpl, ctr: m.ctr, frequency: m.frequency, health });
+    campaigns.push({ id, name: meta?.name || String(row.campaign_name ?? "(Kampagne)"), effectiveStatus: status, spend: m.spend, impressions: m.impressions, reach: m.reach, clicks: m.clicks, linkClicks: m.linkClicks, leads: m.leads, cpl: m.cpl, ctr: m.ctr, linkCtr: m.linkCtr, frequency: m.frequency, health });
   }
   totals.cpl = totals.leads > 0 ? Math.round((totals.spend / totals.leads) * 100) / 100 : null;
   totals.ctr = totals.impressions > 0 ? Math.round((totals.clicks / totals.impressions) * 1000) / 10 : null;
+  totals.linkCtr = totals.impressions > 0 ? Math.round((totals.linkClicks / totals.impressions) * 1000) / 10 : null;
   totals.cpm = totals.impressions > 0 ? Math.round((totals.spend / totals.impressions) * 100000) / 100 : null;
   campaigns = campaigns.sort((a, b) => campaignSortKey({ health: a.health, spend: a.spend, name: a.name }, { health: b.health, spend: b.spend, name: b.name }));
   return { totals, campaigns };
@@ -462,7 +464,7 @@ export async function fetchOverview(adAccountId: string, opts: { since?: string;
 export interface AdRow {
   id: string; name: string; effectiveStatus: string | null; campaign: string | null; thumbnailUrl: string | null; objectType: string | null;
   spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number;
-  cpl: number | null; ctr: number | null; cpc: number | null; cpm: number | null; frequency: number | null;
+  cpl: number | null; ctr: number | null; linkCtr: number | null; cpc: number | null; cpm: number | null; frequency: number | null;
 }
 
 /** Einzelne Anzeigen (mit Creative-Vorschaubild) + Kennzahlen für einen Zeitraum. */
@@ -492,7 +494,7 @@ export async function listAdsWithInsights(adAccountId: string, opts: { since?: s
       thumbnailUrl: (creative.thumbnail_url as string) ?? null,
       objectType: (creative.object_type as string) ?? (creative.video_id ? "VIDEO" : null),
       spend: m.spend, impressions: m.impressions, reach: m.reach, clicks: m.clicks, linkClicks: m.linkClicks, leads: m.leads,
-      cpl: m.cpl, ctr: m.ctr, cpc: m.cpc, cpm: m.cpm, frequency: m.frequency,
+      cpl: m.cpl, ctr: m.ctr, linkCtr: m.linkCtr, cpc: m.cpc, cpm: m.cpm, frequency: m.frequency,
     });
   }
   return rows.sort((a, b) => b.spend - a.spend);

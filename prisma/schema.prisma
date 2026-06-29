@@ -227,6 +227,22 @@ model AdAccount {
   drafts    AdDraft[]
   leads     Lead[]
   stages    LeadStage[]
+  insightCache AdInsightCache[]
+}
+
+// Zwischenspeicher der Meta-Kennzahlen pro Konto+Zeitraum (Stale-While-Revalidate),
+// damit das Dashboard nicht bei jedem Laden live von Meta holen muss.
+model AdInsightCache {
+  id          String    @id @default(cuid())
+  adAccountId String
+  adAccount   AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  kind        String // "overview" | "ads"
+  rangeKey    String // stabiler Schlüssel aus preset/since/until/activeOnly
+  payloadJson String // gecachte JSON-Antwort
+  fetchedAt   DateTime  @default(now()) @updatedAt
+
+  @@unique([adAccountId, kind, rangeKey])
+  @@index([adAccountId])
 }
 
 // Anpassbare CRM-Pipeline-Stufen pro Werbekonto (Farbe + Reihenfolge).

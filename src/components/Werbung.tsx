@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO, LeadStageDTO } from "@/lib/types";
 import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
-import { rate, overallRating, adTips, SPECS } from "@/lib/adRating";
+import { rate, overallRating, adTips, SPECS, GLOSSARY } from "@/lib/adRating";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 const json = { "Content-Type": "application/json" };
@@ -112,7 +112,8 @@ export default function Werbung() {
   const [appliedCustom, setAppliedCustom] = useState<{ since: string; until: string } | null>(null);
   const [months] = useState(() => lastMonths(8));
   const [activeOnly, setActiveOnly] = useState(false);
-  const [tab, setTab] = useState<"overview" | "ads" | "leads">("overview");
+  const [perfView, setPerfView] = useState<"ads" | "campaigns">("ads");
+  const [showGloss, setShowGloss] = useState(false);
 
   const [totals, setTotals] = useState<OverviewTotals | null>(null);
   const [campaigns, setCampaigns] = useState<OverviewCampaign[]>([]);
@@ -192,41 +193,49 @@ export default function Werbung() {
     } catch { flash("Aktion fehlgeschlagen."); }
   }
 
-  // Kennzahlen + aktuellen Tab laden, wenn Konto/Zeitraum/Filter wechseln
-  useEffect(() => {
+  // Overview-Kennzahlen laden (Cache-first; bei stale leise frisch nachladen).
+  function loadOverview(refresh = false) {
     if (!selId) return;
     const q = rangeQuery();
     const a = activeOnly ? "&active=1" : "";
-    setDataLoading(true);
-    fetch(`/api/ads/overview?accountId=${selId}${q}${a}`)
-      .then((r) => r.json())
-      .then((d) => { setTotals(d.totals || null); setCampaigns(d.campaigns || []); })
+    const r = refresh ? "&refresh=1" : "";
+    if (!refresh) setDataLoading(true);
+    fetch(`/api/ads/overview?accountId=${selId}${q}${a}${r}`)
+      .then((x) => x.json())
+      .then((d) => { setTotals(d.totals || null); setCampaigns(d.campaigns || []); if (!refresh && d.stale) loadOverview(true); })
       .catch(() => {})
-      .finally(() => setDataLoading(false));
-    setAds([]);
+      .finally(() => { if (!refresh) setDataLoading(false); });
+  }
+  // Einzelne Anzeigen laden (Cache-first; bei stale leise frisch nachladen).
+  function loadAds(refresh = false) {
+    if (!selId) return;
+    const q = rangeQuery();
+    const a = activeOnly ? "&active=1" : "";
+    const r = refresh ? "&refresh=1" : "";
+    fetch(`/api/ads/list?accountId=${selId}${q}${a}${r}`)
+      .then((x) => x.json())
+      .then((d) => { setAds(d.ads || []); if (!refresh && d.stale) loadAds(true); })
+      .catch(() => {});
+  }
+
+  // Kennzahlen + Anzeigen laden, wenn Konto/Zeitraum/Filter wechseln
+  useEffect(() => {
+    if (!selId) return;
+    loadOverview(false);
+    loadAds(false);
     fetch(`/api/ads/audiences?accountId=${selId}`).then((r) => r.json()).then((d) => setAudiences(d.audiences || [])).catch(() => {});
     fetch(`/api/ads/forms?accountId=${selId}`).then((r) => r.json()).then((d) => setLeadForms(d.forms || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selId, rangeKey, appliedCustom, activeOnly]);
 
+  // CRM-Leads laden (immer sichtbar – große Leads-Sektion), bei Konto-/Filterwechsel
   useEffect(() => {
     if (!selId) return;
-    const q = rangeQuery();
-    const a = activeOnly ? "&active=1" : "";
-    if (tab === "ads" && ads.length === 0) {
-      fetch(`/api/ads/list?accountId=${selId}${q}${a}`).then((r) => r.json()).then((d) => setAds(d.ads || [])).catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selId]);
-
-  // CRM-Leads laden (persistiert), wenn der Leads-Tab offen ist / Filter wechselt
-  useEffect(() => {
-    if (!selId || tab !== "leads") return;
     loadCrm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selId, crmFilter]);
+  }, [selId, crmFilter]);
 
-  // Pipeline-Stufen je Konto laden (für CRM-Farben + Statuszähler im Tab)
+  // Pipeline-Stufen je Konto laden (für CRM-Farben + Statuszähler)
   useEffect(() => {
     if (!selId) { setStages([]); return; }
     loadStages();
@@ -323,10 +332,8 @@ export default function Werbung() {
     setSyncing(true);
     try {
       await fetch("/api/ads/sync", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId }) });
-      const q = rangeQuery();
-      const a = activeOnly ? "&active=1" : "";
-      const d = await (await fetch(`/api/ads/overview?accountId=${selId}${q}${a}`)).json();
-      setTotals(d.totals || null); setCampaigns(d.campaigns || []);
+      loadOverview(true);
+      loadAds(true);
       flash("Frisch von Meta geladen.");
     } catch { flash("Aktualisieren fehlgeschlagen."); } finally { setSyncing(false); }
   }
@@ -402,7 +409,8 @@ export default function Werbung() {
                 <AdStat v={eur(selAd.spend, 2)} l="Ausgaben" sub="im Zeitraum" />
                 <AdStat v={String(selAd.leads)} l="Leads" sub="Anfragen erhalten" />
                 <AdStat v={selAd.cpl != null ? eur(selAd.cpl, 2) : "–"} l="Kosten / Lead" sub="pro Anfrage" metric="cpl" value={selAd.cpl} />
-                <AdStat v={selAd.ctr != null ? selAd.ctr.toFixed(2) + "%" : "–"} l="CTR" sub="Klickrate (Klicks ÷ Einblendungen)" metric="ctr" value={selAd.ctr} />
+                <AdStat v={selAd.ctr != null ? selAd.ctr.toFixed(2) + "%" : "–"} l="CTR gesamt" sub="alle Klicks ÷ Einblendungen" metric="ctr" value={selAd.ctr} />
+                <AdStat v={selAd.linkCtr != null ? selAd.linkCtr.toFixed(2) + "%" : "–"} l="Link-CTR" sub="nur Link-Klicks ÷ Einblendungen" metric="linkCtr" value={selAd.linkCtr} />
                 <AdStat v={num(selAd.reach)} l="Reichweite" sub="erreichte Personen" />
                 <AdStat v={num(selAd.impressions)} l="Impressionen" sub="Einblendungen gesamt" />
                 <AdStat v={num(selAd.clicks)} l="Klicks" sub="alle Klicks" />
@@ -542,124 +550,134 @@ export default function Werbung() {
 
                 {sel?.status === "error" && <div className="ad-err">Verbindung fehlt: {sel.lastError || "Token abgelaufen"}. Neu verbinden über <a href="/connect">/connect</a>.</div>}
 
-                <div className="wrange-cap">Zeitraum: <b>{rangeLabel}</b></div>
+                <div className="wrange-cap">Zeitraum: <b>{rangeLabel}</b><button className="wgloss-btn" onClick={() => setShowGloss((v) => !v)}>{showGloss ? "✕ schließen" : "ℹ️ Was bedeuten diese Zahlen?"}</button></div>
                 <div className="wkpis">
                   <Kpi v={totals ? eur(totals.spend) : "–"} l="Ausgaben" sub="im Zeitraum" big />
                   <Kpi v={totals ? num(totals.leads) : "–"} l="Leads" sub="Anfragen erhalten" big />
                   <Kpi v={totals?.cpl != null ? eur(totals.cpl) : "–"} l="Kosten / Lead" sub="pro Anfrage" rating={totals?.cpl != null ? rate("cpl", totals.cpl) : undefined} />
-                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR" sub="Klickrate" rating={totals?.ctr != null ? rate("ctr", totals.ctr) : undefined} />
+                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR gesamt" sub="alle Klicks" rating={totals?.ctr != null ? rate("ctr", totals.ctr) : undefined} />
+                  <Kpi v={totals?.linkCtr != null ? totals.linkCtr.toFixed(1) + "%" : "–"} l="Link-CTR" sub="nur Link-Klicks" rating={totals?.linkCtr != null ? rate("linkCtr", totals.linkCtr) : undefined} />
                   <Kpi v={totals ? num(totals.reach) : "–"} l="Reichweite" sub="erreichte Personen" />
                   <Kpi v={totals ? num(totals.impressions) : "–"} l="Impressionen" sub="Einblendungen" />
                 </div>
 
-                <div className="wtabs">
-                  {([["overview", "Übersicht"], ["ads", "Anzeigen"], ["leads", "Leads"]] as ["overview" | "ads" | "leads", string][]).map(([v, l]) => (
-                    <button key={v} className={"wtab" + (tab === v ? " on" : "")} onClick={() => setTab(v)}>
-                      {l}{v === "leads" && crmUnseen > 0 && <span className="wtab-badge">{crmUnseen}</span>}
-                    </button>
-                  ))}
-                </div>
-
-                {tab === "overview" && (
-                  dataLoading && !campaigns.length ? <div className="wmuted">Lade Kennzahlen …</div> :
-                  campaigns.length === 0 ? <div className="wmuted">{activeOnly ? "Keine aktiven Kampagnen im Zeitraum." : "Keine Kampagnen im Zeitraum."}</div> :
-                  <div className="wgrid">
-                    {campaigns.map((c) => (
-                      <div key={c.id} className="wcamp">
-                        <div className="wcamp-top">
-                          <span className={"ampel ad-" + c.health.state} title={c.health.reason}>{c.health.label}</span>
-                          <span className="wcamp-name">{c.name}</span>
-                        </div>
-                        <div className="wcamp-metrics">
-                          <div><b>{eur(c.spend)}</b><span>Ausgaben</span></div>
-                          <div><b>{num(c.leads)}</b><span>Leads</span></div>
-                          <div><b>{c.cpl != null ? eur(c.cpl) : "–"}</b><span>/Lead</span></div>
-                          <div><b>{c.ctr != null ? c.ctr.toFixed(1) + "%" : "–"} <RateDot metric="ctr" value={c.ctr} /></b><span>CTR</span></div>
-                        </div>
-                      </div>
+                {showGloss && (
+                  <div className="wgloss">
+                    {GLOSSARY.map((g) => (
+                      <div key={g.term} className="wgloss-i"><b>{g.term}</b><span>{g.text}</span></div>
                     ))}
                   </div>
                 )}
 
-                {tab === "ads" && (
-                  ads.length === 0 ? <div className="wmuted">{dataLoading ? "Lade Anzeigen …" : activeOnly ? "Keine aktiven Anzeigen." : "Keine Anzeigen im Zeitraum."}</div> :
-                  <div className="wads">
-                    {[...ads].sort((a, b) => (b.effectiveStatus === "ACTIVE" ? 1 : 0) - (a.effectiveStatus === "ACTIVE" ? 1 : 0)).map((ad) => {
-                      const active = ad.effectiveStatus === "ACTIVE";
-                      return (
-                        <div key={ad.id} className="wad" onClick={() => setSelAd(ad)}>
-                          <div className="wad-thumb">{ad.thumbnailUrl ? <img src={ad.thumbnailUrl} alt="" /> : <span>{ad.objectType === "VIDEO" ? "▶" : "▦"}</span>}</div>
-                          <div className="wad-main">
-                            <div className="wad-name">{ad.name}</div>
-                            <div className="wad-sub"><span className={"wad-status " + (active ? "on" : "off")}>{active ? "● aktiv" : "❚❚ pausiert"}</span>{ad.campaign ? " · " + ad.campaign : ""}{ad.objectType === "VIDEO" ? " · Video" : ""}</div>
-                            <div className="wad-metrics"><span><b>{eur(ad.spend)}</b> Ausgaben</span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/Lead</span>{ctrBadge(ad.ctr)}</div>
-                          </div>
-                          {(active || canManage) && (
-                            <button className={"wad-toggle " + (active ? "pause" : "play")} disabled={adBusy === ad.id} title={active ? "Pausieren" : "Aktivieren"} onClick={(e) => toggleAd(ad, e)}>
-                              {adBusy === ad.id ? "…" : active ? "⏸" : "▶"}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+                {/* ── Sektion 1: Anfragen (Leads) ── */}
+                <section className="wsection">
+                  <div className="wsection-h">
+                    <h2>📥 Anfragen (Leads){crmUnseen > 0 && <span className="wsection-badge">{crmUnseen} neu</span>}</h2>
+                    <div className="wcrm-actions">
+                      <button className="wbtn ghost sm" onClick={() => setShowStages((v) => !v)}>{showStages ? "Fertig" : "⚙ Pipeline"}</button>
+                      <button className="wbtn ghost sm" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
+                    </div>
                   </div>
-                )}
+                  {crmUnseen > 0 && <div className="wnew-banner">🔔 {crmUnseen} {crmUnseen === 1 ? "neuer Lead wartet" : "neue Leads warten"} – noch nicht angesehen</div>}
 
-                {tab === "leads" && (
-                  <>
-                    {crmUnseen > 0 && <div className="wnew-banner">🔔 {crmUnseen} {crmUnseen === 1 ? "neuer Lead" : "neue Leads"} – noch nicht angesehen</div>}
-                    <div className="wcrm-head">
-                      <div className="wlead-sum">{crmLeads.length} Leads im CRM</div>
-                      <div className="wcrm-actions">
-                        <button className="wbtn ghost sm" onClick={() => setShowStages((v) => !v)}>{showStages ? "Fertig" : "⚙ Pipeline"}</button>
-                        <button className="wbtn ghost sm" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
+                  {showStages && (
+                    <div className="wstages-mgr">
+                      <div className="wstages-title">Pipeline-Stufen</div>
+                      {stages.map((s) => (
+                        <div key={s.id} className="wstage-row">
+                          <input type="color" value={s.color} onChange={(e) => updateStage(s.id, { color: e.target.value })} aria-label="Farbe" />
+                          <input className="winp sm" defaultValue={s.label} key={s.id + s.label} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== s.label) updateStage(s.id, { label: v }); }} />
+                          {s.isDefault ? <span className="wstage-lock" title="Standard-Stufe">Standard</span> : <button className="wstage-del" title="Löschen" onClick={() => deleteStage(s.id)}>✕</button>}
+                        </div>
+                      ))}
+                      <div className="wstage-row add">
+                        <input type="color" value={newStage.color} onChange={(e) => setNewStage({ ...newStage, color: e.target.value })} aria-label="Farbe" />
+                        <input className="winp sm" placeholder="Neue Stufe (z.B. Angebot gesendet)" value={newStage.label} onChange={(e) => setNewStage({ ...newStage, label: e.target.value })} onKeyDown={(e) => e.key === "Enter" && addStage()} />
+                        <button className="wbtn primary sm" onClick={addStage} disabled={!newStage.label.trim()}>+ Hinzufügen</button>
                       </div>
                     </div>
+                  )}
 
-                    {showStages && (
-                      <div className="wstages-mgr">
-                        <div className="wstages-title">Pipeline-Stufen</div>
-                        {stages.map((s) => (
-                          <div key={s.id} className="wstage-row">
-                            <input type="color" value={s.color} onChange={(e) => updateStage(s.id, { color: e.target.value })} aria-label="Farbe" />
-                            <input className="winp sm" defaultValue={s.label} key={s.id + s.label} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== s.label) updateStage(s.id, { label: v }); }} />
-                            {s.isDefault ? <span className="wstage-lock" title="Standard-Stufe">Standard</span> : <button className="wstage-del" title="Löschen" onClick={() => deleteStage(s.id)}>✕</button>}
+                  <div className="wchips" style={{ flexWrap: "wrap", marginBottom: 12 }}>
+                    <button className={"wchip" + (crmFilter === "alle" ? " on" : "")} onClick={() => setCrmFilter("alle")}>Alle ({Object.values(crmCounts).reduce((a, b) => a + b, 0)})</button>
+                    {stages.map((s) => (
+                      <button key={s.key} className="wchip-stage" style={crmFilter === s.key ? { background: s.color, borderColor: s.color, color: "#fff" } : { borderColor: s.color, color: s.color }} onClick={() => setCrmFilter(s.key)}>
+                        {s.label}{crmCounts[s.key] ? ` (${crmCounts[s.key]})` : ""}
+                      </button>
+                    ))}
+                  </div>
+                  {crmLeads.length === 0 ? (
+                    <div className="wmuted">Noch keine Leads. Tippe „↻ Leads holen", um sie aus Facebook zu laden.</div>
+                  ) : (
+                    <div className="wleads">
+                      {crmLeads.map((l) => {
+                        const st = stageOf(l.status);
+                        return (
+                          <div key={l.id} className={"wlead crm" + (!l.seenAt ? " unseen" : "")} onClick={() => { openLead(l); setActDraft({ channel: "call", note: "" }); }}>
+                            <div className="wlead-main">{!l.seenAt && <span className="wlead-dot" title="neu" />}<b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
+                            <div className="wlead-meta">{fmtAgo(l.receivedAt)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
+                            <span className="wlead-stage" style={{ background: st.color }}>{st.label}</span>
                           </div>
-                        ))}
-                        <div className="wstage-row add">
-                          <input type="color" value={newStage.color} onChange={(e) => setNewStage({ ...newStage, color: e.target.value })} aria-label="Farbe" />
-                          <input className="winp sm" placeholder="Neue Stufe (z.B. Angebot gesendet)" value={newStage.label} onChange={(e) => setNewStage({ ...newStage, label: e.target.value })} onKeyDown={(e) => e.key === "Enter" && addStage()} />
-                          <button className="wbtn primary sm" onClick={addStage} disabled={!newStage.label.trim()}>+ Hinzufügen</button>
-                        </div>
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
 
-                    <div className="wchips" style={{ flexWrap: "wrap", marginBottom: 12 }}>
-                      <button className={"wchip" + (crmFilter === "alle" ? " on" : "")} onClick={() => setCrmFilter("alle")}>Alle ({Object.values(crmCounts).reduce((a, b) => a + b, 0)})</button>
-                      {stages.map((s) => (
-                        <button key={s.key} className="wchip-stage" style={crmFilter === s.key ? { background: s.color, borderColor: s.color, color: "#fff" } : { borderColor: s.color, color: s.color }} onClick={() => setCrmFilter(s.key)}>
-                          {s.label}{crmCounts[s.key] ? ` (${crmCounts[s.key]})` : ""}
-                        </button>
+                {/* ── Sektion 2: Anzeigen-Leistung ── */}
+                <section className="wsection">
+                  <div className="wsection-h">
+                    <h2>📊 Anzeigen-Leistung</h2>
+                    <div className="wseg">
+                      <button className={"wseg-b" + (perfView === "ads" ? " on" : "")} onClick={() => setPerfView("ads")}>Anzeigen</button>
+                      <button className={"wseg-b" + (perfView === "campaigns" ? " on" : "")} onClick={() => setPerfView("campaigns")}>Kampagnen</button>
+                    </div>
+                  </div>
+
+                  {perfView === "ads" ? (
+                    ads.length === 0 ? <div className="wmuted">{dataLoading ? "Lade Anzeigen …" : activeOnly ? "Keine aktiven Anzeigen." : "Keine Anzeigen im Zeitraum."}</div> :
+                    <div className="wads">
+                      {[...ads].sort((a, b) => (b.effectiveStatus === "ACTIVE" ? 1 : 0) - (a.effectiveStatus === "ACTIVE" ? 1 : 0)).map((ad) => {
+                        const active = ad.effectiveStatus === "ACTIVE";
+                        return (
+                          <div key={ad.id} className="wad" onClick={() => setSelAd(ad)}>
+                            <div className="wad-thumb">{ad.thumbnailUrl ? <img src={ad.thumbnailUrl} alt="" /> : <span>{ad.objectType === "VIDEO" ? "▶" : "▦"}</span>}</div>
+                            <div className="wad-main">
+                              <div className="wad-name">{ad.name}</div>
+                              <div className="wad-sub"><span className={"wad-status " + (active ? "on" : "off")}>{active ? "● aktiv" : "❚❚ pausiert"}</span>{ad.campaign ? " · " + ad.campaign : ""}{ad.objectType === "VIDEO" ? " · Video" : ""}</div>
+                              <div className="wad-metrics"><span><b>{eur(ad.spend)}</b> Ausgaben</span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/Lead</span>{ctrBadge(ad.ctr)}</div>
+                            </div>
+                            {(active || canManage) && (
+                              <button className={"wad-toggle " + (active ? "pause" : "play")} disabled={adBusy === ad.id} title={active ? "Pausieren" : "Aktivieren"} onClick={(e) => toggleAd(ad, e)}>
+                                {adBusy === ad.id ? "…" : active ? "⏸" : "▶"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    dataLoading && !campaigns.length ? <div className="wmuted">Lade Kennzahlen …</div> :
+                    campaigns.length === 0 ? <div className="wmuted">{activeOnly ? "Keine aktiven Kampagnen im Zeitraum." : "Keine Kampagnen im Zeitraum."}</div> :
+                    <div className="wgrid">
+                      {campaigns.map((c) => (
+                        <div key={c.id} className="wcamp">
+                          <div className="wcamp-top">
+                            <span className={"ampel ad-" + c.health.state} title={c.health.reason}>{c.health.label}</span>
+                            <span className="wcamp-name">{c.name}</span>
+                          </div>
+                          <div className="wcamp-metrics">
+                            <div><b>{eur(c.spend)}</b><span>Ausgaben</span></div>
+                            <div><b>{num(c.leads)}</b><span>Leads</span></div>
+                            <div><b>{c.cpl != null ? eur(c.cpl) : "–"}</b><span>/Lead</span></div>
+                            <div><b>{c.ctr != null ? c.ctr.toFixed(1) + "%" : "–"} <RateDot metric="ctr" value={c.ctr} /></b><span>CTR ges.</span></div>
+                            <div><b>{c.linkCtr != null ? c.linkCtr.toFixed(1) + "%" : "–"} <RateDot metric="linkCtr" value={c.linkCtr} /></b><span>Link-CTR</span></div>
+                          </div>
+                        </div>
                       ))}
                     </div>
-                    {crmLeads.length === 0 ? (
-                      <div className="wmuted">Noch keine Leads. Tippe „↻ Leads holen", um sie aus Facebook zu laden.</div>
-                    ) : (
-                      <div className="wleads">
-                        {crmLeads.map((l) => {
-                          const st = stageOf(l.status);
-                          return (
-                            <div key={l.id} className={"wlead crm" + (!l.seenAt ? " unseen" : "")} onClick={() => { openLead(l); setActDraft({ channel: "call", note: "" }); }}>
-                              <div className="wlead-main">{!l.seenAt && <span className="wlead-dot" title="neu" />}<b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
-                              <div className="wlead-meta">{fmtAgo(l.receivedAt)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
-                              <span className="wlead-stage" style={{ background: st.color }}>{st.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
+                  )}
+                </section>
 
                 {role === "admin" && drafts.filter((d) => d.status === "awaiting_review").length > 0 && (
                   <div className="wcard" style={{ marginTop: 16, borderColor: "var(--amber)" }}>
