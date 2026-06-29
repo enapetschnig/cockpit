@@ -268,6 +268,22 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
 .wad-metrics{display:flex;gap:13px;font-size:12px;color:var(--sub);flex-wrap:wrap}
 .wad-metrics b{color:var(--ink);font-weight:700}
 .wad-chev{flex:none;color:var(--sub);font-size:20px;font-weight:700;padding:0 2px}
+/* Bewertungspunkt + Status + Pause-Button */
+.rate-dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;margin-left:2px}
+.rate-dot.lg{width:11px;height:11px;margin-right:6px;margin-left:0}
+.wmetric{display:inline-flex;align-items:center;gap:3px}
+.wad-status{font-weight:700}
+.wad-status.on{color:var(--green)}
+.wad-status.off{color:var(--sub)}
+.wad-toggle{flex:none;width:40px;height:40px;border-radius:11px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;color:var(--ink)}
+.wad-toggle.pause:hover{border-color:#e0b4b4;color:#c0392b;background:#fff5f4}
+.wad-toggle.play{border-color:var(--green);color:var(--green);background:var(--green-soft)}
+.wad-toggle:disabled{opacity:.5;cursor:default}
+.wkpi-rate{font-size:11px;font-weight:700;margin-top:3px;display:flex;align-items:center;gap:4px}
+.wkpi.big .wkpi-rate{filter:brightness(1.6)}
+.wad-overall{display:flex;align-items:center;font-size:14px;border:1.5px solid;border-radius:12px;padding:10px 13px;margin:4px 0 12px;font-weight:600}
+.wbtn.danger{background:#fbeaea;color:#c0392b}
+.wbtn.danger:hover{background:#f7dcdc}
 /* Anzeigen-Detail */
 .wad-detail-head{display:flex;gap:12px;align-items:center;min-width:0}
 .wad-detail-thumb{width:52px;height:52px;border-radius:11px;object-fit:cover;flex:none;background:#f0ede6;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:20px}

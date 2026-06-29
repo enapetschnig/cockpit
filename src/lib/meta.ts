@@ -498,6 +498,17 @@ export async function listAdsWithInsights(adAccountId: string, opts: { since?: s
   return rows.sort((a, b) => b.spend - a.spend);
 }
 
+/** Status einer einzelnen Anzeige umschalten (ACTIVE | PAUSED). Pausieren ist immer sicher. */
+export async function setAdStatus(adAccountId: string, adId: string, status: "ACTIVE" | "PAUSED"): Promise<{ id: string; effectiveStatus: string | null }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  await graphPost(adId, token, { status });
+  // tatsächlichen Status zurücklesen (effective_status kann abweichen, z.B. ADSET_PAUSED)
+  const after = await graphGet(adId, token, { fields: "id,effective_status,status" });
+  return { id: String(after.id ?? adId), effectiveStatus: (after.effective_status as string) ?? (after.status as string) ?? status };
+}
+
 export interface LeadRow { id: string; createdTime: string; form: string; name?: string; phone?: string; email?: string; city?: string; fields: { key: string; value: string }[]; }
 
 /** Echte Leads aus den Sofortformularen (über alle Seiten des Tokens). */

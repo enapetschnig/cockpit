@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO, LeadStageDTO } from "@/lib/types";
 import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
+import { rate, overallRating } from "@/lib/adRating";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 const json = { "Content-Type": "application/json" };
@@ -23,6 +24,16 @@ function fmtAgo(iso: string): string {
   const tg = Math.floor(std / 24);
   if (tg < 30) return `vor ${tg} ${tg === 1 ? "Tag" : "Tagen"}`;
   return new Date(iso).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+// Farbiger Bewertungspunkt (gut/okay/schwach) zu einer Kennzahl
+function RateDot({ metric, value }: { metric: string; value: number | null }) {
+  const r = rate(metric, value);
+  if (r.level === "na") return null;
+  return <span className="rate-dot" style={{ background: r.color }} title={r.label} />;
+}
+// CTR + Bewertungspunkt (für Listen/Karten)
+function ctrBadge(ctr: number | null) {
+  return <span className="wmetric"><b>{ctr != null ? ctr.toFixed(1) + "%" : "–"}</b> CTR <RateDot metric="ctr" value={ctr} /></span>;
 }
 const GOALS: { v: string; t: string; sub: string; icon: string }[] = [
   { v: "leads", t: "Anfragen / Leads", sub: "Kontaktdaten sammeln", icon: "M3 7l9 6 9-6M3 5h18v14H3z" },
@@ -107,6 +118,7 @@ export default function Werbung() {
   const [campaigns, setCampaigns] = useState<OverviewCampaign[]>([]);
   const [ads, setAds] = useState<AdRow[]>([]);
   const [selAd, setSelAd] = useState<AdRow | null>(null);
+  const [adBusy, setAdBusy] = useState<string | null>(null);
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
   const [leadForms, setLeadForms] = useState<LeadFormRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
@@ -265,6 +277,25 @@ export default function Werbung() {
   function stageOf(key: string): LeadStageDTO {
     return stages.find((s) => s.key === key) || { id: "", key, label: key, color: "#6b7280", order: 99, isDefault: false };
   }
+  // Anzeige pausieren/aktivieren (Pausieren: alle; Aktivieren: nur Admin – serverseitig geprüft)
+  async function toggleAd(ad: AdRow, e?: React.MouseEvent) {
+    e?.stopPropagation();
+    const next = ad.effectiveStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    setAdBusy(ad.id);
+    try {
+      const d = await (await fetch("/api/ads/status", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId, adId: ad.id, status: next }) })).json();
+      if (d.ok) {
+        const es: string = d.effectiveStatus || next;
+        setAds((list) => {
+          const mapped = list.map((x) => (x.id === ad.id ? { ...x, effectiveStatus: es } : x));
+          return activeOnly && es !== "ACTIVE" ? mapped.filter((x) => x.id !== ad.id) : mapped;
+        });
+        setSelAd((s) => (s && s.id === ad.id ? { ...s, effectiveStatus: es } : s));
+        flash(next === "PAUSED" ? "Anzeige pausiert." : "Anzeige aktiviert.");
+      } else flash(d.error || "Aktion fehlgeschlagen.");
+    } catch { flash("Aktion fehlgeschlagen."); } finally { setAdBusy(null); }
+  }
+  const canManage = role !== "customer"; // Admin (oder Bestandsinhaber) darf auch aktivieren
   async function syncCrm() {
     setCrmSyncing(true);
     try {
@@ -356,24 +387,35 @@ export default function Werbung() {
                   {selAd.thumbnailUrl ? <img src={selAd.thumbnailUrl} alt="" className="wad-detail-thumb" /> : <div className="wad-detail-thumb ph">{selAd.objectType === "VIDEO" ? "▶" : "▦"}</div>}
                   <div>
                     <h3>{selAd.name}</h3>
-                    <div className="wmuted" style={{ fontSize: 13 }}>{selAd.campaign || ""} · {selAd.effectiveStatus === "ACTIVE" ? "aktiv" : "pausiert"}{selAd.objectType === "VIDEO" ? " · Video" : ""}</div>
+                    <div className="wmuted" style={{ fontSize: 13 }}>
+                      <span className={"wad-status " + (selAd.effectiveStatus === "ACTIVE" ? "on" : "off")}>{selAd.effectiveStatus === "ACTIVE" ? "● aktiv" : "❚❚ pausiert"}</span>
+                      {selAd.campaign ? " · " + selAd.campaign : ""}{selAd.objectType === "VIDEO" ? " · Video" : ""}
+                    </div>
                   </div>
                 </div>
                 <button className="crm-x" onClick={() => setSelAd(null)}>✕</button>
               </div>
+              {(() => { const o = overallRating({ ctr: selAd.ctr, cpl: selAd.cpl, frequency: selAd.frequency }); return (
+                <div className="wad-overall" style={{ borderColor: o.color, color: o.color }}><span className="rate-dot lg" style={{ background: o.color }} />Gesamtbewertung: <b>{o.label}</b></div>
+              ); })()}
               <div className="wad-detail-grid">
                 <AdStat v={eur(selAd.spend, 2)} l="Ausgaben" sub="im Zeitraum" />
                 <AdStat v={String(selAd.leads)} l="Leads" sub="Anfragen erhalten" />
-                <AdStat v={selAd.cpl != null ? eur(selAd.cpl, 2) : "–"} l="Kosten / Lead" sub="pro Anfrage" />
-                <AdStat v={selAd.ctr != null ? selAd.ctr.toFixed(2) + "%" : "–"} l="CTR" sub="Klickrate (Klicks ÷ Einblendungen)" />
+                <AdStat v={selAd.cpl != null ? eur(selAd.cpl, 2) : "–"} l="Kosten / Lead" sub="pro Anfrage" metric="cpl" value={selAd.cpl} />
+                <AdStat v={selAd.ctr != null ? selAd.ctr.toFixed(2) + "%" : "–"} l="CTR" sub="Klickrate (Klicks ÷ Einblendungen)" metric="ctr" value={selAd.ctr} />
                 <AdStat v={num(selAd.reach)} l="Reichweite" sub="erreichte Personen" />
                 <AdStat v={num(selAd.impressions)} l="Impressionen" sub="Einblendungen gesamt" />
                 <AdStat v={num(selAd.clicks)} l="Klicks" sub="alle Klicks" />
                 <AdStat v={num(selAd.linkClicks)} l="Link-Klicks" sub="Klicks auf den Link" />
-                <AdStat v={selAd.cpc != null ? eur(selAd.cpc, 2) : "–"} l="CPC" sub="Kosten pro Klick" />
-                <AdStat v={selAd.cpm != null ? eur(selAd.cpm, 2) : "–"} l="CPM" sub="Kosten / 1.000 Einbl." />
-                <AdStat v={selAd.frequency != null ? selAd.frequency.toFixed(1) + "×" : "–"} l="Frequenz" sub="Ø Einblendungen / Person" />
+                <AdStat v={selAd.cpc != null ? eur(selAd.cpc, 2) : "–"} l="CPC" sub="Kosten pro Klick" metric="cpc" value={selAd.cpc} />
+                <AdStat v={selAd.cpm != null ? eur(selAd.cpm, 2) : "–"} l="CPM" sub="Kosten / 1.000 Einbl." metric="cpm" value={selAd.cpm} />
+                <AdStat v={selAd.frequency != null ? selAd.frequency.toFixed(1) + "×" : "–"} l="Frequenz" sub="Ø Einblendungen / Person" metric="frequency" value={selAd.frequency} />
               </div>
+              {(selAd.effectiveStatus === "ACTIVE" || canManage) && (
+                <button className={"wbtn " + (selAd.effectiveStatus === "ACTIVE" ? "danger" : "primary")} style={{ width: "100%", marginTop: 14 }} disabled={adBusy === selAd.id} onClick={() => toggleAd(selAd)}>
+                  {adBusy === selAd.id ? "…" : selAd.effectiveStatus === "ACTIVE" ? "⏸ Anzeige pausieren" : "▶ Anzeige aktivieren"}
+                </button>
+              )}
               <div className="wmuted" style={{ fontSize: 12, marginTop: 12 }}>Zeitraum: {rangeLabel}</div>
             </div>
           </div>
@@ -496,8 +538,8 @@ export default function Werbung() {
                 <div className="wkpis">
                   <Kpi v={totals ? eur(totals.spend) : "–"} l="Ausgaben" sub="im Zeitraum" big />
                   <Kpi v={totals ? num(totals.leads) : "–"} l="Leads" sub="Anfragen erhalten" big />
-                  <Kpi v={totals?.cpl != null ? eur(totals.cpl) : "–"} l="Kosten / Lead" sub="pro Anfrage" />
-                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR" sub="Klickrate" />
+                  <Kpi v={totals?.cpl != null ? eur(totals.cpl) : "–"} l="Kosten / Lead" sub="pro Anfrage" rating={totals?.cpl != null ? rate("cpl", totals.cpl) : undefined} />
+                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR" sub="Klickrate" rating={totals?.ctr != null ? rate("ctr", totals.ctr) : undefined} />
                   <Kpi v={totals ? num(totals.reach) : "–"} l="Reichweite" sub="erreichte Personen" />
                   <Kpi v={totals ? num(totals.impressions) : "–"} l="Impressionen" sub="Einblendungen" />
                 </div>
@@ -524,7 +566,7 @@ export default function Werbung() {
                           <div><b>{eur(c.spend)}</b><span>Ausgaben</span></div>
                           <div><b>{num(c.leads)}</b><span>Leads</span></div>
                           <div><b>{c.cpl != null ? eur(c.cpl) : "–"}</b><span>/Lead</span></div>
-                          <div><b>{c.ctr != null ? c.ctr.toFixed(1) + "%" : "–"}</b><span>CTR</span></div>
+                          <div><b>{c.ctr != null ? c.ctr.toFixed(1) + "%" : "–"} <RateDot metric="ctr" value={c.ctr} /></b><span>CTR</span></div>
                         </div>
                       </div>
                     ))}
@@ -534,17 +576,24 @@ export default function Werbung() {
                 {tab === "ads" && (
                   ads.length === 0 ? <div className="wmuted">{dataLoading ? "Lade Anzeigen …" : activeOnly ? "Keine aktiven Anzeigen." : "Keine Anzeigen im Zeitraum."}</div> :
                   <div className="wads">
-                    {ads.map((ad) => (
-                      <button key={ad.id} className="wad" onClick={() => setSelAd(ad)}>
-                        <div className="wad-thumb">{ad.thumbnailUrl ? <img src={ad.thumbnailUrl} alt="" /> : <span>{ad.objectType === "VIDEO" ? "▶" : "▦"}</span>}</div>
-                        <div className="wad-main">
-                          <div className="wad-name">{ad.name}</div>
-                          <div className="wad-sub">{ad.campaign || ""} · {ad.effectiveStatus === "ACTIVE" ? "aktiv" : "pausiert"}{ad.objectType === "VIDEO" ? " · Video" : ""}</div>
-                          <div className="wad-metrics"><span><b>{eur(ad.spend)}</b> Ausgaben</span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/Lead</span><span><b>{ad.ctr != null ? ad.ctr.toFixed(1) + "%" : "–"}</b> CTR</span></div>
+                    {[...ads].sort((a, b) => (b.effectiveStatus === "ACTIVE" ? 1 : 0) - (a.effectiveStatus === "ACTIVE" ? 1 : 0)).map((ad) => {
+                      const active = ad.effectiveStatus === "ACTIVE";
+                      return (
+                        <div key={ad.id} className="wad" onClick={() => setSelAd(ad)}>
+                          <div className="wad-thumb">{ad.thumbnailUrl ? <img src={ad.thumbnailUrl} alt="" /> : <span>{ad.objectType === "VIDEO" ? "▶" : "▦"}</span>}</div>
+                          <div className="wad-main">
+                            <div className="wad-name">{ad.name}</div>
+                            <div className="wad-sub"><span className={"wad-status " + (active ? "on" : "off")}>{active ? "● aktiv" : "❚❚ pausiert"}</span>{ad.campaign ? " · " + ad.campaign : ""}{ad.objectType === "VIDEO" ? " · Video" : ""}</div>
+                            <div className="wad-metrics"><span><b>{eur(ad.spend)}</b> Ausgaben</span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/Lead</span>{ctrBadge(ad.ctr)}</div>
+                          </div>
+                          {(active || canManage) && (
+                            <button className={"wad-toggle " + (active ? "pause" : "play")} disabled={adBusy === ad.id} title={active ? "Pausieren" : "Aktivieren"} onClick={(e) => toggleAd(ad, e)}>
+                              {adBusy === ad.id ? "…" : active ? "⏸" : "▶"}
+                            </button>
+                          )}
                         </div>
-                        <span className="wad-chev">›</span>
-                      </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -640,22 +689,25 @@ export default function Werbung() {
   );
 }
 
-function AdStat({ v, l, sub }: { v: string; l: string; sub: string }) {
+function AdStat({ v, l, sub, metric, value }: { v: string; l: string; sub: string; metric?: string; value?: number | null }) {
+  const r = metric ? rate(metric, value) : null;
   return (
     <div className="wad-stat">
-      <div className="wad-stat-v">{v}</div>
+      <div className="wad-stat-v">{v}{r && r.level !== "na" && <span className="rate-dot lg" style={{ background: r.color }} title={r.label} />}</div>
       <div className="wad-stat-l">{l}</div>
-      <div className="wad-stat-sub">{sub}</div>
+      {r && r.level !== "na" ? <div className="wad-stat-sub" style={{ color: r.color, fontWeight: 700 }}>{r.label}</div> : <div className="wad-stat-sub">{sub}</div>}
     </div>
   );
 }
 
-function Kpi({ v, l, sub, big }: { v: string; l: string; sub?: string; big?: boolean }) {
+function Kpi({ v, l, sub, big, rating }: { v: string; l: string; sub?: string; big?: boolean; rating?: { level: string; label: string; color: string } }) {
   return (
     <div className={"wkpi" + (big ? " big" : "")}>
       <div className="wkpi-v">{v}</div>
       <div className="wkpi-l">{l}</div>
-      {sub && <div className="wkpi-sub">{sub}</div>}
+      {rating && rating.level !== "na" ? (
+        <div className="wkpi-rate" style={{ color: rating.color }}><span className="rate-dot" style={{ background: rating.color }} />{rating.label}</div>
+      ) : sub ? <div className="wkpi-sub">{sub}</div> : null}
     </div>
   );
 }
