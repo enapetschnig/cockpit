@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest } from "@/lib/types";
-import type { OverviewTotals, OverviewCampaign, AdRow, LeadRow, SavedAudience, LeadFormRow } from "@/lib/meta";
+import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO } from "@/lib/types";
+import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 const json = { "Content-Type": "application/json" };
@@ -23,6 +23,21 @@ const GOALS: { v: string; t: string; sub: string; icon: string }[] = [
   { v: "traffic", t: "Website-Besuche", sub: "Mehr Besucher", icon: "M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" },
 ];
 const BUDGETS = [10, 20, 30, 50, 100];
+const LEAD_STATUS: Record<string, { label: string; cls: string }> = {
+  new: { label: "Neu", cls: "ad-warn" },
+  contacted: { label: "Angerufen", cls: "ad-info" },
+  scheduled: { label: "Termin", cls: "pill-privat" },
+  won: { label: "Gewonnen", cls: "ad-good" },
+  lost: { label: "Verloren", cls: "ad-muted" },
+};
+const STATUS_ORDER = ["new", "contacted", "scheduled", "won", "lost"];
+const CHANNELS: { v: string; t: string }[] = [
+  { v: "call", t: "📞 Anruf" },
+  { v: "whatsapp", t: "💬 WhatsApp" },
+  { v: "visit", t: "🏠 Vor-Ort-Termin" },
+  { v: "email", t: "✉️ E-Mail" },
+  { v: "note", t: "📝 Notiz" },
+];
 const NAV = [
   { label: "Posteingang", href: "/", icon: "M3 7l9 6 9-6M3 5h18v14H3z" },
   { label: "Kunden", href: "/?view=kunden", icon: "M9 8a3 3 0 1 0 0-.01M3.5 19a5.5 5.5 0 0 1 11 0M16 6a3 3 0 0 1 0 6" },
@@ -60,11 +75,17 @@ export default function Werbung() {
   const [totals, setTotals] = useState<OverviewTotals | null>(null);
   const [campaigns, setCampaigns] = useState<OverviewCampaign[]>([]);
   const [ads, setAds] = useState<AdRow[]>([]);
-  const [leads, setLeads] = useState<{ leads: LeadRow[]; totalForms: number; forms?: { name: string; count: number }[]; note?: string } | null>(null);
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
   const [leadForms, setLeadForms] = useState<LeadFormRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
   const [role, setRole] = useState<"admin" | "customer" | null>(null);
+  // CRM
+  const [crmLeads, setCrmLeads] = useState<LeadDTO[]>([]);
+  const [crmCounts, setCrmCounts] = useState<Record<string, number>>({});
+  const [crmFilter, setCrmFilter] = useState("alle");
+  const [selLead, setSelLead] = useState<LeadDTO | null>(null);
+  const [crmSyncing, setCrmSyncing] = useState(false);
+  const [actDraft, setActDraft] = useState<{ channel: string; note: string }>({ channel: "call", note: "" });
 
   const [mode, setMode] = useState<"dashboard" | "wizard">("dashboard");
   const [step, setStep] = useState(1);
@@ -117,7 +138,7 @@ export default function Werbung() {
       .then((d) => { setTotals(d.totals || null); setCampaigns(d.campaigns || []); })
       .catch(() => {})
       .finally(() => setDataLoading(false));
-    setAds([]); setLeads(null);
+    setAds([]);
     fetch(`/api/ads/audiences?accountId=${selId}`).then((r) => r.json()).then((d) => setAudiences(d.audiences || [])).catch(() => {});
     fetch(`/api/ads/forms?accountId=${selId}`).then((r) => r.json()).then((d) => setLeadForms(d.forms || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,11 +151,45 @@ export default function Werbung() {
     if (tab === "ads" && ads.length === 0) {
       fetch(`/api/ads/list?accountId=${selId}&since=${since}&until=${until}${a}`).then((r) => r.json()).then((d) => setAds(d.ads || [])).catch(() => {});
     }
-    if (tab === "leads" && !leads) {
-      fetch(`/api/ads/leads?accountId=${selId}`).then((r) => r.json()).then((d) => setLeads(d)).catch(() => {});
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selId]);
+
+  // CRM-Leads laden (persistiert), wenn der Leads-Tab offen ist / Filter wechselt
+  useEffect(() => {
+    if (!selId || tab !== "leads") return;
+    loadCrm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selId, crmFilter]);
+
+  async function loadCrm() {
+    try {
+      const d = await (await fetch(`/api/leads?accountId=${selId}&status=${crmFilter}`)).json();
+      setCrmLeads(d.leads || []);
+      setCrmCounts(d.counts || {});
+    } catch { /* ignore */ }
+  }
+  async function syncCrm() {
+    setCrmSyncing(true);
+    try {
+      const d = await (await fetch("/api/ads/sync/leads", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId }) })).json();
+      const r = (d.results || [])[0];
+      await loadCrm();
+      flash(r?.error ? "Hinweis: " + r.error : `${r?.created ?? 0} neue Leads geladen.`);
+    } catch { flash("Aktualisieren fehlgeschlagen."); } finally { setCrmSyncing(false); }
+  }
+  async function patchLead(id: string, fields: Record<string, unknown>) {
+    try {
+      const d = await (await fetch(`/api/leads/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) })).json();
+      if (d.id) { setSelLead(d); setCrmLeads((ls) => ls.map((l) => (l.id === d.id ? d : l))); loadCrm(); }
+    } catch { /* ignore */ }
+  }
+  async function addActivity(id: string) {
+    if (!actDraft.note.trim()) return;
+    try {
+      const d = await (await fetch(`/api/leads/${id}/activity`, { method: "POST", headers: json, body: JSON.stringify(actDraft) })).json();
+      if (d.id) { setSelLead(d); setCrmLeads((ls) => ls.map((l) => (l.id === d.id ? d : l))); setActDraft({ channel: "call", note: "" }); loadCrm(); }
+    } catch { /* ignore */ }
+  }
 
   async function sync() {
     setSyncing(true);
@@ -196,6 +251,62 @@ export default function Werbung() {
 
       <main className="wmain">
         {toast && <div className="wtoast">{toast}</div>}
+
+        {selLead && (
+          <div className="crm-overlay" onClick={() => setSelLead(null)}>
+            <div className="crm-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="crm-top">
+                <div>
+                  <h3>{selLead.name || "(ohne Namen)"}</h3>
+                  <div className="crm-sub">{selLead.leadFormName || "Lead"} · {selLead.receivedAt?.slice(0, 10)}</div>
+                </div>
+                <button className="crm-x" onClick={() => setSelLead(null)}>×</button>
+              </div>
+              <div className="crm-contact">
+                {selLead.phone && <a href={`tel:${selLead.phone}`}>📞 {selLead.phone}</a>}
+                {selLead.email && <a href={`mailto:${selLead.email}`}>✉️ {selLead.email}</a>}
+                {selLead.city && <span>📍 {selLead.city}</span>}
+              </div>
+              {selLead.fields.length > 0 && (
+                <div className="crm-fields">
+                  {selLead.fields.map((f, i) => <div key={i}><span>{f.key}</span><b>{f.value}</b></div>)}
+                </div>
+              )}
+
+              <label className="wlbl">Status</label>
+              <div className="ad-toggle" style={{ flexWrap: "wrap" }}>
+                {STATUS_ORDER.map((s) => (
+                  <button key={s} className={"ad-toggle-b" + (selLead.status === s ? " on" : "")} onClick={() => patchLead(selLead.id, { status: s })}>{LEAD_STATUS[s].label}</button>
+                ))}
+              </div>
+
+              <label className="wlbl">Vor-Ort-/Rückruf-Termin</label>
+              <input className="winp" type="datetime-local" value={selLead.scheduledFor ? selLead.scheduledFor.slice(0, 16) : ""} onChange={(e) => patchLead(selLead.id, { scheduledFor: e.target.value ? new Date(e.target.value).toISOString() : null })} />
+
+              <label className="wlbl">Notizen</label>
+              <textarea className="winp" rows={3} defaultValue={selLead.notes || ""} key={selLead.id + "-notes"} onBlur={(e) => { if (e.target.value !== (selLead.notes || "")) patchLead(selLead.id, { notes: e.target.value }); }} />
+
+              <div className="ad-sep">Kontakt-Log</div>
+              <div className="addrow">
+                <select className="winp" style={{ flex: "none", width: 150 }} value={actDraft.channel} onChange={(e) => setActDraft({ ...actDraft, channel: e.target.value })}>
+                  {CHANNELS.map((c) => <option key={c.v} value={c.v}>{c.t}</option>)}
+                </select>
+                <input className="winp" placeholder="Was wurde besprochen?" value={actDraft.note} onChange={(e) => setActDraft({ ...actDraft, note: e.target.value })} onKeyDown={(e) => e.key === "Enter" && addActivity(selLead.id)} />
+                <button className="wbtn primary" style={{ flex: "none" }} onClick={() => addActivity(selLead.id)}>+</button>
+              </div>
+              {selLead.activities.length > 0 && (
+                <div className="crm-log">
+                  {selLead.activities.map((a) => (
+                    <div key={a.id} className="crm-log-i">
+                      <div className="crm-log-h"><b>{CHANNELS.find((c) => c.v === a.channel)?.t || a.channel}</b><span>{a.createdAt.slice(0, 16).replace("T", " ")}</span></div>
+                      <div>{a.note}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {mode === "wizard" ? (
           <Wizard
@@ -305,34 +416,30 @@ export default function Werbung() {
 
                 {tab === "leads" && (
                   <>
-                    <div className="wlead-sum">{totals ? num(totals.leads) : "0"} Leads im Zeitraum{totals?.cpl != null ? ` · ${eur(totals.cpl)} pro Lead` : ""}</div>
-                    {!leads ? <div className="wmuted">Lade Leads …</div> : (
-                      <>
-                        {leads.leads.length > 0 ? (
-                          <div className="wleads">
-                            {leads.leads.map((l) => (
-                              <div key={l.id} className="wlead">
-                                <div className="wlead-main"><b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}{l.email ? " · " + l.email : ""}</div>
-                                <div className="wlead-meta">{l.createdTime?.slice(0, 10)} · {l.form}</div>
-                              </div>
-                            ))}
+                    <div className="wcrm-head">
+                      <div className="wlead-sum">{crmLeads.length} Leads im CRM</div>
+                      <button className="wbtn ghost" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
+                    </div>
+                    <div className="wchips" style={{ flexWrap: "wrap", marginBottom: 12 }}>
+                      <button className={"wchip" + (crmFilter === "alle" ? " on" : "")} onClick={() => setCrmFilter("alle")}>Alle</button>
+                      {STATUS_ORDER.map((s) => (
+                        <button key={s} className={"wchip" + (crmFilter === s ? " on" : "")} onClick={() => setCrmFilter(s)}>
+                          {LEAD_STATUS[s].label}{crmCounts[s] ? ` (${crmCounts[s]})` : ""}
+                        </button>
+                      ))}
+                    </div>
+                    {crmLeads.length === 0 ? (
+                      <div className="wmuted">Noch keine Leads. Tippe „↻ Leads holen", um sie aus Facebook zu laden.</div>
+                    ) : (
+                      <div className="wleads">
+                        {crmLeads.map((l) => (
+                          <div key={l.id} className="wlead crm" onClick={() => { setSelLead(l); setActDraft({ channel: "call", note: "" }); }}>
+                            <div className="wlead-main"><b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
+                            <div className="wlead-meta">{l.receivedAt?.slice(0, 10)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
+                            <span className={"ampel " + LEAD_STATUS[l.status]?.cls}>{LEAD_STATUS[l.status]?.label || l.status}</span>
                           </div>
-                        ) : (
-                          <>
-                            {leads.forms && leads.forms.length > 0 && (
-                              <div className="wleads">
-                                {leads.forms.map((f, i) => (
-                                  <div key={i} className="wlead">
-                                    <div className="wlead-main"><b>{f.count}</b> Leads</div>
-                                    <div className="wlead-meta">{f.name}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {leads.note && <div className="ad-note" style={{ marginTop: 10 }}>ℹ️ {leads.note}</div>}
-                          </>
-                        )}
-                      </>
+                        ))}
+                      </div>
                     )}
                   </>
                 )}

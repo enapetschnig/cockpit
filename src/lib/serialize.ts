@@ -1,5 +1,5 @@
-import type { Email, Customer, Todo, Beleg, Buchung, AdAccount, AdCampaign, AdDraft } from "@prisma/client";
-import type { EmailDTO, CustomerDTO, BelegDTO, BuchungDTO, AdAccountDTO, AdCampaignDTO, AdDraftDTO } from "./types";
+import type { Email, Customer, Todo, Beleg, Buchung, AdAccount, AdCampaign, AdDraft, Lead, LeadActivity } from "@prisma/client";
+import type { EmailDTO, CustomerDTO, BelegDTO, BuchungDTO, AdAccountDTO, AdCampaignDTO, AdDraftDTO, LeadDTO, LeadActivityDTO } from "./types";
 
 function safeLabels(s: string): string[] {
   try {
@@ -142,6 +142,36 @@ export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
     launchError: d.launchError,
     metaCampaignId: d.metaCampaignId,
     createdAt: d.createdAt.toISOString(),
+  };
+}
+
+export function toLeadActivityDTO(a: LeadActivity): LeadActivityDTO {
+  return { id: a.id, channel: a.channel, note: a.note, outcome: a.outcome, createdAt: a.createdAt.toISOString() };
+}
+
+export function toLeadDTO(l: Lead & { activities?: LeadActivity[] }): LeadDTO {
+  let fields: { key: string; value: string }[] = [];
+  try {
+    const a = JSON.parse(l.fieldDataJson);
+    if (Array.isArray(a)) fields = a;
+  } catch {
+    /* ignore */
+  }
+  return {
+    id: l.id,
+    adAccountId: l.adAccountId,
+    leadFormName: l.leadFormName,
+    name: l.name,
+    phone: l.phone,
+    email: l.email,
+    city: l.city,
+    fields,
+    status: l.status,
+    notes: l.notes,
+    scheduledFor: l.scheduledFor ? l.scheduledFor.toISOString() : null,
+    lastContactedAt: l.lastContactedAt ? l.lastContactedAt.toISOString() : null,
+    receivedAt: l.receivedAt.toISOString(),
+    activities: (l.activities ?? []).map(toLeadActivityDTO),
   };
 }
 

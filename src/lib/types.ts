@@ -83,6 +83,31 @@ export interface BuchungDTO {
   matchConfidence: number | null;
 }
 
+// ── CRM: Leads ───────────────────────────────────────────────
+export interface LeadActivityDTO {
+  id: string;
+  channel: string; // call | whatsapp | email | visit | note
+  note: string;
+  outcome: string | null;
+  createdAt: string;
+}
+export interface LeadDTO {
+  id: string;
+  adAccountId: string;
+  leadFormName: string | null;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  fields: { key: string; value: string }[];
+  status: string; // new | contacted | scheduled | won | lost
+  notes: string | null;
+  scheduledFor: string | null;
+  lastContactedAt: string | null;
+  receivedAt: string;
+  activities: LeadActivityDTO[];
+}
+
 export interface ReconcileMonthDTO {
   periodMonth: string;
   matched: { buchung: BuchungDTO; beleg: BelegDTO }[];

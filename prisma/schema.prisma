@@ -225,6 +225,7 @@ model AdAccount {
   updatedAt DateTime     @default(now()) @updatedAt
   campaigns AdCampaign[]
   drafts    AdDraft[]
+  leads     Lead[]
 }
 
 // Insights-Cache (letzte 30 Tage), vom Sync gefüllt – das Dashboard liest NUR diese Tabelle.
@@ -301,4 +302,49 @@ model AdDraft {
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([adAccountId])
+}
+
+// ── CRM: Leads aus den Sofortformularen (von Meta gesynct + persistiert) ──────
+model Lead {
+  id            String    @id @default(cuid())
+  adAccountId   String
+  adAccount     AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  metaLeadId    String // Lead-ID von Meta (Dedup)
+  leadFormName  String?
+
+  // Kontaktdaten (aus field_data)
+  name          String?
+  phone         String?
+  email         String?
+  city          String?
+  fieldDataJson String    @default("[]") // alle Felder als JSON [{key,value}]
+
+  // CRM-Status
+  status          String    @default("new") // new | contacted | scheduled | won | lost
+  notes           String?
+  scheduledFor    DateTime? // Vor-Ort-Termin / Rückruftermin
+  lastContactedAt DateTime?
+
+  receivedAt DateTime // wann der Lead über das Formular kam
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  activities LeadActivity[]
+
+  @@unique([metaLeadId, adAccountId])
+  @@index([adAccountId])
+  @@index([status])
+}
+
+// Kontakt-Log eines Leads: wann kontaktiert, über welchen Kanal, was besprochen.
+model LeadActivity {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  channel   String // call | whatsapp | email | visit | note
+  note      String
+  outcome   String? // optional: erreicht | nicht erreicht | interessiert | kein Interesse
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
 }

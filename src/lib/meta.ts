@@ -534,6 +534,33 @@ export async function listLeads(adAccountId: string, take = 50): Promise<{ leads
   return { leads: leads.slice(0, take), totalForms, forms: formCounts.slice(0, 30), note };
 }
 
+/** Holt die Meta-Leads und persistiert sie (Dedup über metaLeadId) – fürs CRM. Liefert Anzahl neuer Leads. */
+export async function syncLeads(adAccountId: string): Promise<{ total: number; created: number; note?: string }> {
+  const data = await listLeads(adAccountId, 200);
+  let created = 0;
+  for (const l of data.leads) {
+    const exists = await prisma.lead.findUnique({ where: { metaLeadId_adAccountId: { metaLeadId: l.id, adAccountId } }, select: { id: true } });
+    if (exists) {
+      // Kontaktdaten auffrischen, CRM-Felder (status/notes) NICHT überschreiben
+      await prisma.lead.update({
+        where: { id: exists.id },
+        data: { name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null, leadFormName: l.form, fieldDataJson: JSON.stringify(l.fields) },
+      });
+    } else {
+      await prisma.lead.create({
+        data: {
+          adAccountId, metaLeadId: l.id, leadFormName: l.form,
+          name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null,
+          fieldDataJson: JSON.stringify(l.fields),
+          receivedAt: l.createdTime ? new Date(l.createdTime) : new Date(),
+        },
+      });
+      created++;
+    }
+  }
+  return { total: data.leads.length, created, note: data.note };
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Lädt ein Video zu Meta (Meta holt es von der URL) und wartet kurz auf die Verarbeitung. */
