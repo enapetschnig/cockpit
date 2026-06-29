@@ -266,6 +266,10 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
 .wauds{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
 .waud{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;background:var(--amber-soft);border:1px solid #f0dca8;border-radius:11px;padding:8px 12px;cursor:pointer;color:var(--amber);font-weight:700;font-size:13px;max-width:100%}
 .waud span{font-weight:500;color:var(--sub);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+.waud.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.wupload{display:block;text-align:center;border:1.5px dashed var(--accent);background:var(--accent-soft);color:var(--accent);border-radius:11px;padding:13px;font-size:13.5px;font-weight:700;cursor:pointer}
+.wupload.busy{opacity:.7;cursor:default;border-style:solid}
+.wupload.done{border-color:var(--green);background:var(--green-soft);color:var(--green)}
 
 /* Live-Vorschau (Facebook-Stil) */
 .wiz-preview{margin-top:18px}

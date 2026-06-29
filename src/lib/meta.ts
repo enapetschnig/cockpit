@@ -534,6 +534,49 @@ export async function listLeads(adAccountId: string, take = 50): Promise<{ leads
   return { leads: leads.slice(0, take), totalForms, forms: formCounts.slice(0, 30), note };
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Lädt ein Video zu Meta (Meta holt es von der URL) und wartet kurz auf die Verarbeitung. */
+export async function uploadVideoFromUrl(adAccountId: string, fileUrl: string, name: string): Promise<{ videoId: string; ready: boolean }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const res = await graphPost(`${acc.metaAccountId}/advideos`, token, { file_url: fileUrl, name: (name || "Video").slice(0, 200) });
+  const videoId = String(res.id ?? "");
+  if (!videoId) throw new Error("Video-Upload fehlgeschlagen (keine ID von Meta).");
+  // Auf Verarbeitung warten (max ~24s) – ein pausiertes Creative braucht ein fertiges Video.
+  let ready = false;
+  for (let i = 0; i < 8; i++) {
+    await sleep(3000);
+    const st = (await graphGet(videoId, token, { fields: "status" }).catch(() => ({} as Record<string, unknown>)));
+    const status = (st.status as { video_status?: string } | undefined)?.video_status;
+    if (status === "ready") { ready = true; break; }
+    if (status === "error") throw new Error("Meta konnte das Video nicht verarbeiten.");
+  }
+  return { videoId, ready };
+}
+
+export interface LeadFormRow { id: string; name: string; status: string; leadsCount: number; }
+
+/** Bestehende Lead-Formulare aller Seiten (zum Wiederverwenden in neuen Anzeigen). */
+export async function listLeadForms(adAccountId: string): Promise<LeadFormRow[]> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const pagesResp = await graphGet("me/accounts", token, { fields: "id,access_token", limit: "25" });
+  const pages = (pagesResp.data as Record<string, unknown>[]) ?? [];
+  const forms: LeadFormRow[] = [];
+  for (const page of pages) {
+    const pageToken = String(page.access_token ?? token);
+    const r = await graphGet(`${page.id}/leadgen_forms`, pageToken, { fields: "id,name,status,leads_count", limit: "100" }).catch(() => ({ data: [] }));
+    for (const f of (r.data as Record<string, unknown>[]) ?? []) {
+      forms.push({ id: String(f.id), name: String(f.name ?? "Formular"), status: String(f.status ?? ""), leadsCount: Number(f.leads_count ?? 0) });
+    }
+  }
+  // Aktive + mit Leads zuerst, Test-/LocalAds-Formulare nach hinten
+  return forms.sort((a, b) => b.leadsCount - a.leadsCount).filter((f) => !/^LocalAds \| .* \| .{6}$/.test(f.name)).slice(0, 40);
+}
+
 export interface SavedAudience { id: string; name: string; size?: number; summary: string; targeting?: unknown; }
 
 /** Gespeicherte Zielgruppen des Kontos (zum Übernehmen für neue Anzeigen). */
@@ -714,20 +757,33 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
     if (!/^https?:\/\//i.test(linkUrl)) {
       throw new Error("Es fehlt ein gültiger Link (Website- oder Datenschutz-Link, http/https).");
     }
-    const linkData: Record<string, unknown> = {
-      link: linkUrl,
-      message: primaryText,
-      name: headline,
-      description: `${draft.offer} in ${draft.region}`,
-    };
-    if (imageUrl) linkData.picture = imageUrl;
+    const callToAction = destination === "lead_form"
+      ? { type: "SIGN_UP", value: { lead_gen_form_id: leadFormId, link: linkUrl } }
+      : { type: "LEARN_MORE", value: { link: linkUrl } };
 
-    if (destination === "lead_form") {
-      linkData.call_to_action = { type: "SIGN_UP", value: { lead_gen_form_id: leadFormId, link: linkUrl } };
+    let story: Record<string, unknown>;
+    if (draft.videoId) {
+      // Video-Anzeige (object_story_spec.video_data) – Meta verlangt ein Miniaturbild.
+      let thumb = imageUrl;
+      if (!thumb) {
+        const th = await graphGet(draft.videoId, token, { fields: "thumbnails{uri,is_preferred}" }).catch(() => ({} as Record<string, unknown>));
+        const thumbs = ((th.thumbnails as { data?: { uri: string; is_preferred?: boolean }[] } | undefined)?.data) ?? [];
+        thumb = (thumbs.find((t) => t.is_preferred) ?? thumbs[0])?.uri ?? "";
+      }
+      const videoData: Record<string, unknown> = { video_id: draft.videoId, message: primaryText, title: headline, call_to_action: callToAction };
+      if (thumb) videoData.image_url = thumb;
+      story = { page_id: pageId, video_data: videoData };
     } else {
-      linkData.call_to_action = { type: "LEARN_MORE", value: { link: linkUrl } };
+      const linkData: Record<string, unknown> = {
+        link: linkUrl,
+        message: primaryText,
+        name: headline,
+        description: `${draft.offer} in ${draft.region}`,
+        call_to_action: callToAction,
+      };
+      if (imageUrl) linkData.picture = imageUrl;
+      story = { page_id: pageId, link_data: linkData };
     }
-    const story = { page_id: pageId, link_data: linkData };
 
     const creative = await graphPost(`${act}/adcreatives`, token, {
       name: `Creative | ${headline}`.slice(0, 200),

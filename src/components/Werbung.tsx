@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest } from "@/lib/types";
-import type { OverviewTotals, OverviewCampaign, AdRow, LeadRow, SavedAudience } from "@/lib/meta";
+import type { OverviewTotals, OverviewCampaign, AdRow, LeadRow, SavedAudience, LeadFormRow } from "@/lib/meta";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 const json = { "Content-Type": "application/json" };
 function eur(n: number, dec = 0): string {
@@ -33,11 +34,11 @@ const NAV = [
 type Form = {
   adAccountId: string; goal: string; offer: string; benefit: string; region: string;
   locations: AdLocation[]; interests: AdInterest[]; gender: string; ageMin: number; ageMax: number;
-  tone: string; budget: number; destination: string; privacyUrl: string; websiteUrl: string; imageUrl: string;
+  tone: string; budget: number; destination: string; privacyUrl: string; websiteUrl: string; imageUrl: string; leadFormId: string;
 };
 const emptyForm: Form = {
   adAccountId: "", goal: "leads", offer: "", benefit: "", region: "", locations: [], interests: [],
-  gender: "", ageMin: 25, ageMax: 65, tone: "du", budget: 20, destination: "lead_form", privacyUrl: "", websiteUrl: "", imageUrl: "",
+  gender: "", ageMin: 25, ageMax: 65, tone: "du", budget: 20, destination: "lead_form", privacyUrl: "", websiteUrl: "", imageUrl: "", leadFormId: "",
 };
 
 type Range = "7" | "30" | "90" | "custom";
@@ -61,6 +62,7 @@ export default function Werbung() {
   const [ads, setAds] = useState<AdRow[]>([]);
   const [leads, setLeads] = useState<{ leads: LeadRow[]; totalForms: number; forms?: { name: string; count: number }[]; note?: string } | null>(null);
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
+  const [leadForms, setLeadForms] = useState<LeadFormRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
 
   const [mode, setMode] = useState<"dashboard" | "wizard">("dashboard");
@@ -109,6 +111,7 @@ export default function Werbung() {
       .finally(() => setDataLoading(false));
     setAds([]); setLeads(null);
     fetch(`/api/ads/audiences?accountId=${selId}`).then((r) => r.json()).then((d) => setAudiences(d.audiences || [])).catch(() => {});
+    fetch(`/api/ads/forms?accountId=${selId}`).then((r) => r.json()).then((d) => setLeadForms(d.forms || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selId, range, customSince, customUntil, activeOnly]);
 
@@ -187,7 +190,7 @@ export default function Werbung() {
           <Wizard
             form={form} setForm={setForm} step={step} setStep={setStep} exitWizard={exitWizard}
             accounts={connected} draft={draft} setDraft={setDraft} busy={busy} setBusy={setBusy} flash={flash}
-            showTune={showTune} setShowTune={setShowTune} audiences={audiences}
+            showTune={showTune} setShowTune={setShowTune} audiences={audiences} leadForms={leadForms}
             locQuery={locQuery} setLocQuery={setLocQuery} locResults={locResults} setLocResults={setLocResults}
             intQuery={intQuery} setIntQuery={setIntQuery} intResults={intResults} setIntResults={setIntResults}
           />
@@ -355,11 +358,12 @@ function Kpi({ v, l, big }: { v: string; l: string; big?: boolean }) {
 function Wizard(props: {
   form: Form; setForm: (f: Form | ((p: Form) => Form)) => void; step: number; setStep: (s: number) => void; exitWizard: () => void;
   accounts: AdAccountDTO[]; draft: AdDraftDTO | null; setDraft: (d: AdDraftDTO | null) => void; busy: boolean; setBusy: (b: boolean) => void; flash: (t: string) => void;
-  showTune: boolean; setShowTune: (b: boolean) => void; audiences: SavedAudience[];
+  showTune: boolean; setShowTune: (b: boolean) => void; audiences: SavedAudience[]; leadForms: LeadFormRow[];
   locQuery: string; setLocQuery: (s: string) => void; locResults: { key: string; name: string; type: string; region?: string; country?: string }[]; setLocResults: (r: never[]) => void;
   intQuery: string; setIntQuery: (s: string) => void; intResults: { id: string; name: string; audienceSize?: number; path?: string }[]; setIntResults: (r: never[]) => void;
 }) {
-  const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences } = props;
+  const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences, leadForms } = props;
+  const [videoBusy, setVideoBusy] = useState(false);
   const STEPS = ["Ziel", "Zielgruppe", "Budget", "Text & schalten"];
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -369,6 +373,7 @@ function Wizard(props: {
   const prevHeadline = (draft?.headline || form.offer || "Deine Überschrift").trim();
   const prevText = draft?.primaryText || "";
   const prevImage = draft?.imageUrl || form.imageUrl || "";
+  const prevVideo = !!draft?.videoId;
   const prevCta = CTA[form.goal] || "Mehr erfahren";
   const dest = draft?.destination || form.destination;
   const linkUrl = dest === "website" ? draft?.websiteUrl || form.websiteUrl : draft?.privacyUrl || form.privacyUrl;
@@ -428,6 +433,21 @@ function Wizard(props: {
       if (d.ok) { flash("✅ Anzeige pausiert in Meta erstellt."); exitWizard(); }
       else { setDraft({ ...draft, status: "launch_error", launchError: d.error || "Fehlgeschlagen" }); flash("Meta: " + (d.error || "Fehlgeschlagen")); }
     } finally { setBusy(false); }
+  }
+  async function uploadVideo(file: File) {
+    if (!draft) return;
+    setVideoBusy(true);
+    try {
+      const sign = await (await fetch("/api/ads/video/sign", { method: "POST", headers: json, body: JSON.stringify({ accountId: form.adAccountId, filename: file.name }) })).json();
+      if (!sign.ok) { flash(sign.error || "Upload-URL fehlgeschlagen"); return; }
+      const up = await supabaseBrowser().storage.from(sign.url).uploadToSignedUrl(sign.path, sign.token, file);
+      if (up.error) { flash("Hochladen fehlgeschlagen: " + up.error.message); return; }
+      flash("Video wird zu Meta übertragen …");
+      const att = await (await fetch("/api/ads/video/attach", { method: "POST", headers: json, body: JSON.stringify({ accountId: form.adAccountId, draftId: draft.id, path: sign.path, filename: file.name }) })).json();
+      if (att.ok) { setDraft({ ...draft, videoId: att.videoId }); flash(att.ready ? "Video hochgeladen ✓" : "Video hochgeladen – Meta verarbeitet es noch."); }
+      else flash("Meta: " + (att.error || "Video fehlgeschlagen"));
+    } catch { flash("Video-Upload fehlgeschlagen."); }
+    finally { setVideoBusy(false); }
   }
 
   return (
@@ -501,6 +521,15 @@ function Wizard(props: {
             <button className={"ad-toggle-b" + (form.destination === "lead_form" ? " on" : "")} onClick={() => set({ destination: "lead_form" })}>Formular ausfüllen</button>
             <button className={"ad-toggle-b" + (form.destination === "website" ? " on" : "")} onClick={() => set({ destination: "website" })}>Website besuchen</button>
           </div>
+          {form.destination === "lead_form" && leadForms.length > 0 && (<>
+            <label className="wlbl">Formular</label>
+            <div className="wauds">
+              <button className={"waud" + (!form.leadFormId ? " on" : "")} onClick={() => set({ leadFormId: "" })}>✨ Neues Formular<span>passend zur Anzeige erstellen</span></button>
+              {leadForms.slice(0, 8).map((f) => (
+                <button key={f.id} className={"waud" + (form.leadFormId === f.id ? " on" : "")} onClick={() => set({ leadFormId: f.id })}>📋 {f.name.length > 26 ? f.name.slice(0, 25) + "…" : f.name}<span>{f.leadsCount} Leads · {f.status === "ACTIVE" ? "aktiv" : "inaktiv"}</span></button>
+              ))}
+            </div>
+          </>)}
           {form.destination === "website" ? (<><label className="wlbl">Website-Link *</label><input className="winp" placeholder="https://…" value={form.websiteUrl} onChange={(e) => set({ websiteUrl: e.target.value })} /></>)
             : (<><label className="wlbl">Datenschutz-Link * <span className="ad-mini" style={{ display: "inline" }}>(für das Formular nötig)</span></label><input className="winp" placeholder="https://deine-website.at/datenschutz" value={form.privacyUrl} onChange={(e) => set({ privacyUrl: e.target.value })} /></>)}
           <label className="wlbl">Anrede im Text</label>
@@ -517,8 +546,13 @@ function Wizard(props: {
             {draft.creativeNote && <div className="ad-note"><b>🎬 Video-Idee:</b> {draft.creativeNote}</div>}
             {draft.questions.length > 0 && <div className="ad-note"><b>📋 Formular:</b> {draft.questions.join(" · ")}</div>}
             <div className="ad-note"><b>🎯 Zielgruppe:</b> {draft.locations.length ? draft.locations.map((l) => l.name + (l.radiusKm ? ` +${l.radiusKm}km` : "")).join(", ") : "ganz Österreich"} · {draft.ageMin}–{draft.ageMax} J.{draft.interests.length ? " · " + draft.interests.map((i) => i.name).join(", ") : ""}</div>
-            <label className="wlbl">Bild-URL (optional)</label>
-            <input className="winp" placeholder="https://… (Video-Upload kommt als Nächstes)" value={draft.imageUrl || ""} onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value })} />
+            <label className="wlbl">Video (empfohlen – deine Anzeigen sind meist Videos)</label>
+            <label className={"wupload" + (videoBusy ? " busy" : "") + (draft.videoId ? " done" : "")}>
+              {videoBusy ? "⏳ Lädt hoch & überträgt zu Meta …" : draft.videoId ? "🎬 Video angehängt ✓ – anderes wählen" : "📹 Video hochladen"}
+              <input type="file" accept="video/*" hidden disabled={videoBusy} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadVideo(f); e.target.value = ""; }} />
+            </label>
+            <label className="wlbl">Bild-URL (optional, falls kein Video)</label>
+            <input className="winp" placeholder="https://…" value={draft.imageUrl || ""} onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value })} />
             <div className="addrow"><button className="wbtn ghost" disabled={busy} onClick={() => regen("ki")} style={{ flex: 1 }}>✨ Neu mit KI</button><button className="wbtn ghost" disabled={busy} onClick={() => regen("vorlage")} style={{ flex: 1 }}>↻ Vorlage</button></div>
             {draft.status === "launch_error" && draft.launchError && <div className="ad-err" style={{ marginTop: 10 }}>Meta meldet: {draft.launchError}</div>}
             <div className="ad-hint" style={{ marginTop: 12 }}>Die Anzeige wird <b>pausiert</b> erstellt – die finale Freigabe machst du in Meta.</div>
@@ -535,7 +569,7 @@ function Wizard(props: {
               <div><div className="fbprev-name">{pageName}</div><div className="fbprev-sub">Gesponsert · 🌐</div></div>
             </div>
             {prevText && <div className="fbprev-text">{prevText}</div>}
-            <div className="fbprev-media">{prevImage ? <img src={prevImage} alt="" /> : <span>🖼</span>}</div>
+            <div className="fbprev-media">{prevImage ? <img src={prevImage} alt="" /> : <span>{prevVideo ? "🎬" : "🖼"}</span>}{prevVideo && <span className="vbadge">▶</span>}</div>
             <div className="fbprev-foot">
               <div className="fbprev-foot-main">
                 <div className="fbprev-domain">{prevDomain}</div>

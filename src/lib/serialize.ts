@@ -127,6 +127,7 @@ export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
     websiteUrl: d.websiteUrl,
     privacyUrl: d.privacyUrl,
     imageUrl: d.imageUrl,
+    videoId: d.videoId,
     gender: d.gender,
     ageMin: d.ageMin,
     ageMax: d.ageMax,

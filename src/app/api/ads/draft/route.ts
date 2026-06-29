@@ -30,6 +30,7 @@ export async function POST(req: Request) {
     ageMax?: number;
     tone?: string;
     styleSample?: string;
+    leadFormId?: string;
   };
   if (!b.adAccountId || !b.offer?.trim() || !b.region?.trim()) {
     return NextResponse.json({ error: "adAccountId, offer und region nötig" }, { status: 400 });
@@ -74,6 +75,7 @@ export async function POST(req: Request) {
       ageMin,
       ageMax,
       tone,
+      leadFormId: b.leadFormId?.trim() || null,
       locationsJson: JSON.stringify(locations),
       interestsJson: JSON.stringify(interests),
       headline: copy.headline,

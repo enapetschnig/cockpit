@@ -148,6 +148,7 @@ export interface AdDraftDTO {
   websiteUrl: string | null;
   privacyUrl: string | null;
   imageUrl: string | null;
+  videoId: string | null;
   gender: string | null;
   ageMin: number;
   ageMax: number;
