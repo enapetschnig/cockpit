@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO, LeadStageDTO } from "@/lib/types";
 import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
-import { rate, overallRating } from "@/lib/adRating";
+import { rate, overallRating, adTips, SPECS } from "@/lib/adRating";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 const json = { "Content-Type": "application/json" };
@@ -29,7 +29,7 @@ function fmtAgo(iso: string): string {
 function RateDot({ metric, value }: { metric: string; value: number | null }) {
   const r = rate(metric, value);
   if (r.level === "na") return null;
-  return <span className="rate-dot" style={{ background: r.color }} title={r.label} />;
+  return <span className="rate-dot" style={{ background: r.color }} title={r.short} />;
 }
 // CTR + Bewertungspunkt (für Listen/Karten)
 function ctrBadge(ctr: number | null) {
@@ -396,7 +396,7 @@ export default function Werbung() {
                 <button className="crm-x" onClick={() => setSelAd(null)}>✕</button>
               </div>
               {(() => { const o = overallRating({ ctr: selAd.ctr, cpl: selAd.cpl, frequency: selAd.frequency }); return (
-                <div className="wad-overall" style={{ borderColor: o.color, color: o.color }}><span className="rate-dot lg" style={{ background: o.color }} />Gesamtbewertung: <b>{o.label}</b></div>
+                <div className="wad-overall" style={{ borderColor: o.color, color: o.color }}><span className="rate-dot lg" style={{ background: o.color }} />Gesamtbewertung: <b>{o.short}</b></div>
               ); })()}
               <div className="wad-detail-grid">
                 <AdStat v={eur(selAd.spend, 2)} l="Ausgaben" sub="im Zeitraum" />
@@ -411,6 +411,14 @@ export default function Werbung() {
                 <AdStat v={selAd.cpm != null ? eur(selAd.cpm, 2) : "–"} l="CPM" sub="Kosten / 1.000 Einbl." metric="cpm" value={selAd.cpm} />
                 <AdStat v={selAd.frequency != null ? selAd.frequency.toFixed(1) + "×" : "–"} l="Frequenz" sub="Ø Einblendungen / Person" metric="frequency" value={selAd.frequency} />
               </div>
+              {(() => { const tips = adTips({ ctr: selAd.ctr, cpl: selAd.cpl, cpc: selAd.cpc, cpm: selAd.cpm, frequency: selAd.frequency }); return tips.length > 0 ? (
+                <div className="wad-tips">
+                  <div className="wad-tips-h">💡 Tipps zur Verbesserung</div>
+                  {tips.map((t, i) => <div key={i} className="wad-tip"><b>{t.label}:</b> {t.text}</div>)}
+                </div>
+              ) : (selAd.ctr != null || selAd.cpl != null) ? (
+                <div className="wad-tips ok"><div className="wad-tip">👍 Diese Anzeige läuft rund – keine dringenden Baustellen.</div></div>
+              ) : null; })()}
               {(selAd.effectiveStatus === "ACTIVE" || canManage) && (
                 <button className={"wbtn " + (selAd.effectiveStatus === "ACTIVE" ? "danger" : "primary")} style={{ width: "100%", marginTop: 14 }} disabled={adBusy === selAd.id} onClick={() => toggleAd(selAd)}>
                   {adBusy === selAd.id ? "…" : selAd.effectiveStatus === "ACTIVE" ? "⏸ Anzeige pausieren" : "▶ Anzeige aktivieren"}
@@ -691,22 +699,23 @@ export default function Werbung() {
 
 function AdStat({ v, l, sub, metric, value }: { v: string; l: string; sub: string; metric?: string; value?: number | null }) {
   const r = metric ? rate(metric, value) : null;
+  const tip = metric && r && r.level !== "na" ? `${SPECS[metric].explain}\n\n${r.text}` : sub;
   return (
-    <div className="wad-stat">
-      <div className="wad-stat-v">{v}{r && r.level !== "na" && <span className="rate-dot lg" style={{ background: r.color }} title={r.label} />}</div>
+    <div className="wad-stat" title={tip}>
+      <div className="wad-stat-v">{v}{r && r.level !== "na" && <span className="rate-dot lg" style={{ background: r.color }} title={r.short} />}</div>
       <div className="wad-stat-l">{l}</div>
-      {r && r.level !== "na" ? <div className="wad-stat-sub" style={{ color: r.color, fontWeight: 700 }}>{r.label}</div> : <div className="wad-stat-sub">{sub}</div>}
+      {r && r.level !== "na" ? <div className="wad-stat-sub" style={{ color: r.color, fontWeight: 700 }}>{r.short}</div> : <div className="wad-stat-sub">{sub}</div>}
     </div>
   );
 }
 
-function Kpi({ v, l, sub, big, rating }: { v: string; l: string; sub?: string; big?: boolean; rating?: { level: string; label: string; color: string } }) {
+function Kpi({ v, l, sub, big, rating }: { v: string; l: string; sub?: string; big?: boolean; rating?: { level: string; short: string; color: string } }) {
   return (
     <div className={"wkpi" + (big ? " big" : "")}>
       <div className="wkpi-v">{v}</div>
       <div className="wkpi-l">{l}</div>
       {rating && rating.level !== "na" ? (
-        <div className="wkpi-rate" style={{ color: rating.color }}><span className="rate-dot" style={{ background: rating.color }} />{rating.label}</div>
+        <div className="wkpi-rate" style={{ color: rating.color }}><span className="rate-dot" style={{ background: rating.color }} />{rating.short}</div>
       ) : sub ? <div className="wkpi-sub">{sub}</div> : null}
     </div>
   );
