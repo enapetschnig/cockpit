@@ -21,7 +21,7 @@ export async function middleware(req: NextRequest) {
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();
 
-  const { response, user } = await updateSession(req);
+  const { response, user, role } = await updateSession(req);
 
   // Login-Seite ist öffentlich (Session-Cookies trotzdem mitgeben)
   if (pathname === "/login") return response;
@@ -32,6 +32,23 @@ export async function middleware(req: NextRequest) {
     url.pathname = "/login";
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Kunden-Mandant: darf NUR die Werbung-Seite + die zugehörigen APIs sehen.
+  if (role === "customer") {
+    const allowed =
+      pathname === "/werbung" ||
+      pathname === "/api/ads" ||
+      pathname.startsWith("/api/ads/") ||
+      pathname.startsWith("/api/leads") ||
+      pathname === "/api/me";
+    if (!allowed) {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+      const url = req.nextUrl.clone();
+      url.pathname = "/werbung";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

@@ -3,14 +3,17 @@ import { prisma } from "@/lib/db";
 import { testConnection, syncCampaigns } from "@/lib/meta";
 import { encryptToken, hasTokenKey } from "@/lib/adsCrypto";
 import { toAdAccountDTO } from "@/lib/serialize";
+import { getSessionUser } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// POST /api/ads/account { label, metaAccountId, token, pageId? }
-// Testet Token + Konto, speichert verschlüsselt, synct sofort. Auch zum Neu-Verbinden.
+// POST /api/ads/account { label, metaAccountId, token, pageId?, ownerUserId? }
+// Testet Token + Konto, speichert verschlüsselt, synct sofort. Nur Admin (kann Konto einem Kunden zuweisen).
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { label?: string; metaAccountId?: string; token?: string; pageId?: string };
+  const user = await getSessionUser();
+  if (!user || user.role !== "admin") return NextResponse.json({ ok: false, error: "Nur der Admin kann Werbekonten verbinden." }, { status: 403 });
+  const b = (await req.json().catch(() => ({}))) as { label?: string; metaAccountId?: string; token?: string; pageId?: string; ownerUserId?: string };
   const metaAccountId = (b.metaAccountId ?? "").trim();
   const token = (b.token ?? "").trim();
   const label = (b.label ?? "").trim() || metaAccountId;
@@ -37,6 +40,7 @@ export async function POST(req: Request) {
       tokenCipher: cipher,
       pageId: b.pageId?.trim() || null,
       status: "connected",
+      ownerUserId: b.ownerUserId?.trim() || null,
     },
     update: {
       label,
@@ -47,6 +51,7 @@ export async function POST(req: Request) {
       pageId: b.pageId?.trim() || null,
       status: "connected",
       lastError: null,
+      ownerUserId: b.ownerUserId !== undefined ? b.ownerUserId?.trim() || null : undefined,
     },
   });
   await syncCampaigns(acc.id).catch(() => {});

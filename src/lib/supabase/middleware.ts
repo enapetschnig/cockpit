@@ -29,5 +29,6 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  return { response, user };
+  const role: "admin" | "customer" = (user?.app_metadata as { role?: string } | undefined)?.role === "customer" ? "customer" : "admin";
+  return { response, user, role };
 }

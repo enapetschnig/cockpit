@@ -64,6 +64,7 @@ export default function Werbung() {
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
   const [leadForms, setLeadForms] = useState<LeadFormRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
+  const [role, setRole] = useState<"admin" | "customer" | null>(null);
 
   const [mode, setMode] = useState<"dashboard" | "wizard">("dashboard");
   const [step, setStep] = useState(1);
@@ -96,7 +97,14 @@ export default function Werbung() {
       if (first && !selId) setSelId(first.id);
     } catch { /* ignore */ } finally { setLoading(false); }
   }
-  useEffect(() => { loadAccounts(); }, []);
+  useEffect(() => {
+    loadAccounts();
+    fetch("/api/me").then((r) => r.json()).then((d) => setRole(d.role || null)).catch(() => {});
+  }, []);
+  async function logout() {
+    await supabaseBrowser().auth.signOut().catch(() => {});
+    window.location.href = "/login";
+  }
 
   // Kennzahlen + aktuellen Tab laden, wenn Konto/Zeitraum/Filter wechseln
   useEffect(() => {
@@ -176,11 +184,14 @@ export default function Werbung() {
     <div className="wpage">
       <aside className="wnav">
         <div className="wnav-brand">ePower Cockpit</div>
-        {NAV.map((n) => (
+        {(role === "customer" ? NAV.filter((n) => n.label === "Werbung") : NAV).map((n) => (
           <a key={n.label} href={n.href} className={"wnav-i" + (n.label === "Werbung" ? " active" : "")}>
             <svg viewBox="0 0 24 24"><path d={n.icon} /></svg>{n.label}
           </a>
         ))}
+        <button className="wnav-i wnav-logout" onClick={logout}>
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>Abmelden
+        </button>
       </aside>
 
       <main className="wmain">

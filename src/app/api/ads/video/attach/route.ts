@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { signedDownloadUrl } from "@/lib/adsStorage";
 import { uploadVideoFromUrl } from "@/lib/meta";
+import { requireAccountAccess } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,6 +12,8 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   const b = (await req.json().catch(() => ({}))) as { accountId?: string; draftId?: string; path?: string; filename?: string };
   if (!b.accountId || !b.path) return NextResponse.json({ ok: false, error: "accountId und path nötig" }, { status: 400 });
+  const access = await requireAccountAccess(b.accountId);
+  if (!access.ok) return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   try {
     const url = await signedDownloadUrl(b.path, 1800);
     const { videoId, ready } = await uploadVideoFromUrl(b.accountId, url, b.filename || "Video");

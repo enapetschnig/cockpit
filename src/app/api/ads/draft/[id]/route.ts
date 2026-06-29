@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { draftAdCopy, templateAdCopy, type AdCopyInput } from "@/lib/openai";
 import { toAdDraftDTO } from "@/lib/serialize";
+import { requireAccountAccess } from "@/lib/authz";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const existing = await prisma.adDraft.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: "Entwurf nicht gefunden" }, { status: 404 });
+  const access = await requireAccountAccess(existing.adAccountId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const data: Prisma.AdDraftUpdateInput = {};
   const str = (k: string) => (typeof b[k] === "string" ? (b[k] as string) : undefined);
@@ -88,6 +91,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // DELETE /api/ads/draft/[id]
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const existing = await prisma.adDraft.findUnique({ where: { id } });
+  if (!existing) return NextResponse.json({ ok: true });
+  const access = await requireAccountAccess(existing.adAccountId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
   await prisma.adDraft.delete({ where: { id } }).catch(() => {});
   return NextResponse.json({ ok: true });
 }

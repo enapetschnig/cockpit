@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { draftAdCopy, templateAdCopy, type AdCopyInput } from "@/lib/openai";
 import { toAdDraftDTO } from "@/lib/serialize";
+import { requireAccountAccess } from "@/lib/authz";
+import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -35,8 +36,9 @@ export async function POST(req: Request) {
   if (!b.adAccountId || !b.offer?.trim() || !b.region?.trim()) {
     return NextResponse.json({ error: "adAccountId, offer und region nötig" }, { status: 400 });
   }
-  const acc = await prisma.adAccount.findUnique({ where: { id: b.adAccountId } });
-  if (!acc) return NextResponse.json({ error: "Werbekonto nicht gefunden" }, { status: 404 });
+  const access = await requireAccountAccess(b.adAccountId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+  const acc = access.account;
 
   const locations = Array.isArray(b.locations) ? b.locations : [];
   const interests = Array.isArray(b.interests) ? b.interests : [];
@@ -62,6 +64,7 @@ export async function POST(req: Request) {
   const draft = await prisma.adDraft.create({
     data: {
       adAccountId: acc.id,
+      createdBy: access.user.userId,
       goal: input.goal,
       offer: input.offer,
       region: input.region,

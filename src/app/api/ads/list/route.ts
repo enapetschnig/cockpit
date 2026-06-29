@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { listAdsWithInsights } from "@/lib/meta";
+import { requireAccountAccess } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -8,7 +9,8 @@ export const maxDuration = 30;
 export async function GET(req: Request) {
   const u = new URL(req.url);
   const accountId = u.searchParams.get("accountId") || "";
-  if (!accountId) return NextResponse.json({ error: "accountId nötig" }, { status: 400 });
+  const access = await requireAccountAccess(accountId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
   const since = u.searchParams.get("since") || undefined;
   const until = u.searchParams.get("until") || undefined;
   const activeOnly = u.searchParams.get("active") === "1";
