@@ -269,10 +269,14 @@ export default function Werbung() {
     try { await fetch(`/api/leads/stages/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) }); } catch { /* ignore */ }
   }
   async function deleteStage(id: string) {
+    const removedKey = stages.find((x) => x.id === id)?.key;
     try {
       const d = await (await fetch(`/api/leads/stages/${id}`, { method: "DELETE" })).json();
-      if (d.ok) { setStages((s) => s.filter((x) => x.id !== id)); loadCrm(); }
-      else if (d.error) flash(d.error);
+      if (d.ok) {
+        setStages((s) => s.filter((x) => x.id !== id));
+        // War der aktive Filter genau diese Stufe? Sonst werden ihre Leads unsichtbar.
+        if (removedKey && crmFilter === removedKey) setCrmFilter("alle"); else loadCrm();
+      } else if (d.error) flash(d.error);
     } catch { /* ignore */ }
   }
   function openLead(l: LeadDTO) {
@@ -359,7 +363,11 @@ export default function Werbung() {
   }, [intQuery]);
 
   function startWizard() {
-    setForm({ ...emptyForm, adAccountId: selId });
+    const conn = accounts.filter((a) => a.hasToken);
+    if (!conn.length) { flash("Kein verbundenes Werbekonto. Bitte zuerst unter /connect verbinden."); return; }
+    // Immer ein verbundenes Konto wählen – nie ein token-loses (sonst scheitert das Schalten).
+    const accId = conn.some((a) => a.id === selId) ? selId : conn[0].id;
+    setForm({ ...emptyForm, adAccountId: accId });
     setDraft(null); setStep(1); setShowTune(false);
     setLocQuery(""); setLocResults([]); setIntQuery(""); setIntResults([]);
     setMode("wizard");
@@ -750,6 +758,7 @@ function Wizard(props: {
   const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences, leadForms, role } = props;
   const isCustomer = role === "customer";
   const [videoBusy, setVideoBusy] = useState(false);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
   const STEPS = ["Ziel", "Zielgruppe", "Budget", "Text & schalten"];
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -791,17 +800,17 @@ function Wizard(props: {
 
   const stepOk = (s: number): boolean => {
     if (s === 1) return !!form.adAccountId && form.offer.trim().length > 1;
-    if (s === 2) return form.region.trim().length > 1 || form.locations.length > 0;
+    if (s === 2) return form.region.trim().length > 1; // Region ist Pflicht (Standort optional)
     if (s === 3) return form.destination === "website" ? /^https?:\/\//i.test(form.websiteUrl) : /^https?:\/\//i.test(form.privacyUrl);
     return true;
   };
 
   async function generate(mode: "ki" | "vorlage" = "ki") {
-    setBusy(true);
+    setBusy(true); setDraftErr(null);
     try {
       const d = await (await fetch("/api/ads/draft", { method: "POST", headers: json, body: JSON.stringify({ ...form, mode }) })).json();
-      if (d.id) setDraft(d); else flash(d.error || "Entwurf fehlgeschlagen");
-    } finally { setBusy(false); }
+      if (d.id) setDraft(d); else setDraftErr(d.error || "Entwurf konnte nicht erstellt werden.");
+    } catch { setDraftErr("KI/Server nicht erreichbar – bitte erneut versuchen."); } finally { setBusy(false); }
   }
   async function regen(mode: "ki" | "vorlage") {
     if (!draft) return; setBusy(true);
@@ -934,7 +943,15 @@ function Wizard(props: {
 
         {step === 4 && (<>
           <h2>Text & schalten</h2>
-          {!draft ? <div className="wmuted">{busy ? "✨ KI schreibt deinen Anzeigentext …" : "Wird vorbereitet …"}</div> : (<>
+          {!draft ? (
+            draftErr ? (
+              <div className="wcard" style={{ borderColor: "var(--red)" }}>
+                <div style={{ color: "var(--red)", fontWeight: 700, marginBottom: 8 }}>⚠️ {draftErr}</div>
+                <button className="wbtn primary" disabled={busy} onClick={() => generate("ki")}>{busy ? "…" : "Erneut versuchen"}</button>
+                <button className="wbtn ghost" style={{ marginLeft: 8 }} disabled={busy} onClick={() => generate("vorlage")}>Mit Vorlage erstellen</button>
+              </div>
+            ) : <div className="wmuted">{busy ? "✨ KI schreibt deinen Anzeigentext …" : "Wird vorbereitet …"}</div>
+          ) : (<>
             <label className="wlbl">Überschrift</label>
             <input className="winp" value={draft.headline || ""} onChange={(e) => setDraft({ ...draft, headline: e.target.value })} />
             <label className="wlbl">Anzeigentext</label>

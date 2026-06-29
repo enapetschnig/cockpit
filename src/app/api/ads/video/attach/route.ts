@@ -14,6 +14,11 @@ export async function POST(req: Request) {
   if (!b.accountId || !b.path) return NextResponse.json({ ok: false, error: "accountId und path nötig" }, { status: 400 });
   const access = await requireAccountAccess(b.accountId);
   if (!access.ok) return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+  // Entwurf muss zum freigegebenen Konto gehören (kein Cross-Tenant-Write).
+  if (b.draftId) {
+    const draft = await prisma.adDraft.findUnique({ where: { id: b.draftId }, select: { adAccountId: true } });
+    if (!draft || draft.adAccountId !== b.accountId) return NextResponse.json({ ok: false, error: "Entwurf gehört nicht zu diesem Konto" }, { status: 403 });
+  }
   try {
     const url = await signedDownloadUrl(b.path, 1800);
     const { videoId, ready } = await uploadVideoFromUrl(b.accountId, url, b.filename || "Video");

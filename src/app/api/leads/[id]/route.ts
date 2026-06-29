@@ -25,7 +25,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
   }
   if (typeof b.notes === "string") data.notes = b.notes;
-  if (b.scheduledFor !== undefined) data.scheduledFor = b.scheduledFor ? new Date(b.scheduledFor) : null;
+  if (b.scheduledFor !== undefined) {
+    if (!b.scheduledFor) data.scheduledFor = null;
+    else {
+      const dt = new Date(b.scheduledFor);
+      if (Number.isNaN(dt.getTime())) return NextResponse.json({ error: "Ungültiger Termin (scheduledFor)" }, { status: 400 });
+      data.scheduledFor = dt;
+    }
+  }
   if (b.seen && !lead.seenAt) data.seenAt = new Date();
 
   const updated = await prisma.lead.update({ where: { id }, data, include: { activities: { orderBy: { createdAt: "desc" } } } });

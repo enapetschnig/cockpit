@@ -668,13 +668,30 @@ function slug(s: string, max = 40): string {
 type MetaQuestion = { type: string; key?: string; label?: string };
 function questionsToMeta(questions: string[]): MetaQuestion[] {
   if (!questions.length) return [{ type: "FULL_NAME" }, { type: "PHONE" }, { type: "CITY" }];
-  return questions.map((q) => {
+  // Meta verlangt eindeutige Felder: Standardtypen nur einmal, CUSTOM-Keys UND -Labels eindeutig.
+  const usedTypes = new Set<string>();
+  const usedKeys = new Set<string>();
+  const usedLabels = new Set<string>();
+  const out: MetaQuestion[] = [];
+  for (const q of questions) {
     const low = q.toLowerCase();
-    if (low.includes("name")) return { type: "FULL_NAME" };
-    if (low.includes("telefon") || low.includes("phone")) return { type: "PHONE" };
-    if (low.includes("email") || low.includes("e-mail")) return { type: "EMAIL" };
-    return { type: "CUSTOM", key: slug(q), label: q.slice(0, 80) };
-  });
+    let std: "FULL_NAME" | "PHONE" | "EMAIL" | null = null;
+    if (low.includes("name")) std = "FULL_NAME";
+    else if (low.includes("telefon") || low.includes("phone")) std = "PHONE";
+    else if (low.includes("email") || low.includes("e-mail") || low.includes("mail")) std = "EMAIL";
+    if (std && !usedTypes.has(std)) { usedTypes.add(std); out.push({ type: std }); continue; }
+    // CUSTOM (oder doppeltes Standardfeld → als CUSTOM) mit eindeutigem Key UND Label
+    const base = slug(q) || "frage";
+    let key = base, n = 2;
+    while (usedKeys.has(key)) key = `${base}_${n++}`;
+    usedKeys.add(key);
+    let label = q.slice(0, 80) || "Frage";
+    let m = 2;
+    while (usedLabels.has(label.toLowerCase())) label = `${q.slice(0, 74)} (${m++})`;
+    usedLabels.add(label.toLowerCase());
+    out.push({ type: "CUSTOM", key, label });
+  }
+  return out;
 }
 
 async function defaultPageForLaunch(token: string, preferredPageId?: string | null): Promise<{ pageId: string; pageToken: string }> {
@@ -735,9 +752,16 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
   // Der gesamte Ablauf liegt in try/catch – so wird launchError IMMER persistiert
   // (auch bei frühen Validierungs-/Seiten-/Lead-Form-Fehlern).
   let campaignId = "";
+  let token = "";
   try {
-    const token = await accountToken(acc);
+    token = await accountToken(acc);
     const act = acc.metaAccountId;
+
+    // Re-Launch nach Fehler: evtl. zurückgebliebene Teil-Kampagne erst löschen (keine Duplikate).
+    if (draft.metaCampaignId) {
+      await graphDelete(draft.metaCampaignId, token).catch(() => {});
+      await prisma.adDraft.update({ where: { id: draft.id }, data: { metaCampaignId: null } }).catch(() => {});
+    }
 
     // Vorab-Validierung – sauberer Frühabbruch statt halb erstellter Kampagne
     if (country.length !== 2) throw new Error("Land muss ein 2-Buchstaben-Code sein (z. B. AT).");
@@ -822,8 +846,8 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
         const thumbs = ((th.thumbnails as { data?: { uri: string; is_preferred?: boolean }[] } | undefined)?.data) ?? [];
         thumb = (thumbs.find((t) => t.is_preferred) ?? thumbs[0])?.uri ?? "";
       }
-      const videoData: Record<string, unknown> = { video_id: draft.videoId, message: primaryText, title: headline, call_to_action: callToAction };
-      if (thumb) videoData.image_url = thumb;
+      if (!thumb) throw new Error("Für eine Video-Anzeige fehlt noch ein Vorschaubild. Bitte warte, bis Meta das Video fertig verarbeitet hat, oder lade ein Bild als Vorschau hoch.");
+      const videoData: Record<string, unknown> = { video_id: draft.videoId, message: primaryText, title: headline, call_to_action: callToAction, image_url: thumb };
       story = { page_id: pageId, video_data: videoData };
     } else {
       const linkData: Record<string, unknown> = {
@@ -872,10 +896,12 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
     return { campaignId, adsetId, creativeId, adId, leadFormId: leadFormId || undefined };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // Teil-Kampagne aufräumen, damit keine pausierte Waise im Konto zurückbleibt.
+    if (campaignId && token) await graphDelete(campaignId, token).catch(() => {});
     await prisma.adDraft
       .update({
         where: { id: draft.id },
-        data: { status: "launch_error", metaCampaignId: campaignId || null, launchError: msg },
+        data: { status: "launch_error", metaCampaignId: null, launchError: msg },
       })
       .catch(() => {});
     throw new Error(msg);

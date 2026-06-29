@@ -100,8 +100,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     data.questionsJson = JSON.stringify(copy.questions);
   }
 
-  // Nach Edit wieder als prüfbar markieren (falls vorher fehlerhaft gelauncht)
-  if (existing.status === "launch_error") data.status = "needs_review";
+  // Nach inhaltlichem Edit zurück in die Prüfung: ein bereits freigegebener oder
+  // eingereichter Entwurf darf nicht unbemerkt geändert + geschaltet werden.
+  if (Object.keys(data).length > 0 && ["launch_error", "approved", "awaiting_review"].includes(existing.status)) {
+    data.status = "needs_review";
+  }
 
   const draft = await prisma.adDraft.update({ where: { id }, data });
   return NextResponse.json(toAdDraftDTO(draft));
