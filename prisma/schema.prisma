@@ -212,6 +212,7 @@ model AdAccount {
   timezoneName  String?
   tokenCipher   String? // AES-256-GCM(iv:tag:cipher, base64) – nie im Klartext
   pageId        String? // bevorzugte Facebook-Page für Lead-Formulare
+  privacyPolicyUrl String? // Datenschutz-Link für Lead-Formulare (automatisch, nicht im Wizard sichtbar)
   status        String    @default("not_connected") // not_connected | connected | error
   lastError     String?
   lastSyncAt    DateTime?
@@ -295,6 +296,7 @@ model AdDraft {
   offer       String
   region      String
   benefit     String?
+  details     String? // freie Beschreibung (was macht der Betrieb, Ziel der Anzeige) → KI-Kontext
   budget      Int // EUR/Tag
   destination String  @default("lead_form") // lead_form | website
   websiteUrl  String?

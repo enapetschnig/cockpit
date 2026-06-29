@@ -386,6 +386,44 @@ export async function searchInterests(adAccountId: string, q: string): Promise<I
   }));
 }
 
+export interface SuggestedInterest { id: string; name: string; leads: number; adsets: number }
+
+/**
+ * Bewährte Interessen je Konto: liest die Interessen aus dem Targeting aller
+ * Anzeigengruppen und gewichtet sie nach erzielten Leads (Gesamtzeitraum).
+ * So kann man im Wizard die historisch besten Interessen mit einem Klick wählen.
+ */
+export async function suggestedInterests(adAccountId: string, take = 12): Promise<SuggestedInterest[]> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const act = acc.metaAccountId;
+  const [adsetsResp, insResp] = await Promise.all([
+    graphGet(`${act}/adsets`, token, { fields: "id,targeting", limit: "300" }),
+    graphGet(`${act}/insights`, token, { level: "adset", date_preset: "maximum", fields: "adset_id,actions", limit: "500" }),
+  ]);
+  const leadsByAdset = new Map<string, number>();
+  for (const r of (insResp.data as Record<string, unknown>[]) ?? []) {
+    leadsByAdset.set(String(r.adset_id), Math.round(actionValue(r.actions as Action[] | undefined, LEAD_ACTION_TYPES)));
+  }
+  const agg = new Map<string, SuggestedInterest>();
+  for (const a of (adsetsResp.data as Record<string, unknown>[]) ?? []) {
+    const t = (a.targeting as Record<string, unknown>) ?? {};
+    const ints: { id: string; name: string }[] = [];
+    for (const fs of ((t.flexible_spec as Record<string, unknown>[]) ?? [])) {
+      for (const i of ((fs.interests as { id: string; name: string }[]) ?? [])) ints.push({ id: String(i.id), name: i.name });
+    }
+    for (const i of ((t.interests as { id: string; name: string }[]) ?? [])) ints.push({ id: String(i.id), name: i.name });
+    const leads = leadsByAdset.get(String(a.id)) ?? 0;
+    for (const i of ints) {
+      if (!i.id || !i.name) continue;
+      const e = agg.get(i.id) || { id: i.id, name: i.name, leads: 0, adsets: 0 };
+      e.leads += leads; e.adsets += 1; agg.set(i.id, e);
+    }
+  }
+  return [...agg.values()].sort((x, y) => y.leads - x.leads || y.adsets - x.adsets).slice(0, take);
+}
+
 // ── Kennzahlen mit Zeitraum (Übersicht + Anzeigen + Leads + Zielgruppen) ────
 // Erlaubte Meta date_preset-Werte (für Schnellauswahl + Monate/Gesamt).
 const DATE_PRESETS = new Set([
@@ -778,9 +816,10 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
     // 2) Lead-Formular (nur lead_form, falls noch keins existiert)
     let leadFormId = draft.leadFormId || "";
     if (destination === "lead_form" && !leadFormId) {
-      const privacy = (draft.privacyUrl || websiteUrl).trim();
+      // Datenschutz-Link kommt automatisch vom Konto (nicht aus dem Wizard); Fallbacks: Entwurf/Website.
+      const privacy = (acc.privacyPolicyUrl || draft.privacyUrl || websiteUrl || "").trim();
       if (!/^https?:\/\//i.test(privacy)) {
-        throw new Error("Für ein Lead-Formular ist ein Datenschutz-/Website-Link (http/https) nötig.");
+        throw new Error("Für das Lead-Formular fehlt der Datenschutz-Link dieses Kontos. Bitte unter /connect beim Werbekonto hinterlegen.");
       }
       const questions = questionsToMeta(draftQuestions(draft));
       const formRes = await graphPost(`${pageId}/leadgen_forms`, pageToken, {
@@ -829,7 +868,7 @@ export async function launchDraftToMeta(draftId: string): Promise<LaunchResult> 
 
     // 5) Creative (object_story_spec). Meta verlangt im link_data ein Pflicht-`link`;
     // bei Lead-Anzeigen ohne Website nehmen wir den Datenschutz-Link als gültigen Fallback.
-    const linkUrl = websiteUrl || (draft.privacyUrl || "").trim();
+    const linkUrl = websiteUrl || (acc.privacyPolicyUrl || draft.privacyUrl || "").trim();
     if (!/^https?:\/\//i.test(linkUrl)) {
       throw new Error("Es fehlt ein gültiger Link (Website- oder Datenschutz-Link, http/https).");
     }

@@ -157,6 +157,17 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
 .ad-result:last-child{border-bottom:none}
 .ad-result:hover{background:var(--accent-soft)}
 .ad-result-meta{font-size:11px;color:var(--sub);flex:none}
+/* Bewährte-Interessen-Schnellauswahl */
+.ad-sugg{background:var(--amber-soft);border:1px solid #f0dca8;border-radius:12px;padding:9px 11px;margin:6px 0 8px}
+.ad-sugg-t{font-size:11.5px;font-weight:700;color:var(--amber);margin-bottom:7px}
+.ad-sugg-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ad-sugg-chip{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #ecd9a6;color:var(--ink);border-radius:18px;padding:5px 11px;font-size:12.5px;font-weight:600;cursor:pointer}
+.ad-sugg-chip:hover{border-color:var(--amber);background:#fffaf0}
+.ad-sugg-n{background:var(--amber);color:#fff;border-radius:9px;font-size:10px;font-weight:800;padding:1px 6px}
+/* Formular-Felder-Picker */
+.ad-qpick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.ad-qchip{font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:18px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer}
+.ad-qchip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .ad-toggle{display:flex;gap:6px}
 .ad-toggle-b{flex:1;border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px;font-size:13px;font-weight:600;color:var(--sub);cursor:pointer}
 .ad-toggle-b.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}

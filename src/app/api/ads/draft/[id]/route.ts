@@ -89,6 +89,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       region: str("region") ?? existing.region,
       city: firstCity,
       benefit: (str("benefit") ?? existing.benefit) || undefined,
+      details: (str("details") ?? existing.details) || undefined,
       destination: (str("destination") ?? existing.destination) === "website" ? "website" : "lead_form",
       tone: (str("tone") ?? existing.tone) === "sie" ? "sie" : "du",
       styleSample: str("styleSample") || undefined,

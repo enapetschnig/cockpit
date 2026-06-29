@@ -88,14 +88,16 @@ const NAV = [
 ];
 
 type Form = {
-  adAccountId: string; goal: string; offer: string; benefit: string; region: string;
+  adAccountId: string; goal: string; offer: string; benefit: string; details: string; region: string;
   locations: AdLocation[]; interests: AdInterest[]; gender: string; ageMin: number; ageMax: number;
-  tone: string; budget: number; destination: string; privacyUrl: string; websiteUrl: string; imageUrl: string; leadFormId: string;
+  tone: string; budget: number; destination: string; privacyUrl: string; websiteUrl: string; imageUrl: string; leadFormId: string; questions: string[];
 };
 const emptyForm: Form = {
-  adAccountId: "", goal: "leads", offer: "", benefit: "", region: "", locations: [], interests: [],
-  gender: "", ageMin: 25, ageMax: 65, tone: "du", budget: 20, destination: "lead_form", privacyUrl: "", websiteUrl: "", imageUrl: "", leadFormId: "",
+  adAccountId: "", goal: "leads", offer: "", benefit: "", details: "", region: "", locations: [], interests: [],
+  gender: "", ageMin: 25, ageMax: 65, tone: "du", budget: 20, destination: "lead_form", privacyUrl: "", websiteUrl: "", imageUrl: "", leadFormId: "", questions: [],
 };
+// Standard-Formularfragen zum schnellen Anklicken (Lead-Formular)
+const QUESTION_PRESETS = ["Name", "Telefonnummer", "E-Mail", "Ort", "Wunschtermin", "Worum geht es?", "Welche Leistung?", "Nachricht / Anliegen"];
 
 
 export default function Werbung() {
@@ -142,6 +144,7 @@ export default function Werbung() {
   const [draft, setDraft] = useState<AdDraftDTO | null>(null);
   const [busy, setBusy] = useState(false);
   const [showTune, setShowTune] = useState(false);
+  const [suggestedInts, setSuggestedInts] = useState<{ id: string; name: string; leads: number; adsets: number }[]>([]);
   const [locQuery, setLocQuery] = useState("");
   const [locResults, setLocResults] = useState<{ key: string; name: string; type: string; region?: string; country?: string }[]>([]);
   const [intQuery, setIntQuery] = useState("");
@@ -179,7 +182,7 @@ export default function Werbung() {
     window.location.href = "/login";
   }
   function loadDraftIntoWizard(d: AdDraftDTO) {
-    setForm({ ...emptyForm, adAccountId: d.adAccountId, goal: d.goal, offer: d.offer, region: d.region, tone: d.tone, budget: d.budget, destination: d.destination, privacyUrl: d.privacyUrl || "", websiteUrl: d.websiteUrl || "", imageUrl: d.imageUrl || "", locations: d.locations, interests: d.interests, gender: d.gender || "", ageMin: d.ageMin, ageMax: d.ageMax, benefit: d.benefit || "" });
+    setForm({ ...emptyForm, adAccountId: d.adAccountId, goal: d.goal, offer: d.offer, region: d.region, tone: d.tone, budget: d.budget, destination: d.destination, privacyUrl: d.privacyUrl || "", websiteUrl: d.websiteUrl || "", imageUrl: d.imageUrl || "", locations: d.locations, interests: d.interests, gender: d.gender || "", ageMin: d.ageMin, ageMax: d.ageMax, benefit: d.benefit || "", details: d.details || "", questions: d.questions || [] });
     setDraft(d);
     setStep(4);
     setMode("wizard");
@@ -241,6 +244,14 @@ export default function Werbung() {
     loadStages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selId]);
+
+  // Bewährte Interessen des Kontos laden, sobald der Wizard offen ist (für die Schnellauswahl)
+  useEffect(() => {
+    if (mode !== "wizard" || !form.adAccountId) return;
+    setSuggestedInts([]);
+    fetch(`/api/ads/suggested-interests?accountId=${form.adAccountId}`).then((r) => r.json()).then((d) => setSuggestedInts(d.interests || [])).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, form.adAccountId]);
 
   async function loadCrm() {
     try {
@@ -508,6 +519,7 @@ export default function Werbung() {
             showTune={showTune} setShowTune={setShowTune} audiences={audiences} leadForms={leadForms}
             locQuery={locQuery} setLocQuery={setLocQuery} locResults={locResults} setLocResults={setLocResults}
             intQuery={intQuery} setIntQuery={setIntQuery} intResults={intResults} setIntResults={setIntResults}
+            suggestedInts={suggestedInts}
           />
         ) : (
           <>
@@ -754,6 +766,7 @@ function Wizard(props: {
   showTune: boolean; setShowTune: (b: boolean) => void; audiences: SavedAudience[]; leadForms: LeadFormRow[];
   locQuery: string; setLocQuery: (s: string) => void; locResults: { key: string; name: string; type: string; region?: string; country?: string }[]; setLocResults: (r: never[]) => void;
   intQuery: string; setIntQuery: (s: string) => void; intResults: { id: string; name: string; audienceSize?: number; path?: string }[]; setIntResults: (r: never[]) => void;
+  suggestedInts: { id: string; name: string; leads: number; adsets: number }[];
 }) {
   const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences, leadForms, role } = props;
   const isCustomer = role === "customer";
@@ -771,7 +784,7 @@ function Wizard(props: {
   const prevVideo = !!draft?.videoId;
   const prevCta = CTA[form.goal] || "Mehr erfahren";
   const dest = draft?.destination || form.destination;
-  const linkUrl = dest === "website" ? draft?.websiteUrl || form.websiteUrl : draft?.privacyUrl || form.privacyUrl;
+  const linkUrl = dest === "website" ? draft?.websiteUrl || form.websiteUrl : "";
   let prevDomain = "Sofortformular";
   try { if (dest === "website" && linkUrl) prevDomain = new URL(linkUrl).host.replace(/^www\./, ""); } catch { /* */ }
 
@@ -801,7 +814,7 @@ function Wizard(props: {
   const stepOk = (s: number): boolean => {
     if (s === 1) return !!form.adAccountId && form.offer.trim().length > 1;
     if (s === 2) return form.region.trim().length > 1; // Region ist Pflicht (Standort optional)
-    if (s === 3) return form.destination === "website" ? /^https?:\/\//i.test(form.websiteUrl) : /^https?:\/\//i.test(form.privacyUrl);
+    if (s === 3) return form.destination === "website" ? /^https?:\/\//i.test(form.websiteUrl) : true; // Datenschutz kommt automatisch vom Konto
     return true;
   };
 
@@ -877,6 +890,8 @@ function Wizard(props: {
             <select className="winp" value={form.adAccountId} onChange={(e) => set({ adAccountId: e.target.value })}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></>)}
           <label className="wlbl">Was bewirbst du? *</label>
           <input className="winp" placeholder="z. B. Photovoltaik-Anlagen, Badsanierung" value={form.offer} onChange={(e) => set({ offer: e.target.value })} />
+          <label className="wlbl">Beschreibe es genauer <span className="wlbl-fb">für einen besseren KI-Text</span></label>
+          <textarea className="winp" rows={4} placeholder="Erzähl in eigenen Worten: Was machst du genau? Für wen? Was ist das Besondere, und worauf willst du mit dieser Anzeige hinaus? Je mehr Infos, desto besser der Text." value={form.details} onChange={(e) => set({ details: e.target.value })} />
           <label className="wlbl">Dein Vorteil (optional)</label>
           <input className="winp" placeholder="z. B. kostenlose Erstberatung" value={form.benefit} onChange={(e) => set({ benefit: e.target.value })} />
         </>)}
@@ -904,7 +919,19 @@ function Wizard(props: {
           <input className="winp" placeholder="z. B. Klagenfurt" value={form.region} onChange={(e) => set({ region: e.target.value })} />
           <label className="wlbl">Interessen / Zielgruppe (optional) <span className="wlbl-fb">aus Facebook</span></label>
           {form.interests.length > 0 && <div className="ad-chips">{form.interests.map((i) => <span key={i.id} className="ad-chip">🎯 {i.name}<button className="ad-chip-x" onClick={() => set({ interests: form.interests.filter((x) => x.id !== i.id) })}>×</button></span>)}</div>}
-          <input className="winp" placeholder="Interesse suchen (z. B. Photovoltaik, Eigenheim) …" value={props.intQuery} onChange={(e) => props.setIntQuery(e.target.value)} />
+          {props.suggestedInts.filter((s) => !form.interests.some((i) => i.id === s.id)).length > 0 && (
+            <div className="ad-sugg">
+              <div className="ad-sugg-t">⭐ Bewährt bei diesem Konto – einfach anklicken:</div>
+              <div className="ad-sugg-chips">
+                {props.suggestedInts.filter((s) => !form.interests.some((i) => i.id === s.id)).map((s) => (
+                  <button key={s.id} className="ad-sugg-chip" onClick={() => addInterest(s)} title={`${s.leads} Leads · in ${s.adsets} Anzeigengruppen genutzt`}>
+                    + {s.name}{s.leads > 0 && <span className="ad-sugg-n">{s.leads}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <input className="winp" placeholder="Weiteres Interesse suchen (z. B. Photovoltaik, Eigenheim) …" value={props.intQuery} onChange={(e) => props.setIntQuery(e.target.value)} />
           {props.intResults.length > 0 && <div className="ad-results">{props.intResults.map((r) => <div key={r.id} className="ad-result" onClick={() => addInterest(r)}><span>{r.name}</span><span className="ad-result-meta">{r.audienceSize ? `${Math.round(r.audienceSize / 1000)}k` : ""}</span></div>)}</div>}
           <button className="wtune" onClick={() => props.setShowTune(!props.showTune)}>{props.showTune ? "− " : "+ "}Feintuning (Alter, Geschlecht)</button>
           {props.showTune && (
@@ -935,8 +962,26 @@ function Wizard(props: {
               ))}
             </div>
           </>)}
-          {form.destination === "website" ? (<><label className="wlbl">Website-Link *</label><input className="winp" placeholder="https://…" value={form.websiteUrl} onChange={(e) => set({ websiteUrl: e.target.value })} /></>)
-            : (<><label className="wlbl">Datenschutz-Link * <span className="ad-mini" style={{ display: "inline" }}>(für das Formular nötig)</span></label><input className="winp" placeholder="https://deine-website.at/datenschutz" value={form.privacyUrl} onChange={(e) => set({ privacyUrl: e.target.value })} /></>)}
+          {form.destination === "website" ? (
+            <><label className="wlbl">Website-Link *</label><input className="winp" placeholder="https://…" value={form.websiteUrl} onChange={(e) => set({ websiteUrl: e.target.value })} /></>
+          ) : !form.leadFormId ? (
+            <>
+              <label className="wlbl">Formular-Felder <span className="wlbl-fb">was Interessenten ausfüllen</span></label>
+              <div className="ad-qpick">
+                {QUESTION_PRESETS.map((q) => {
+                  const on = form.questions.includes(q);
+                  return <button key={q} className={"ad-qchip" + (on ? " on" : "")} onClick={() => set({ questions: on ? form.questions.filter((x) => x !== q) : [...form.questions, q] })}>{on ? "✓ " : "+ "}{q}</button>;
+                })}
+                {form.questions.filter((q) => !QUESTION_PRESETS.includes(q)).map((q) => (
+                  <button key={q} className="ad-qchip on" onClick={() => set({ questions: form.questions.filter((x) => x !== q) })}>✓ {q} ×</button>
+                ))}
+              </div>
+              <input className="winp" placeholder="Eigene Frage + Enter (z. B. Welches Gewerk?)" onKeyDown={(e) => { if (e.key === "Enter") { const v = (e.target as HTMLInputElement).value.trim(); if (v && !form.questions.includes(v)) set({ questions: [...form.questions, v] }); (e.target as HTMLInputElement).value = ""; } }} />
+              <div className="ad-mini">Leer lassen = die KI schlägt passende Felder vor (immer mit Name + Telefon). Datenschutz-Link wird automatisch ergänzt.</div>
+            </>
+          ) : (
+            <div className="ad-mini" style={{ marginTop: 8 }}>Bestehendes Formular wird verwendet.</div>
+          )}
           <label className="wlbl">Anrede im Text</label>
           <div className="ad-toggle"><button className={"ad-toggle-b" + (form.tone === "du" ? " on" : "")} onClick={() => set({ tone: "du" })}>Du (nahbar)</button><button className={"ad-toggle-b" + (form.tone === "sie" ? " on" : "")} onClick={() => set({ tone: "sie" })}>Sie (seriös)</button></div>
         </>)}

@@ -18,6 +18,8 @@ export async function POST(req: Request) {
     offer?: string;
     region?: string;
     benefit?: string;
+    details?: string;
+    questions?: string[];
     budget?: number;
     destination?: string;
     websiteUrl?: string;
@@ -51,11 +53,15 @@ export async function POST(req: Request) {
     region: b.region.trim(),
     city: firstCity,
     benefit: b.benefit?.trim() || undefined,
+    details: b.details?.trim() || undefined,
     destination: b.destination === "website" ? "website" : "lead_form",
     tone,
     styleSample: b.styleSample?.trim() || undefined,
   };
   const copy = b.mode === "ki" ? await draftAdCopy(input) : templateAdCopy(input);
+  // Vom Nutzer gewählte Formularfragen haben Vorrang vor den KI-Fragen.
+  const userQuestions = Array.isArray(b.questions) ? b.questions.map((q) => String(q).trim()).filter(Boolean) : [];
+  const questions = userQuestions.length ? userQuestions : copy.questions;
 
   const ageMin = Number(b.ageMin) >= 18 ? Math.round(Number(b.ageMin)) : 25;
   const ageMaxRaw = Number(b.ageMax);
@@ -69,6 +75,7 @@ export async function POST(req: Request) {
       offer: input.offer,
       region: input.region,
       benefit: input.benefit ?? null,
+      details: input.details ?? null,
       budget: Number(b.budget) > 0 ? Math.round(Number(b.budget)) : 20,
       destination: input.destination!,
       websiteUrl: b.websiteUrl?.trim() || null,
@@ -84,7 +91,7 @@ export async function POST(req: Request) {
       headline: copy.headline,
       primaryText: copy.primaryText,
       creativeNote: copy.creativeNote,
-      questionsJson: JSON.stringify(copy.questions),
+      questionsJson: JSON.stringify(questions),
       status: "needs_review",
     },
   });

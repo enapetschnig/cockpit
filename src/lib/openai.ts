@@ -219,6 +219,7 @@ export interface AdCopyInput {
   region: string; // freie Region/Stadt-Angabe (Anzeigentext)
   city?: string; // konkreter Ort für die lokale Direktansprache (sonst aus region abgeleitet)
   benefit?: string;
+  details?: string; // freie Beschreibung: was macht der Betrieb genau, worauf will die Anzeige hinaus
   destination?: string; // lead_form | website
   formStyle?: string; // simple | qualified | callback
   tone?: string; // "du" (Standard, nahbar) | "sie" (konservativ/B2B)
@@ -332,6 +333,7 @@ export async function draftAdCopy(input: AdCopyInput): Promise<AdCopy> {
           content: [
             `Ziel der Kampagne: ${input.goal}`,
             `Angebot/Leistung: ${input.offer}`,
+            input.details ? `Genauere Beschreibung vom Betrieb (worum geht es, worauf will die Anzeige hinaus – nutze das als wichtigsten Kontext): ${input.details}` : "",
             `Ort für die lokale Ansprache: ${cityFromInput(input)}`,
             `Region (Anzeigentext): ${input.region}`,
             input.benefit ? `Vorteil/USP: ${input.benefit}` : "",

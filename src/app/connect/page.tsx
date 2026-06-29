@@ -24,7 +24,9 @@ export default function ConnectPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
-  const [adAccts, setAdAccts] = useState<{ id: string; label: string; metaAccountId: string; accountName: string | null; status: string; hasToken: boolean; lastError: string | null }[]>([]);
+  const [adAccts, setAdAccts] = useState<{ id: string; label: string; metaAccountId: string; accountName: string | null; status: string; hasToken: boolean; lastError: string | null; privacyPolicyUrl: string | null }[]>([]);
+  const [privEdits, setPrivEdits] = useState<Record<string, string>>({});
+  const [privMsg, setPrivMsg] = useState<Record<string, string>>({});
   const [adForm, setAdForm] = useState({ label: "", metaAccountId: "", token: "", pageId: "" });
   const [customers, setCustomers] = useState<{ accountLabel: string; metaAccountId: string; email: string | null }[]>([]);
   const [custForm, setCustForm] = useState({ email: "", password: "", label: "", metaAccountId: "", token: "", pageId: "" });
@@ -134,6 +136,17 @@ export default function ConnectPage() {
     } finally {
       setAdBusy(false);
     }
+  }
+
+  async function savePrivacy(id: string) {
+    const url = (privEdits[id] ?? "").trim();
+    setPrivMsg((m) => ({ ...m, [id]: "…" }));
+    try {
+      const r = await fetch("/api/ads/account", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: id, privacyPolicyUrl: url }) });
+      const d = await r.json();
+      setPrivMsg((m) => ({ ...m, [id]: d.ok ? "✓ gespeichert" : "❌ " + (d.error || "Fehler") }));
+      if (d.ok) loadAdAccounts();
+    } catch { setPrivMsg((m) => ({ ...m, [id]: "❌ Fehlgeschlagen" })); }
   }
 
   useEffect(() => {
@@ -363,16 +376,28 @@ export default function ConnectPage() {
           <b> veröffentlichten</b> Meta-App stammen, sonst lassen sich Anzeigen anlegen, aber nicht schalten.
         </div>
         {adAccts.map((a) => (
-          <div key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderTop: "1px solid #efece6" }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{a.label}</div>
-              <div style={{ color: a.status === "connected" ? "#1f9d63" : a.status === "error" ? "#e0533d" : "#6b6358", fontSize: 12.5 }}>
-                {a.metaAccountId} · {a.status === "connected" ? "verbunden" : a.status === "error" ? "Token prüfen / erneuern" : "nicht verbunden"}
+          <div key={a.id} style={{ padding: "10px 0", borderTop: "1px solid #efece6" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{a.label}</div>
+                <div style={{ color: a.status === "connected" ? "#1f9d63" : a.status === "error" ? "#e0533d" : "#6b6358", fontSize: 12.5 }}>
+                  {a.metaAccountId} · {a.status === "connected" ? "verbunden" : a.status === "error" ? "Token prüfen / erneuern" : "nicht verbunden"}
+                </div>
               </div>
+              <button onClick={() => { setAdForm({ label: a.label, metaAccountId: a.metaAccountId, token: "", pageId: "" }); setAdMsg(null); }} style={{ ...btn, background: "#efece6", color: "#2b2723", padding: "7px 12px", fontSize: 13 }}>
+                Token erneuern
+              </button>
             </div>
-            <button onClick={() => { setAdForm({ label: a.label, metaAccountId: a.metaAccountId, token: "", pageId: "" }); setAdMsg(null); }} style={{ ...btn, background: "#efece6", color: "#2b2723", padding: "7px 12px", fontSize: 13 }}>
-              Token erneuern
-            </button>
+            <div style={{ display: "flex", gap: 6, marginTop: 7, alignItems: "center" }}>
+              <input
+                placeholder="Datenschutz-Link für Lead-Formulare (https://…/datenschutz)"
+                value={privEdits[a.id] ?? a.privacyPolicyUrl ?? ""}
+                onChange={(e) => { setPrivEdits((p) => ({ ...p, [a.id]: e.target.value })); setPrivMsg((m) => ({ ...m, [a.id]: "" })); }}
+                style={{ ...inp, flex: 1, fontSize: 12.5, padding: "8px 10px" }}
+              />
+              <button onClick={() => savePrivacy(a.id)} style={{ ...btn, background: "#2f6df0", color: "#fff", padding: "8px 12px", fontSize: 12.5 }}>Speichern</button>
+            </div>
+            {privMsg[a.id] && <div style={{ fontSize: 11.5, color: privMsg[a.id].startsWith("✓") ? "#1f9d63" : "#6b6358", marginTop: 3 }}>{privMsg[a.id]}</div>}
           </div>
         ))}
         <div style={{ marginTop: 12, display: "grid", gap: 8 }}>

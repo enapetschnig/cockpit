@@ -57,3 +57,16 @@ export async function POST(req: Request) {
   await syncCampaigns(acc.id).catch(() => {});
   return NextResponse.json({ ok: true, account: toAdAccountDTO(acc) });
 }
+
+// PATCH /api/ads/account { accountId, privacyPolicyUrl } -> Datenschutz-Link je Konto setzen (Admin)
+export async function PATCH(req: Request) {
+  const user = await getSessionUser();
+  if (!user || user.role !== "admin") return NextResponse.json({ ok: false, error: "Nur der Admin." }, { status: 403 });
+  const b = (await req.json().catch(() => ({}))) as { accountId?: string; privacyPolicyUrl?: string };
+  const accountId = (b.accountId ?? "").trim();
+  if (!accountId) return NextResponse.json({ ok: false, error: "accountId nötig" }, { status: 400 });
+  const url = (b.privacyPolicyUrl ?? "").trim();
+  if (url && !/^https?:\/\//i.test(url)) return NextResponse.json({ ok: false, error: "Bitte eine gültige URL (https://…) angeben." }, { status: 400 });
+  const acc = await prisma.adAccount.update({ where: { id: accountId }, data: { privacyPolicyUrl: url || null } });
+  return NextResponse.json({ ok: true, account: toAdAccountDTO(acc) });
+}

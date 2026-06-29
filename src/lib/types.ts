@@ -137,6 +137,7 @@ export interface AdAccountDTO {
   lastError: string | null;
   lastSyncAt: string | null;
   hasToken: boolean;
+  privacyPolicyUrl: string | null;
 }
 
 export interface AdCampaignDTO {
@@ -177,6 +178,7 @@ export interface AdDraftDTO {
   offer: string;
   region: string;
   benefit: string | null;
+  details: string | null;
   budget: number;
   destination: string;
   websiteUrl: string | null;

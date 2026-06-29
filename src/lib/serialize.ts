@@ -82,6 +82,7 @@ export function toAdAccountDTO(a: AdAccount): AdAccountDTO {
     lastError: a.lastError,
     lastSyncAt: a.lastSyncAt ? a.lastSyncAt.toISOString() : null,
     hasToken: Boolean(a.tokenCipher),
+    privacyPolicyUrl: a.privacyPolicyUrl,
   };
 }
 
@@ -122,6 +123,7 @@ export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
     offer: d.offer,
     region: d.region,
     benefit: d.benefit,
+    details: d.details,
     budget: d.budget,
     destination: d.destination,
     websiteUrl: d.websiteUrl,
