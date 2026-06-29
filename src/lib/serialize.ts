@@ -139,6 +139,7 @@ export function toAdDraftDTO(d: AdDraft): AdDraftDTO {
     creativeNote: d.creativeNote,
     questions: safeArr<string>(d.questionsJson).map(String),
     status: d.status,
+    reviewComment: d.reviewComment,
     launchError: d.launchError,
     metaCampaignId: d.metaCampaignId,
     createdAt: d.createdAt.toISOString(),

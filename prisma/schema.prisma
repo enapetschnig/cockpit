@@ -288,8 +288,13 @@ model AdDraft {
   audienceNote  String?
   questionsJson String  @default("[]") // JSON-Array der Formularfragen (Strings)
 
+  // Freigabe-Workflow (Kunde reicht ein → Admin gibt frei)
+  reviewedBy    String? // Supabase user.id des Admins
+  reviewedAt    DateTime?
+  reviewComment String? // Ablehnungs-Grund
+
   // Launch-Ergebnis
-  status         String    @default("needs_review") // needs_review | launched | launch_error
+  status         String    @default("needs_review") // needs_review | awaiting_review | approved | rejected | launched | launch_error
   metaCampaignId String?
   metaAdsetId    String?
   metaCreativeId String?

@@ -26,6 +26,10 @@ export default function ConnectPage() {
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
   const [adAccts, setAdAccts] = useState<{ id: string; label: string; metaAccountId: string; accountName: string | null; status: string; hasToken: boolean; lastError: string | null }[]>([]);
   const [adForm, setAdForm] = useState({ label: "", metaAccountId: "", token: "", pageId: "" });
+  const [customers, setCustomers] = useState<{ accountLabel: string; metaAccountId: string; email: string | null }[]>([]);
+  const [custForm, setCustForm] = useState({ email: "", password: "", label: "", metaAccountId: "", token: "", pageId: "" });
+  const [custBusy, setCustBusy] = useState(false);
+  const [custMsg, setCustMsg] = useState<string | null>(null);
   const [adBusy, setAdBusy] = useState(false);
   const [adMsg, setAdMsg] = useState<string | null>(null);
 
@@ -76,6 +80,38 @@ export default function ConnectPage() {
     }
   }
 
+  async function loadCustomers() {
+    try {
+      const d = await (await fetch("/api/admin/users")).json();
+      setCustomers(d.customers || []);
+    } catch {
+      /* ignore */
+    }
+  }
+  async function createCustomer() {
+    if (!custForm.email.trim() || custForm.password.length < 6 || !custForm.metaAccountId.trim() || !custForm.token.trim()) {
+      setCustMsg("E-Mail, Passwort (min. 6), Konto-ID (act_…) und Token sind nötig.");
+      return;
+    }
+    setCustBusy(true);
+    setCustMsg(null);
+    try {
+      const d = await (await fetch("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(custForm) })).json();
+      if (d.ok) {
+        setCustMsg(`✅ ${d.email} angelegt und mit „${d.accountLabel}" verbunden. Der Kunde kann sich jetzt einloggen.`);
+        setCustForm({ email: "", password: "", label: "", metaAccountId: "", token: "", pageId: "" });
+        loadCustomers();
+        loadAdAccounts();
+      } else {
+        setCustMsg("❌ " + (d.error || "Anlegen fehlgeschlagen"));
+      }
+    } catch (e) {
+      setCustMsg("Fehlgeschlagen: " + (e as Error).message);
+    } finally {
+      setCustBusy(false);
+    }
+  }
+
   async function connectAd() {
     if (!adForm.metaAccountId.trim() || !adForm.token.trim()) {
       setAdMsg("Konto-ID (act_…) und Access-Token sind nötig.");
@@ -112,6 +148,7 @@ export default function ConnectPage() {
     loadStatus();
     loadSettings();
     loadAdAccounts();
+    loadCustomers();
   }, []);
 
   const KEY_LABEL: Record<string, string> = {
@@ -348,6 +385,35 @@ export default function ConnectPage() {
           {adBusy ? "Teste & verbinde …" : "Testen & verbinden"}
         </button>
         {adMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{adMsg}</p>}
+      </div>
+
+      <div style={{ ...card }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Kunden & Zugänge</div>
+        <div style={{ color: "#6b6358", fontSize: 13, marginBottom: 12 }}>
+          Lege einem Kunden einen eigenen Login an und verbinde sein Werbekonto. Der Kunde sieht nach dem Einloggen
+          <b> nur sein Werbekonto</b> (Kennzahlen, Anzeigen, Leads/CRM) und kann Entwürfe zur Freigabe an dich senden.
+        </div>
+        {customers.map((c, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderTop: "1px solid #efece6" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{c.email || "(kein Login)"}</div>
+              <div style={{ color: "#6b6358", fontSize: 12.5 }}>{c.accountLabel} · {c.metaAccountId}</div>
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#1f9d63", background: "#e3f5ec", padding: "3px 9px", borderRadius: 11 }}>Kunde</span>
+          </div>
+        ))}
+        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          <input placeholder="Kunden-E-Mail (Login)" value={custForm.email} onChange={(e) => setCustForm((f) => ({ ...f, email: e.target.value }))} style={inp} />
+          <input type="password" placeholder="Passwort (min. 6 Zeichen)" value={custForm.password} onChange={(e) => setCustForm((f) => ({ ...f, password: e.target.value }))} style={inp} />
+          <input placeholder="Bezeichnung des Werbekontos (z. B. Tennova Werbung)" value={custForm.label} onChange={(e) => setCustForm((f) => ({ ...f, label: e.target.value }))} style={inp} />
+          <input placeholder="Werbekonto-ID (act_…)" value={custForm.metaAccountId} onChange={(e) => setCustForm((f) => ({ ...f, metaAccountId: e.target.value }))} style={inp} />
+          <input type="password" placeholder="Access-Token des Werbekontos" value={custForm.token} onChange={(e) => setCustForm((f) => ({ ...f, token: e.target.value }))} style={inp} />
+          <input placeholder="Seiten-ID (optional)" value={custForm.pageId} onChange={(e) => setCustForm((f) => ({ ...f, pageId: e.target.value }))} style={inp} />
+        </div>
+        <button onClick={createCustomer} disabled={custBusy} style={{ ...btn, background: "#2f6df0", color: "#fff", width: "100%", marginTop: 10, opacity: custBusy ? 0.6 : 1 }}>
+          {custBusy ? "Lege an & verbinde …" : "Kunden-Login anlegen + Konto verbinden"}
+        </button>
+        {custMsg && <p style={{ color: "#6b6358", fontSize: 14, marginTop: 10 }}>{custMsg}</p>}
       </div>
     </main>
   );

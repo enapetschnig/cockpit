@@ -31,6 +31,14 @@ const LEAD_STATUS: Record<string, { label: string; cls: string }> = {
   lost: { label: "Verloren", cls: "ad-muted" },
 };
 const STATUS_ORDER = ["new", "contacted", "scheduled", "won", "lost"];
+const DRAFT_STATUS: Record<string, { label: string; cls: string }> = {
+  needs_review: { label: "Entwurf", cls: "p-acct" },
+  awaiting_review: { label: "Wartet auf Freigabe", cls: "p-none" },
+  approved: { label: "Freigegeben", cls: "l-ang" },
+  rejected: { label: "Abgelehnt", cls: "p-none" },
+  launch_error: { label: "Fehler", cls: "p-none" },
+  launched: { label: "Geschaltet", cls: "l-ang" },
+};
 const CHANNELS: { v: string; t: string }[] = [
   { v: "call", t: "📞 Anruf" },
   { v: "whatsapp", t: "💬 WhatsApp" },
@@ -125,6 +133,20 @@ export default function Werbung() {
   async function logout() {
     await supabaseBrowser().auth.signOut().catch(() => {});
     window.location.href = "/login";
+  }
+  function loadDraftIntoWizard(d: AdDraftDTO) {
+    setForm({ ...emptyForm, adAccountId: d.adAccountId, goal: d.goal, offer: d.offer, region: d.region, tone: d.tone, budget: d.budget, destination: d.destination, privacyUrl: d.privacyUrl || "", websiteUrl: d.websiteUrl || "", imageUrl: d.imageUrl || "", locations: d.locations, interests: d.interests, gender: d.gender || "", ageMin: d.ageMin, ageMax: d.ageMax, benefit: d.benefit || "" });
+    setDraft(d);
+    setStep(4);
+    setMode("wizard");
+  }
+  async function reviewDraft(id: string, action: "approve" | "reject") {
+    const reviewComment = action === "reject" ? window.prompt("Grund der Ablehnung (optional):") ?? "" : "";
+    try {
+      await fetch(`/api/ads/draft/${id}`, { method: "PATCH", headers: json, body: JSON.stringify({ review: action, reviewComment }) });
+      flash(action === "approve" ? "Freigegeben." : "Abgelehnt.");
+      loadAccounts();
+    } catch { flash("Aktion fehlgeschlagen."); }
   }
 
   // Kennzahlen + aktuellen Tab laden, wenn Konto/Zeitraum/Filter wechseln
@@ -310,7 +332,7 @@ export default function Werbung() {
 
         {mode === "wizard" ? (
           <Wizard
-            form={form} setForm={setForm} step={step} setStep={setStep} exitWizard={exitWizard}
+            form={form} setForm={setForm} step={step} setStep={setStep} exitWizard={exitWizard} role={role}
             accounts={connected} draft={draft} setDraft={setDraft} busy={busy} setBusy={setBusy} flash={flash}
             showTune={showTune} setShowTune={setShowTune} audiences={audiences} leadForms={leadForms}
             locQuery={locQuery} setLocQuery={setLocQuery} locResults={locResults} setLocResults={setLocResults}
@@ -444,12 +466,29 @@ export default function Werbung() {
                   </>
                 )}
 
-                {drafts.filter((d) => d.status !== "launched").length > 0 && (
+                {role === "admin" && drafts.filter((d) => d.status === "awaiting_review").length > 0 && (
+                  <div className="wcard" style={{ marginTop: 16, borderColor: "var(--amber)" }}>
+                    <div className="wrecs-t">⏳ Zur Freigabe von Kunden</div>
+                    {drafts.filter((d) => d.status === "awaiting_review").map((d) => (
+                      <div key={d.id} className="wreview">
+                        <div className="wreview-main" onClick={() => { loadDraftIntoWizard(d); }}>
+                          <b>{d.offer}</b><span>{d.headline || ""} · {d.region}</span>
+                        </div>
+                        <div className="wreview-act">
+                          <button className="wbtn primary" style={{ padding: "7px 11px" }} onClick={() => reviewDraft(d.id, "approve")}>✓ Freigeben</button>
+                          <button className="wbtn ghost" style={{ padding: "7px 11px" }} onClick={() => reviewDraft(d.id, "reject")}>Ablehnen</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {drafts.filter((d) => d.status !== "launched" && d.status !== "awaiting_review").length > 0 && (
                   <div className="wcard" style={{ marginTop: 16 }}>
                     <div className="wrecs-t">Entwürfe</div>
-                    {drafts.filter((d) => d.status !== "launched").map((d) => (
-                      <div key={d.id} className="wdraft" onClick={() => { setForm({ ...emptyForm, adAccountId: d.adAccountId, goal: d.goal, offer: d.offer, region: d.region, tone: d.tone, budget: d.budget, destination: d.destination, privacyUrl: d.privacyUrl || "", websiteUrl: d.websiteUrl || "", imageUrl: d.imageUrl || "", locations: d.locations, interests: d.interests, gender: d.gender || "", ageMin: d.ageMin, ageMax: d.ageMax, benefit: d.benefit || "" }); setDraft(d); setStep(4); setMode("wizard"); }}>
-                        <span>{d.offer}</span><span className={"pill " + (d.status === "launch_error" ? "p-none" : "p-acct")}>{d.status === "launch_error" ? "Fehler" : "Entwurf"}</span>
+                    {drafts.filter((d) => d.status !== "launched" && d.status !== "awaiting_review").map((d) => (
+                      <div key={d.id} className="wdraft" onClick={() => loadDraftIntoWizard(d)}>
+                        <span>{d.offer}</span><span className={"pill " + (DRAFT_STATUS[d.status]?.cls || "p-acct")}>{DRAFT_STATUS[d.status]?.label || "Entwurf"}</span>
                       </div>
                     ))}
                   </div>
@@ -474,13 +513,14 @@ function Kpi({ v, l, big }: { v: string; l: string; big?: boolean }) {
 
 // ── Wizard ──────────────────────────────────────────────────────────────
 function Wizard(props: {
-  form: Form; setForm: (f: Form | ((p: Form) => Form)) => void; step: number; setStep: (s: number) => void; exitWizard: () => void;
+  form: Form; setForm: (f: Form | ((p: Form) => Form)) => void; step: number; setStep: (s: number) => void; exitWizard: () => void; role: "admin" | "customer" | null;
   accounts: AdAccountDTO[]; draft: AdDraftDTO | null; setDraft: (d: AdDraftDTO | null) => void; busy: boolean; setBusy: (b: boolean) => void; flash: (t: string) => void;
   showTune: boolean; setShowTune: (b: boolean) => void; audiences: SavedAudience[]; leadForms: LeadFormRow[];
   locQuery: string; setLocQuery: (s: string) => void; locResults: { key: string; name: string; type: string; region?: string; country?: string }[]; setLocResults: (r: never[]) => void;
   intQuery: string; setIntQuery: (s: string) => void; intResults: { id: string; name: string; audienceSize?: number; path?: string }[]; setIntResults: (r: never[]) => void;
 }) {
-  const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences, leadForms } = props;
+  const { form, setForm, step, setStep, exitWizard, accounts, draft, setDraft, busy, setBusy, flash, audiences, leadForms, role } = props;
+  const isCustomer = role === "customer";
   const [videoBusy, setVideoBusy] = useState(false);
   const STEPS = ["Ziel", "Zielgruppe", "Budget", "Text & schalten"];
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
@@ -550,6 +590,16 @@ function Wizard(props: {
       const d = await (await fetch(`/api/ads/draft/${draft.id}/launch`, { method: "POST", headers: json })).json();
       if (d.ok) { flash("✅ Anzeige pausiert in Meta erstellt."); exitWizard(); }
       else { setDraft({ ...draft, status: "launch_error", launchError: d.error || "Fehlgeschlagen" }); flash("Meta: " + (d.error || "Fehlgeschlagen")); }
+    } finally { setBusy(false); }
+  }
+  async function submitForReview() {
+    if (!draft) return; setBusy(true);
+    try {
+      // aktuelle Edits sichern, dann zur Freigabe einreichen
+      await fetch(`/api/ads/draft/${draft.id}`, { method: "PATCH", headers: json, body: JSON.stringify({ headline: draft.headline, primaryText: draft.primaryText, imageUrl: draft.imageUrl }) }).catch(() => {});
+      const d = await (await fetch(`/api/ads/draft/${draft.id}`, { method: "PATCH", headers: json, body: JSON.stringify({ submit: true }) })).json();
+      if (d.id) { flash("✅ An deinen Betreuer zur Freigabe gesendet."); exitWizard(); }
+      else flash("Senden fehlgeschlagen.");
     } finally { setBusy(false); }
   }
   async function uploadVideo(file: File) {
@@ -673,7 +723,8 @@ function Wizard(props: {
             <input className="winp" placeholder="https://…" value={draft.imageUrl || ""} onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value })} />
             <div className="addrow"><button className="wbtn ghost" disabled={busy} onClick={() => regen("ki")} style={{ flex: 1 }}>✨ Neu mit KI</button><button className="wbtn ghost" disabled={busy} onClick={() => regen("vorlage")} style={{ flex: 1 }}>↻ Vorlage</button></div>
             {draft.status === "launch_error" && draft.launchError && <div className="ad-err" style={{ marginTop: 10 }}>Meta meldet: {draft.launchError}</div>}
-            <div className="ad-hint" style={{ marginTop: 12 }}>Die Anzeige wird <b>pausiert</b> erstellt – die finale Freigabe machst du in Meta.</div>
+            {draft.status === "rejected" && draft.reviewComment && <div className="ad-err" style={{ marginTop: 10 }}>Abgelehnt: {draft.reviewComment}</div>}
+            <div className="ad-hint" style={{ marginTop: 12 }}>{isCustomer ? "Dein Betreuer prüft die Anzeige und schaltet sie frei." : "Die Anzeige wird pausiert erstellt – die finale Freigabe machst du in Meta."}</div>
           </>)}
         </>)}
       </div>
@@ -703,7 +754,13 @@ function Wizard(props: {
 
       <div className="wiz-foot">
         {step > 1 ? <button className="wbtn ghost" onClick={() => setStep(step - 1)} disabled={busy}>‹ Zurück</button> : <span />}
-        {step < 4 ? <button className="wbtn primary" disabled={!stepOk(step)} onClick={next}>Weiter ›</button> : <button className="wbtn primary" disabled={busy || !draft} onClick={launch}>{busy ? "…" : "Pausiert an Meta senden"}</button>}
+        {step < 4 ? (
+          <button className="wbtn primary" disabled={!stepOk(step)} onClick={next}>Weiter ›</button>
+        ) : isCustomer ? (
+          <button className="wbtn primary" disabled={busy || !draft} onClick={submitForReview}>{busy ? "…" : "An Betreuer zur Freigabe senden"}</button>
+        ) : (
+          <button className="wbtn primary" disabled={busy || !draft} onClick={launch}>{busy ? "…" : "Pausiert an Meta senden"}</button>
+        )}
       </div>
     </div>
   );

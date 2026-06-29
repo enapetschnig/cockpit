@@ -26,6 +26,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const access = await requireAccountAccess(existing.adAccountId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
+  // Freigabe-Workflow: Kunde reicht ein; Admin gibt frei / lehnt ab.
+  if (b.submit === true) {
+    const d = await prisma.adDraft.update({ where: { id }, data: { status: "awaiting_review" } });
+    return NextResponse.json(toAdDraftDTO(d));
+  }
+  if (b.review === "approve" || b.review === "reject") {
+    if (access.user.role !== "admin") return NextResponse.json({ error: "Nur der Admin kann freigeben." }, { status: 403 });
+    const d = await prisma.adDraft.update({
+      where: { id },
+      data: {
+        status: b.review === "approve" ? "approved" : "rejected",
+        reviewedBy: access.user.userId,
+        reviewedAt: new Date(),
+        reviewComment: typeof b.reviewComment === "string" ? (b.reviewComment as string) : null,
+      },
+    });
+    return NextResponse.json(toAdDraftDTO(d));
+  }
+
   const data: Prisma.AdDraftUpdateInput = {};
   const str = (k: string) => (typeof b[k] === "string" ? (b[k] as string) : undefined);
 

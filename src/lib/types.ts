@@ -184,7 +184,8 @@ export interface AdDraftDTO {
   primaryText: string | null;
   creativeNote: string | null;
   questions: string[];
-  status: string; // needs_review | launched | launch_error
+  status: string; // needs_review | awaiting_review | approved | rejected | launched | launch_error
+  reviewComment: string | null;
   launchError: string | null;
   metaCampaignId: string | null;
   createdAt: string;
