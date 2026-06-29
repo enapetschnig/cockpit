@@ -27,6 +27,8 @@ export async function GET(req: Request) {
   const grouped = await prisma.lead.groupBy({ by: ["status"], where: { adAccountId: accountId }, _count: true });
   const counts: Record<string, number> = {};
   for (const g of grouped) counts[g.status] = g._count;
+  // ungesehene (neu eingegangene) Leads
+  const unseen = await prisma.lead.count({ where: { adAccountId: accountId, seenAt: null } });
 
-  return NextResponse.json({ leads: leads.map(toLeadDTO), counts });
+  return NextResponse.json({ leads: leads.map(toLeadDTO), counts, unseen });
 }

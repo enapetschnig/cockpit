@@ -172,6 +172,7 @@ export function toLeadDTO(l: Lead & { activities?: LeadActivity[] }): LeadDTO {
     scheduledFor: l.scheduledFor ? l.scheduledFor.toISOString() : null,
     lastContactedAt: l.lastContactedAt ? l.lastContactedAt.toISOString() : null,
     receivedAt: l.receivedAt.toISOString(),
+    seenAt: l.seenAt ? l.seenAt.toISOString() : null,
     activities: (l.activities ?? []).map(toLeadActivityDTO),
   };
 }

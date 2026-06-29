@@ -105,7 +105,16 @@ export interface LeadDTO {
   scheduledFor: string | null;
   lastContactedAt: string | null;
   receivedAt: string;
+  seenAt: string | null; // null = neu/ungesehen
   activities: LeadActivityDTO[];
+}
+export interface LeadStageDTO {
+  id: string;
+  key: string;
+  label: string;
+  color: string; // Hex
+  order: number;
+  isDefault: boolean;
 }
 
 export interface ReconcileMonthDTO {

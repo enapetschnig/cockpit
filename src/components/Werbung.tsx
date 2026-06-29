@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO } from "@/lib/types";
+import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO, LeadStageDTO } from "@/lib/types";
 import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
@@ -12,10 +12,18 @@ function eur(n: number, dec = 0): string {
 function num(n: number): string {
   return Math.round(n).toLocaleString("de-AT");
 }
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// "vor 3 Std", "vor 2 Tagen", "gerade eben"
+function fmtAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "gerade eben";
+  if (min < 60) return `vor ${min} Min`;
+  const std = Math.floor(min / 60);
+  if (std < 24) return `vor ${std} Std`;
+  const tg = Math.floor(std / 24);
+  if (tg < 30) return `vor ${tg} ${tg === 1 ? "Tag" : "Tagen"}`;
+  return new Date(iso).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
-
 const GOALS: { v: string; t: string; sub: string; icon: string }[] = [
   { v: "leads", t: "Anfragen / Leads", sub: "Kontaktdaten sammeln", icon: "M3 7l9 6 9-6M3 5h18v14H3z" },
   { v: "appointments", t: "Termine", sub: "Terminanfragen", icon: "M3 4h18v17H3zM3 9h18M8 2v4M16 2v4" },
@@ -23,14 +31,28 @@ const GOALS: { v: string; t: string; sub: string; icon: string }[] = [
   { v: "traffic", t: "Website-Besuche", sub: "Mehr Besucher", icon: "M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" },
 ];
 const BUDGETS = [10, 20, 30, 50, 100];
-const LEAD_STATUS: Record<string, { label: string; cls: string }> = {
-  new: { label: "Neu", cls: "ad-warn" },
-  contacted: { label: "Angerufen", cls: "ad-info" },
-  scheduled: { label: "Termin", cls: "pill-privat" },
-  won: { label: "Gewonnen", cls: "ad-good" },
-  lost: { label: "Verloren", cls: "ad-muted" },
-};
-const STATUS_ORDER = ["new", "contacted", "scheduled", "won", "lost"];
+const RANGE_PRESETS = [
+  { k: "last_7d", t: "Letzte 7 Tage" },
+  { k: "last_30d", t: "Letzte 30 Tage" },
+  { k: "last_90d", t: "Letzte 90 Tage" },
+  { k: "this_month", t: "Dieser Monat" },
+  { k: "last_month", t: "Letzter Monat" },
+  { k: "this_year", t: "Dieses Jahr" },
+  { k: "maximum", t: "Gesamter Zeitraum" },
+];
+function lastMonths(n: number): { k: string; t: string; since: string; until: string }[] {
+  const now = new Date();
+  const out: { k: string; t: string; since: string; until: string }[] = [];
+  for (let i = 1; i <= n; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear(), m = d.getMonth();
+    const mm = String(m + 1).padStart(2, "0");
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    const t = d.toLocaleDateString("de-AT", { month: "long", year: "numeric" });
+    out.push({ k: `m_${y}-${mm}`, t: t.charAt(0).toUpperCase() + t.slice(1), since: `${y}-${mm}-01`, until: `${y}-${mm}-${String(lastDay).padStart(2, "0")}` });
+  }
+  return out;
+}
 const DRAFT_STATUS: Record<string, { label: string; cls: string }> = {
   needs_review: { label: "Entwurf", cls: "p-acct" },
   awaiting_review: { label: "Wartet auf Freigabe", cls: "p-none" },
@@ -64,7 +86,6 @@ const emptyForm: Form = {
   gender: "", ageMin: 25, ageMax: 65, tone: "du", budget: 20, destination: "lead_form", privacyUrl: "", websiteUrl: "", imageUrl: "", leadFormId: "",
 };
 
-type Range = "7" | "30" | "90" | "custom";
 
 export default function Werbung() {
   const [accounts, setAccounts] = useState<AdAccountDTO[]>([]);
@@ -74,15 +95,18 @@ export default function Werbung() {
   const [toast, setToast] = useState<string | null>(null);
 
   const [selId, setSelId] = useState("");
-  const [range, setRange] = useState<Range>("30");
+  const [rangeKey, setRangeKey] = useState("last_30d");
   const [customSince, setCustomSince] = useState("");
   const [customUntil, setCustomUntil] = useState("");
+  const [appliedCustom, setAppliedCustom] = useState<{ since: string; until: string } | null>(null);
+  const [months] = useState(() => lastMonths(8));
   const [activeOnly, setActiveOnly] = useState(false);
   const [tab, setTab] = useState<"overview" | "ads" | "leads">("overview");
 
   const [totals, setTotals] = useState<OverviewTotals | null>(null);
   const [campaigns, setCampaigns] = useState<OverviewCampaign[]>([]);
   const [ads, setAds] = useState<AdRow[]>([]);
+  const [selAd, setSelAd] = useState<AdRow | null>(null);
   const [audiences, setAudiences] = useState<SavedAudience[]>([]);
   const [leadForms, setLeadForms] = useState<LeadFormRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
@@ -90,10 +114,14 @@ export default function Werbung() {
   // CRM
   const [crmLeads, setCrmLeads] = useState<LeadDTO[]>([]);
   const [crmCounts, setCrmCounts] = useState<Record<string, number>>({});
+  const [crmUnseen, setCrmUnseen] = useState(0);
   const [crmFilter, setCrmFilter] = useState("alle");
   const [selLead, setSelLead] = useState<LeadDTO | null>(null);
   const [crmSyncing, setCrmSyncing] = useState(false);
   const [actDraft, setActDraft] = useState<{ channel: string; note: string }>({ channel: "call", note: "" });
+  const [stages, setStages] = useState<LeadStageDTO[]>([]);
+  const [showStages, setShowStages] = useState(false);
+  const [newStage, setNewStage] = useState<{ label: string; color: string }>({ label: "", color: "#2f6df0" });
 
   const [mode, setMode] = useState<"dashboard" | "wizard">("dashboard");
   const [step, setStep] = useState(1);
@@ -107,13 +135,16 @@ export default function Werbung() {
   const [intResults, setIntResults] = useState<{ id: string; name: string; audienceSize?: number; path?: string }[]>([]);
 
   function flash(t: string) { setToast(t); setTimeout(() => setToast(null), 3500); }
-  function period(): { since: string; until: string } {
-    if (range === "custom" && customSince && customUntil) return { since: customSince, until: customUntil };
-    const days = range === "7" ? 7 : range === "90" ? 90 : 30;
-    const until = new Date();
-    const since = new Date(until.getTime() - (days - 1) * 86400000);
-    return { since: ymd(since), until: ymd(until) };
+  // Query-Fragment für den gewählten Zeitraum (Preset, Monat oder eigener Bereich).
+  function rangeQuery(): string {
+    if (rangeKey === "custom") return appliedCustom ? `&since=${appliedCustom.since}&until=${appliedCustom.until}` : "&preset=last_30d";
+    if (rangeKey.startsWith("m_")) {
+      const m = months.find((x) => x.k === rangeKey);
+      if (m) return `&since=${m.since}&until=${m.until}`;
+    }
+    return `&preset=${rangeKey}`;
   }
+  const rangeLabel = rangeKey === "custom" ? (appliedCustom ? `${appliedCustom.since} – ${appliedCustom.until}` : "Eigener Zeitraum") : (RANGE_PRESETS.find((p) => p.k === rangeKey)?.t || months.find((m) => m.k === rangeKey)?.t || "");
 
   async function loadAccounts() {
     setLoading(true);
@@ -152,10 +183,10 @@ export default function Werbung() {
   // Kennzahlen + aktuellen Tab laden, wenn Konto/Zeitraum/Filter wechseln
   useEffect(() => {
     if (!selId) return;
-    const { since, until } = period();
+    const q = rangeQuery();
     const a = activeOnly ? "&active=1" : "";
     setDataLoading(true);
-    fetch(`/api/ads/overview?accountId=${selId}&since=${since}&until=${until}${a}`)
+    fetch(`/api/ads/overview?accountId=${selId}${q}${a}`)
       .then((r) => r.json())
       .then((d) => { setTotals(d.totals || null); setCampaigns(d.campaigns || []); })
       .catch(() => {})
@@ -164,14 +195,14 @@ export default function Werbung() {
     fetch(`/api/ads/audiences?accountId=${selId}`).then((r) => r.json()).then((d) => setAudiences(d.audiences || [])).catch(() => {});
     fetch(`/api/ads/forms?accountId=${selId}`).then((r) => r.json()).then((d) => setLeadForms(d.forms || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selId, range, customSince, customUntil, activeOnly]);
+  }, [selId, rangeKey, appliedCustom, activeOnly]);
 
   useEffect(() => {
     if (!selId) return;
-    const { since, until } = period();
+    const q = rangeQuery();
     const a = activeOnly ? "&active=1" : "";
     if (tab === "ads" && ads.length === 0) {
-      fetch(`/api/ads/list?accountId=${selId}&since=${since}&until=${until}${a}`).then((r) => r.json()).then((d) => setAds(d.ads || [])).catch(() => {});
+      fetch(`/api/ads/list?accountId=${selId}${q}${a}`).then((r) => r.json()).then((d) => setAds(d.ads || [])).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selId]);
@@ -183,12 +214,56 @@ export default function Werbung() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selId, crmFilter]);
 
+  // Pipeline-Stufen je Konto laden (für CRM-Farben + Statuszähler im Tab)
+  useEffect(() => {
+    if (!selId) { setStages([]); return; }
+    loadStages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
   async function loadCrm() {
     try {
       const d = await (await fetch(`/api/leads?accountId=${selId}&status=${crmFilter}`)).json();
       setCrmLeads(d.leads || []);
       setCrmCounts(d.counts || {});
+      setCrmUnseen(d.unseen || 0);
     } catch { /* ignore */ }
+  }
+  async function loadStages() {
+    try {
+      const st = await (await fetch(`/api/leads/stages?accountId=${selId}`)).json();
+      if (st?.stages) setStages(st.stages);
+    } catch { /* ignore */ }
+  }
+  async function addStage() {
+    if (!newStage.label.trim()) return;
+    try {
+      const d = await (await fetch("/api/leads/stages", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId, label: newStage.label, color: newStage.color }) })).json();
+      if (d.stage) { setStages((s) => [...s, d.stage]); setNewStage({ label: "", color: "#2f6df0" }); }
+      else if (d.error) flash(d.error);
+    } catch { /* ignore */ }
+  }
+  async function updateStage(id: string, fields: { label?: string; color?: string }) {
+    setStages((s) => s.map((x) => (x.id === id ? { ...x, ...fields } : x)));
+    try { await fetch(`/api/leads/stages/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) }); } catch { /* ignore */ }
+  }
+  async function deleteStage(id: string) {
+    try {
+      const d = await (await fetch(`/api/leads/stages/${id}`, { method: "DELETE" })).json();
+      if (d.ok) { setStages((s) => s.filter((x) => x.id !== id)); loadCrm(); }
+      else if (d.error) flash(d.error);
+    } catch { /* ignore */ }
+  }
+  function openLead(l: LeadDTO) {
+    setSelLead(l);
+    if (!l.seenAt) {
+      setCrmUnseen((n) => Math.max(0, n - 1));
+      setCrmLeads((ls) => ls.map((x) => (x.id === l.id ? { ...x, seenAt: new Date().toISOString() } : x)));
+      fetch(`/api/leads/${l.id}`, { method: "PATCH", headers: json, body: JSON.stringify({ seen: true }) }).catch(() => {});
+    }
+  }
+  function stageOf(key: string): LeadStageDTO {
+    return stages.find((s) => s.key === key) || { id: "", key, label: key, color: "#6b7280", order: 99, isDefault: false };
   }
   async function syncCrm() {
     setCrmSyncing(true);
@@ -217,10 +292,9 @@ export default function Werbung() {
     setSyncing(true);
     try {
       await fetch("/api/ads/sync", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId }) });
-      setRange((r) => r); setSelId((s) => s); // Re-Trigger
-      const { since, until } = period();
+      const q = rangeQuery();
       const a = activeOnly ? "&active=1" : "";
-      const d = await (await fetch(`/api/ads/overview?accountId=${selId}&since=${since}&until=${until}${a}`)).json();
+      const d = await (await fetch(`/api/ads/overview?accountId=${selId}${q}${a}`)).json();
       setTotals(d.totals || null); setCampaigns(d.campaigns || []);
       flash("Frisch von Meta geladen.");
     } catch { flash("Aktualisieren fehlgeschlagen."); } finally { setSyncing(false); }
@@ -274,13 +348,44 @@ export default function Werbung() {
       <main className="wmain">
         {toast && <div className="wtoast">{toast}</div>}
 
+        {selAd && (
+          <div className="crm-overlay" onClick={() => setSelAd(null)}>
+            <div className="crm-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="crm-top">
+                <div className="wad-detail-head">
+                  {selAd.thumbnailUrl ? <img src={selAd.thumbnailUrl} alt="" className="wad-detail-thumb" /> : <div className="wad-detail-thumb ph">{selAd.objectType === "VIDEO" ? "▶" : "▦"}</div>}
+                  <div>
+                    <h3>{selAd.name}</h3>
+                    <div className="wmuted" style={{ fontSize: 13 }}>{selAd.campaign || ""} · {selAd.effectiveStatus === "ACTIVE" ? "aktiv" : "pausiert"}{selAd.objectType === "VIDEO" ? " · Video" : ""}</div>
+                  </div>
+                </div>
+                <button className="crm-x" onClick={() => setSelAd(null)}>✕</button>
+              </div>
+              <div className="wad-detail-grid">
+                <AdStat v={eur(selAd.spend, 2)} l="Ausgaben" sub="im Zeitraum" />
+                <AdStat v={String(selAd.leads)} l="Leads" sub="Anfragen erhalten" />
+                <AdStat v={selAd.cpl != null ? eur(selAd.cpl, 2) : "–"} l="Kosten / Lead" sub="pro Anfrage" />
+                <AdStat v={selAd.ctr != null ? selAd.ctr.toFixed(2) + "%" : "–"} l="CTR" sub="Klickrate (Klicks ÷ Einblendungen)" />
+                <AdStat v={num(selAd.reach)} l="Reichweite" sub="erreichte Personen" />
+                <AdStat v={num(selAd.impressions)} l="Impressionen" sub="Einblendungen gesamt" />
+                <AdStat v={num(selAd.clicks)} l="Klicks" sub="alle Klicks" />
+                <AdStat v={num(selAd.linkClicks)} l="Link-Klicks" sub="Klicks auf den Link" />
+                <AdStat v={selAd.cpc != null ? eur(selAd.cpc, 2) : "–"} l="CPC" sub="Kosten pro Klick" />
+                <AdStat v={selAd.cpm != null ? eur(selAd.cpm, 2) : "–"} l="CPM" sub="Kosten / 1.000 Einbl." />
+                <AdStat v={selAd.frequency != null ? selAd.frequency.toFixed(1) + "×" : "–"} l="Frequenz" sub="Ø Einblendungen / Person" />
+              </div>
+              <div className="wmuted" style={{ fontSize: 12, marginTop: 12 }}>Zeitraum: {rangeLabel}</div>
+            </div>
+          </div>
+        )}
+
         {selLead && (
           <div className="crm-overlay" onClick={() => setSelLead(null)}>
             <div className="crm-panel" onClick={(e) => e.stopPropagation()}>
               <div className="crm-top">
                 <div>
                   <h3>{selLead.name || "(ohne Namen)"}</h3>
-                  <div className="crm-sub">{selLead.leadFormName || "Lead"} · {selLead.receivedAt?.slice(0, 10)}</div>
+                  <div className="crm-sub">{selLead.leadFormName || "Lead"} · eingegangen {fmtAgo(selLead.receivedAt)}</div>
                 </div>
                 <button className="crm-x" onClick={() => setSelLead(null)}>×</button>
               </div>
@@ -295,10 +400,10 @@ export default function Werbung() {
                 </div>
               )}
 
-              <label className="wlbl">Status</label>
-              <div className="ad-toggle" style={{ flexWrap: "wrap" }}>
-                {STATUS_ORDER.map((s) => (
-                  <button key={s} className={"ad-toggle-b" + (selLead.status === s ? " on" : "")} onClick={() => patchLead(selLead.id, { status: s })}>{LEAD_STATUS[s].label}</button>
+              <label className="wlbl">Status in der Pipeline</label>
+              <div className="wstage-pick">
+                {stages.map((s) => (
+                  <button key={s.key} className={"wstage-opt" + (selLead.status === s.key ? " on" : "")} style={selLead.status === s.key ? { background: s.color, borderColor: s.color, color: "#fff" } : { borderColor: s.color, color: s.color }} onClick={() => patchLead(selLead.id, { status: s.key })}>{s.label}</button>
                 ))}
               </div>
 
@@ -366,36 +471,42 @@ export default function Werbung() {
                     </div>
                   )}
                   <div className="wctrl-row">
-                    <div className="wchips">
-                      {([["7", "7 Tage"], ["30", "30 Tage"], ["90", "90 Tage"], ["custom", "Eigener"]] as [Range, string][]).map(([v, l]) => (
-                        <button key={v} className={"wchip" + (range === v ? " on" : "")} onClick={() => setRange(v)}>{l}</button>
-                      ))}
-                    </div>
+                    <select className="wrange" value={rangeKey} onChange={(e) => setRangeKey(e.target.value)} aria-label="Zeitraum">
+                      {RANGE_PRESETS.map((p) => <option key={p.k} value={p.k}>{p.t}</option>)}
+                      <optgroup label="Einzelne Monate">
+                        {months.map((m) => <option key={m.k} value={m.k}>{m.t}</option>)}
+                      </optgroup>
+                      <option value="custom">Eigener Zeitraum …</option>
+                    </select>
                     <button className={"wchip toggle" + (activeOnly ? " on" : "")} onClick={() => setActiveOnly(!activeOnly)}>● Nur aktive</button>
                   </div>
-                  {range === "custom" && (
+                  {rangeKey === "custom" && (
                     <div className="wdates">
                       <input type="date" value={customSince} onChange={(e) => setCustomSince(e.target.value)} />
                       <span>bis</span>
                       <input type="date" value={customUntil} onChange={(e) => setCustomUntil(e.target.value)} />
+                      <button className="wbtn ghost sm" disabled={!customSince || !customUntil} onClick={() => setAppliedCustom({ since: customSince, until: customUntil })}>Anwenden</button>
                     </div>
                   )}
                 </div>
 
                 {sel?.status === "error" && <div className="ad-err">Verbindung fehlt: {sel.lastError || "Token abgelaufen"}. Neu verbinden über <a href="/connect">/connect</a>.</div>}
 
+                <div className="wrange-cap">Zeitraum: <b>{rangeLabel}</b></div>
                 <div className="wkpis">
-                  <Kpi v={totals ? eur(totals.spend) : "–"} l="Ausgaben" big />
-                  <Kpi v={totals ? num(totals.leads) : "–"} l="Leads" big />
-                  <Kpi v={totals?.cpl != null ? eur(totals.cpl) : "–"} l="Kosten / Lead" />
-                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR" />
-                  <Kpi v={totals ? num(totals.reach) : "–"} l="Reichweite" />
-                  <Kpi v={totals ? num(totals.impressions) : "–"} l="Impressionen" />
+                  <Kpi v={totals ? eur(totals.spend) : "–"} l="Ausgaben" sub="im Zeitraum" big />
+                  <Kpi v={totals ? num(totals.leads) : "–"} l="Leads" sub="Anfragen erhalten" big />
+                  <Kpi v={totals?.cpl != null ? eur(totals.cpl) : "–"} l="Kosten / Lead" sub="pro Anfrage" />
+                  <Kpi v={totals?.ctr != null ? totals.ctr.toFixed(1) + "%" : "–"} l="CTR" sub="Klickrate" />
+                  <Kpi v={totals ? num(totals.reach) : "–"} l="Reichweite" sub="erreichte Personen" />
+                  <Kpi v={totals ? num(totals.impressions) : "–"} l="Impressionen" sub="Einblendungen" />
                 </div>
 
                 <div className="wtabs">
                   {([["overview", "Übersicht"], ["ads", "Anzeigen"], ["leads", "Leads"]] as ["overview" | "ads" | "leads", string][]).map(([v, l]) => (
-                    <button key={v} className={"wtab" + (tab === v ? " on" : "")} onClick={() => setTab(v)}>{l}</button>
+                    <button key={v} className={"wtab" + (tab === v ? " on" : "")} onClick={() => setTab(v)}>
+                      {l}{v === "leads" && crmUnseen > 0 && <span className="wtab-badge">{crmUnseen}</span>}
+                    </button>
                   ))}
                 </div>
 
@@ -424,29 +535,53 @@ export default function Werbung() {
                   ads.length === 0 ? <div className="wmuted">{dataLoading ? "Lade Anzeigen …" : activeOnly ? "Keine aktiven Anzeigen." : "Keine Anzeigen im Zeitraum."}</div> :
                   <div className="wads">
                     {ads.map((ad) => (
-                      <div key={ad.id} className="wad">
+                      <button key={ad.id} className="wad" onClick={() => setSelAd(ad)}>
                         <div className="wad-thumb">{ad.thumbnailUrl ? <img src={ad.thumbnailUrl} alt="" /> : <span>{ad.objectType === "VIDEO" ? "▶" : "▦"}</span>}</div>
                         <div className="wad-main">
                           <div className="wad-name">{ad.name}</div>
                           <div className="wad-sub">{ad.campaign || ""} · {ad.effectiveStatus === "ACTIVE" ? "aktiv" : "pausiert"}{ad.objectType === "VIDEO" ? " · Video" : ""}</div>
-                          <div className="wad-metrics"><span><b>{eur(ad.spend)}</b></span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/L</span><span><b>{ad.ctr != null ? ad.ctr.toFixed(1) + "%" : "–"}</b></span></div>
+                          <div className="wad-metrics"><span><b>{eur(ad.spend)}</b> Ausgaben</span><span><b>{ad.leads}</b> Leads</span><span><b>{ad.cpl != null ? eur(ad.cpl) : "–"}</b>/Lead</span><span><b>{ad.ctr != null ? ad.ctr.toFixed(1) + "%" : "–"}</b> CTR</span></div>
                         </div>
-                      </div>
+                        <span className="wad-chev">›</span>
+                      </button>
                     ))}
                   </div>
                 )}
 
                 {tab === "leads" && (
                   <>
+                    {crmUnseen > 0 && <div className="wnew-banner">🔔 {crmUnseen} {crmUnseen === 1 ? "neuer Lead" : "neue Leads"} – noch nicht angesehen</div>}
                     <div className="wcrm-head">
                       <div className="wlead-sum">{crmLeads.length} Leads im CRM</div>
-                      <button className="wbtn ghost" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
+                      <div className="wcrm-actions">
+                        <button className="wbtn ghost sm" onClick={() => setShowStages((v) => !v)}>{showStages ? "Fertig" : "⚙ Pipeline"}</button>
+                        <button className="wbtn ghost sm" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
+                      </div>
                     </div>
+
+                    {showStages && (
+                      <div className="wstages-mgr">
+                        <div className="wstages-title">Pipeline-Stufen</div>
+                        {stages.map((s) => (
+                          <div key={s.id} className="wstage-row">
+                            <input type="color" value={s.color} onChange={(e) => updateStage(s.id, { color: e.target.value })} aria-label="Farbe" />
+                            <input className="winp sm" defaultValue={s.label} key={s.id + s.label} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== s.label) updateStage(s.id, { label: v }); }} />
+                            {s.isDefault ? <span className="wstage-lock" title="Standard-Stufe">Standard</span> : <button className="wstage-del" title="Löschen" onClick={() => deleteStage(s.id)}>✕</button>}
+                          </div>
+                        ))}
+                        <div className="wstage-row add">
+                          <input type="color" value={newStage.color} onChange={(e) => setNewStage({ ...newStage, color: e.target.value })} aria-label="Farbe" />
+                          <input className="winp sm" placeholder="Neue Stufe (z.B. Angebot gesendet)" value={newStage.label} onChange={(e) => setNewStage({ ...newStage, label: e.target.value })} onKeyDown={(e) => e.key === "Enter" && addStage()} />
+                          <button className="wbtn primary sm" onClick={addStage} disabled={!newStage.label.trim()}>+ Hinzufügen</button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="wchips" style={{ flexWrap: "wrap", marginBottom: 12 }}>
-                      <button className={"wchip" + (crmFilter === "alle" ? " on" : "")} onClick={() => setCrmFilter("alle")}>Alle</button>
-                      {STATUS_ORDER.map((s) => (
-                        <button key={s} className={"wchip" + (crmFilter === s ? " on" : "")} onClick={() => setCrmFilter(s)}>
-                          {LEAD_STATUS[s].label}{crmCounts[s] ? ` (${crmCounts[s]})` : ""}
+                      <button className={"wchip" + (crmFilter === "alle" ? " on" : "")} onClick={() => setCrmFilter("alle")}>Alle ({Object.values(crmCounts).reduce((a, b) => a + b, 0)})</button>
+                      {stages.map((s) => (
+                        <button key={s.key} className="wchip-stage" style={crmFilter === s.key ? { background: s.color, borderColor: s.color, color: "#fff" } : { borderColor: s.color, color: s.color }} onClick={() => setCrmFilter(s.key)}>
+                          {s.label}{crmCounts[s.key] ? ` (${crmCounts[s.key]})` : ""}
                         </button>
                       ))}
                     </div>
@@ -454,13 +589,16 @@ export default function Werbung() {
                       <div className="wmuted">Noch keine Leads. Tippe „↻ Leads holen", um sie aus Facebook zu laden.</div>
                     ) : (
                       <div className="wleads">
-                        {crmLeads.map((l) => (
-                          <div key={l.id} className="wlead crm" onClick={() => { setSelLead(l); setActDraft({ channel: "call", note: "" }); }}>
-                            <div className="wlead-main"><b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
-                            <div className="wlead-meta">{l.receivedAt?.slice(0, 10)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
-                            <span className={"ampel " + LEAD_STATUS[l.status]?.cls}>{LEAD_STATUS[l.status]?.label || l.status}</span>
-                          </div>
-                        ))}
+                        {crmLeads.map((l) => {
+                          const st = stageOf(l.status);
+                          return (
+                            <div key={l.id} className={"wlead crm" + (!l.seenAt ? " unseen" : "")} onClick={() => { openLead(l); setActDraft({ channel: "call", note: "" }); }}>
+                              <div className="wlead-main">{!l.seenAt && <span className="wlead-dot" title="neu" />}<b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
+                              <div className="wlead-meta">{fmtAgo(l.receivedAt)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
+                              <span className="wlead-stage" style={{ background: st.color }}>{st.label}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </>
@@ -502,11 +640,22 @@ export default function Werbung() {
   );
 }
 
-function Kpi({ v, l, big }: { v: string; l: string; big?: boolean }) {
+function AdStat({ v, l, sub }: { v: string; l: string; sub: string }) {
+  return (
+    <div className="wad-stat">
+      <div className="wad-stat-v">{v}</div>
+      <div className="wad-stat-l">{l}</div>
+      <div className="wad-stat-sub">{sub}</div>
+    </div>
+  );
+}
+
+function Kpi({ v, l, sub, big }: { v: string; l: string; sub?: string; big?: boolean }) {
   return (
     <div className={"wkpi" + (big ? " big" : "")}>
       <div className="wkpi-v">{v}</div>
       <div className="wkpi-l">{l}</div>
+      {sub && <div className="wkpi-sub">{sub}</div>}
     </div>
   );
 }

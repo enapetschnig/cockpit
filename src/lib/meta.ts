@@ -387,11 +387,20 @@ export async function searchInterests(adAccountId: string, q: string): Promise<I
 }
 
 // ── Kennzahlen mit Zeitraum (Übersicht + Anzeigen + Leads + Zielgruppen) ────
-function timeParams(since?: string, until?: string): Record<string, string> {
-  if (since && until) return { time_range: JSON.stringify({ since, until }) };
+// Erlaubte Meta date_preset-Werte (für Schnellauswahl + Monate/Gesamt).
+const DATE_PRESETS = new Set([
+  "today", "yesterday", "last_7d", "last_14d", "last_28d", "last_30d", "last_90d",
+  "this_week_mon_today", "last_week_mon_sun", "this_month", "last_month",
+  "this_quarter", "last_quarter", "this_year", "last_year", "maximum",
+]);
+function timeParams(opts: { since?: string; until?: string; preset?: string }): Record<string, string> {
+  if (opts.preset && DATE_PRESETS.has(opts.preset)) return { date_preset: opts.preset };
+  if (opts.since && opts.until) return { time_range: JSON.stringify({ since: opts.since, until: opts.until }) };
   return { date_preset: "last_30d" };
 }
-const INSIGHT_FIELDS = "spend,impressions,reach,clicks,ctr,cpm,frequency,actions";
+const INSIGHT_FIELDS = "spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions";
+
+const num = (v: unknown) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
 
 function metricsFromRow(r: Record<string, unknown>) {
   const spend = Number(r.spend ?? 0) || 0;
@@ -401,11 +410,12 @@ function metricsFromRow(r: Record<string, unknown>) {
   const actions = r.actions as Action[] | undefined;
   const leads = Math.round(actionValue(actions, LEAD_ACTION_TYPES));
   const linkClicks = Math.round(actionValue(actions, ["link_click"]));
-  const ctr = r.ctr != null && Number.isFinite(Number(r.ctr)) ? Number(r.ctr) : null;
-  const cpm = r.cpm != null && Number.isFinite(Number(r.cpm)) ? Number(r.cpm) : null;
-  const frequency = r.frequency != null && Number.isFinite(Number(r.frequency)) ? Number(r.frequency) : null;
+  const ctr = num(r.ctr);
+  const cpc = num(r.cpc);
+  const cpm = num(r.cpm);
+  const frequency = num(r.frequency);
   const cpl = leads > 0 ? Math.round((spend / leads) * 100) / 100 : null;
-  return { spend, impressions, reach, clicks, linkClicks, leads, ctr, cpm, frequency, cpl };
+  return { spend, impressions, reach, clicks, linkClicks, leads, ctr, cpc, cpm, frequency, cpl };
 }
 
 export interface OverviewTotals {
@@ -416,12 +426,12 @@ export interface OverviewCampaign {
 }
 
 /** Konto-Kennzahlen + je Kampagne für einen Zeitraum (live), optional nur aktive. */
-export async function fetchOverview(adAccountId: string, opts: { since?: string; until?: string; activeOnly?: boolean }): Promise<{ totals: OverviewTotals; campaigns: OverviewCampaign[] }> {
+export async function fetchOverview(adAccountId: string, opts: { since?: string; until?: string; preset?: string; activeOnly?: boolean }): Promise<{ totals: OverviewTotals; campaigns: OverviewCampaign[] }> {
   const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
   if (!acc) throw new Error("Werbekonto nicht gefunden.");
   const token = await accountToken(acc);
   const act = acc.metaAccountId;
-  const tr = timeParams(opts.since, opts.until);
+  const tr = timeParams(opts);
 
   const [insResp, campResp] = await Promise.all([
     graphGet(`${act}/insights`, token, { level: "campaign", ...tr, fields: `campaign_id,campaign_name,${INSIGHT_FIELDS}`, limit: "400" }),
@@ -451,16 +461,17 @@ export async function fetchOverview(adAccountId: string, opts: { since?: string;
 
 export interface AdRow {
   id: string; name: string; effectiveStatus: string | null; campaign: string | null; thumbnailUrl: string | null; objectType: string | null;
-  spend: number; impressions: number; reach: number; leads: number; cpl: number | null; ctr: number | null;
+  spend: number; impressions: number; reach: number; clicks: number; linkClicks: number; leads: number;
+  cpl: number | null; ctr: number | null; cpc: number | null; cpm: number | null; frequency: number | null;
 }
 
 /** Einzelne Anzeigen (mit Creative-Vorschaubild) + Kennzahlen für einen Zeitraum. */
-export async function listAdsWithInsights(adAccountId: string, opts: { since?: string; until?: string; activeOnly?: boolean }): Promise<AdRow[]> {
+export async function listAdsWithInsights(adAccountId: string, opts: { since?: string; until?: string; preset?: string; activeOnly?: boolean }): Promise<AdRow[]> {
   const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
   if (!acc) throw new Error("Werbekonto nicht gefunden.");
   const token = await accountToken(acc);
   const act = acc.metaAccountId;
-  const tr = timeParams(opts.since, opts.until);
+  const tr = timeParams(opts);
 
   const [adsResp, insResp] = await Promise.all([
     graphGet(`${act}/ads`, token, { fields: "id,name,effective_status,campaign{name},creative{thumbnail_url,object_type,video_id}", limit: "200" }),
@@ -480,7 +491,8 @@ export async function listAdsWithInsights(adAccountId: string, opts: { since?: s
       campaign: ((ad.campaign as Record<string, unknown>)?.name as string) ?? null,
       thumbnailUrl: (creative.thumbnail_url as string) ?? null,
       objectType: (creative.object_type as string) ?? (creative.video_id ? "VIDEO" : null),
-      spend: m.spend, impressions: m.impressions, reach: m.reach, leads: m.leads, cpl: m.cpl, ctr: m.ctr,
+      spend: m.spend, impressions: m.impressions, reach: m.reach, clicks: m.clicks, linkClicks: m.linkClicks, leads: m.leads,
+      cpl: m.cpl, ctr: m.ctr, cpc: m.cpc, cpm: m.cpm, frequency: m.frequency,
     });
   }
   return rows.sort((a, b) => b.spend - a.spend);

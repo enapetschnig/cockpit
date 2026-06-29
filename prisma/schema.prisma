@@ -226,6 +226,23 @@ model AdAccount {
   campaigns AdCampaign[]
   drafts    AdDraft[]
   leads     Lead[]
+  stages    LeadStage[]
+}
+
+// Anpassbare CRM-Pipeline-Stufen pro Werbekonto (Farbe + Reihenfolge).
+model LeadStage {
+  id          String    @id @default(cuid())
+  adAccountId String
+  adAccount   AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  key         String // stabiler Schlüssel (Seed: new/contacted/scheduled/won/lost; custom = cuid)
+  label       String
+  color       String    @default("#6b7280") // Hex-Farbe der Pipeline
+  order       Int       @default(0)
+  isDefault   Boolean   @default(false) // Seed-Stufen – nicht löschbar
+  createdAt   DateTime  @default(now())
+
+  @@unique([adAccountId, key])
+  @@index([adAccountId])
 }
 
 // Insights-Cache (letzte 30 Tage), vom Sync gefüllt – das Dashboard liest NUR diese Tabelle.
@@ -331,6 +348,7 @@ model Lead {
   lastContactedAt DateTime?
 
   receivedAt DateTime // wann der Lead über das Formular kam
+  seenAt     DateTime? // wann der Lead erstmals im CRM geöffnet wurde (null = neu/ungesehen)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @default(now()) @updatedAt
 

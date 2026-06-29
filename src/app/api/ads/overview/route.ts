@@ -13,9 +13,10 @@ export async function GET(req: Request) {
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
   const since = u.searchParams.get("since") || undefined;
   const until = u.searchParams.get("until") || undefined;
+  const preset = u.searchParams.get("preset") || undefined;
   const activeOnly = u.searchParams.get("active") === "1";
   try {
-    const data = await fetchOverview(accountId, { since, until, activeOnly });
+    const data = await fetchOverview(accountId, { since, until, preset, activeOnly });
     return NextResponse.json(data);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e), totals: null, campaigns: [] }, { status: 200 });
