@@ -172,6 +172,8 @@ export function toLeadDTO(l: Lead & { activities?: LeadActivity[] }): LeadDTO {
     status: l.status,
     notes: l.notes,
     scheduledFor: l.scheduledFor ? l.scheduledFor.toISOString() : null,
+    callbackAt: l.callbackAt ? l.callbackAt.toISOString() : null,
+    callbackNote: l.callbackNote,
     lastContactedAt: l.lastContactedAt ? l.lastContactedAt.toISOString() : null,
     receivedAt: l.receivedAt.toISOString(),
     seenAt: l.seenAt ? l.seenAt.toISOString() : null,

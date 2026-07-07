@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AdAccountDTO, AdDraftDTO, AdLocation, AdInterest, LeadDTO, LeadStageDTO } from "@/lib/types";
 import type { OverviewTotals, OverviewCampaign, AdRow, SavedAudience, LeadFormRow } from "@/lib/meta";
 import { rate, overallRating, adTips, SPECS, GLOSSARY } from "@/lib/adRating";
@@ -24,6 +24,59 @@ function fmtAgo(iso: string): string {
   const tg = Math.floor(std / 24);
   if (tg < 30) return `vor ${tg} ${tg === 1 ? "Tag" : "Tagen"}`;
   return new Date(iso).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+const pad2 = (n: number) => String(n).padStart(2, "0");
+// UTC-ISO -> lokaler datetime-local-Wert (behebt die falsche Uhrzeit-Anzeige)
+function toDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+// kurze, lokale Anzeige: "heute 14:00" / "morgen 09:00" / "02.07. 14:00"
+function fmtWhen(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const t = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const today = new Date().toDateString();
+  const tmr = new Date(Date.now() + 86400000).toDateString();
+  if (d.toDateString() === today) return `heute ${t}`;
+  if (d.toDateString() === tmr) return `morgen ${t}`;
+  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}. ${t}`;
+}
+function isOverdue(iso: string | null | undefined): boolean {
+  return !!iso && new Date(iso).getTime() < Date.now();
+}
+// Schnellzeit-Vorlagen (werden beim Klick ausgewertet)
+function atDay(daysAhead: number, hour: number): Date { const d = new Date(); d.setDate(d.getDate() + daysAhead); d.setHours(hour, 0, 0, 0); return d; }
+function inHrs(h: number): Date { return new Date(Date.now() + h * 3600000); }
+const CALLBACK_PRESETS: { label: string; get: () => Date }[] = [
+  { label: "+2 Std", get: () => inHrs(2) },
+  { label: "Heute 17:00", get: () => atDay(0, 17) },
+  { label: "Morgen 9:00", get: () => atDay(1, 9) },
+  { label: "Morgen 14:00", get: () => atDay(1, 14) },
+  { label: "In 3 Tagen", get: () => atDay(3, 9) },
+  { label: "Nächste Woche", get: () => atDay(7, 9) },
+];
+const APPT_PRESETS: { label: string; get: () => Date }[] = [
+  { label: "Morgen 9:00", get: () => atDay(1, 9) },
+  { label: "Morgen 14:00", get: () => atDay(1, 14) },
+  { label: "Übermorgen 9:00", get: () => atDay(2, 9) },
+  { label: "In 1 Woche", get: () => atDay(7, 9) },
+];
+// Schnell-Zeitwähler: große Chips + native Datum/Uhrzeit (mobilfreundlich)
+function WhenPicker({ value, onChange, presets }: { value: string | null; onChange: (iso: string | null) => void; presets: { label: string; get: () => Date }[] }) {
+  return (
+    <div className="when">
+      <div className="when-chips">
+        {presets.map((p) => <button key={p.label} type="button" className="when-chip" onClick={() => onChange(p.get().toISOString())}>{p.label}</button>)}
+      </div>
+      <div className="when-row">
+        <input className="winp when-input" type="datetime-local" value={toDatetimeLocal(value)} onChange={(e) => onChange(e.target.value ? new Date(e.target.value).toISOString() : null)} />
+        {value && <button type="button" className="when-clear" onClick={() => onChange(null)}>✕</button>}
+      </div>
+      {value && <div className={"when-cur" + (isOverdue(value) ? " due" : "")}>{isOverdue(value) ? "⏰ fällig: " : "gesetzt: "}<b>{fmtWhen(value)}</b></div>}
+    </div>
+  );
 }
 // Farbiger Bewertungspunkt (gut/okay/schwach) zu einer Kennzahl
 function RateDot({ metric, value }: { metric: string; value: number | null }) {
@@ -128,8 +181,10 @@ export default function Werbung() {
   const [role, setRole] = useState<"admin" | "customer" | null>(null);
   // CRM
   const [crmLeads, setCrmLeads] = useState<LeadDTO[]>([]);
+  const [crmCallbacks, setCrmCallbacks] = useState<LeadDTO[]>([]);
   const [crmCounts, setCrmCounts] = useState<Record<string, number>>({});
   const [crmUnseen, setCrmUnseen] = useState(0);
+  const [autoSyncing, setAutoSyncing] = useState(false);
   const [crmFilter, setCrmFilter] = useState("alle");
   const [selLead, setSelLead] = useState<LeadDTO | null>(null);
   const [crmSyncing, setCrmSyncing] = useState(false);
@@ -238,6 +293,18 @@ export default function Werbung() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selId, crmFilter]);
 
+  // Leads automatisch aktuell halten: beim Öffnen, beim Zurückkehren zur App und alle 2,5 Min
+  useEffect(() => {
+    if (!selId) return;
+    autoSyncLeads();
+    const iv = setInterval(autoSyncLeads, 150000);
+    const onVis = () => { if (document.visibilityState === "visible") autoSyncLeads(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
   // Pipeline-Stufen je Konto laden (für CRM-Farben + Statuszähler)
   useEffect(() => {
     if (!selId) { setStages([]); return; }
@@ -259,6 +326,7 @@ export default function Werbung() {
       setCrmLeads(d.leads || []);
       setCrmCounts(d.counts || {});
       setCrmUnseen(d.unseen || 0);
+      setCrmCallbacks(d.callbacks || []);
     } catch { /* ignore */ }
   }
   async function loadStages() {
@@ -329,10 +397,24 @@ export default function Werbung() {
       flash(r?.error ? "Hinweis: " + r.error : `${r?.created ?? 0} neue Leads geladen.`);
     } catch { flash("Aktualisieren fehlgeschlagen."); } finally { setCrmSyncing(false); }
   }
+  // Automatisch neue Leads von Meta holen (leise, ohne Button) + DB neu laden.
+  // Gedrosselt: höchstens alle 20 s, damit häufiges App-Wechseln Meta nicht überlastet.
+  const lastSyncRef = useRef(0);
+  async function autoSyncLeads(force = false) {
+    if (!selId) return;
+    if (!force && Date.now() - lastSyncRef.current < 20000) return;
+    lastSyncRef.current = Date.now();
+    setAutoSyncing(true);
+    try {
+      await fetch("/api/ads/sync/leads", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId }) });
+      await loadCrm();
+    } catch { /* ignore */ } finally { setAutoSyncing(false); }
+  }
   async function patchLead(id: string, fields: Record<string, unknown>) {
     try {
       const d = await (await fetch(`/api/leads/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) })).json();
-      if (d.id) { setSelLead(d); setCrmLeads((ls) => ls.map((l) => (l.id === d.id ? d : l))); loadCrm(); }
+      // Nur aktualisieren, wenn das Overlay dieses Leads offen ist – nicht ungewollt öffnen.
+      if (d.id) { setSelLead((cur) => (cur && cur.id === d.id ? d : cur)); setCrmLeads((ls) => ls.map((l) => (l.id === d.id ? d : l))); loadCrm(); }
     } catch { /* ignore */ }
   }
   async function addActivity(id: string) {
@@ -484,8 +566,12 @@ export default function Werbung() {
                 ))}
               </div>
 
-              <label className="wlbl">Vor-Ort-/Rückruf-Termin</label>
-              <input className="winp" type="datetime-local" value={selLead.scheduledFor ? selLead.scheduledFor.slice(0, 16) : ""} onChange={(e) => patchLead(selLead.id, { scheduledFor: e.target.value ? new Date(e.target.value).toISOString() : null })} />
+              <label className="wlbl">📞 Wieder anrufen</label>
+              <WhenPicker value={selLead.callbackAt} onChange={(iso) => patchLead(selLead.id, { callbackAt: iso })} presets={CALLBACK_PRESETS} />
+              <input className="winp" style={{ marginTop: 6 }} placeholder="Notiz zum Rückruf (worum geht's?)" defaultValue={selLead.callbackNote || ""} key={selLead.id + "-cbnote"} onBlur={(e) => { if (e.target.value !== (selLead.callbackNote || "")) patchLead(selLead.id, { callbackNote: e.target.value }); }} />
+
+              <label className="wlbl">🏠 Vor-Ort-Termin</label>
+              <WhenPicker value={selLead.scheduledFor} onChange={(iso) => patchLead(selLead.id, { scheduledFor: iso })} presets={APPT_PRESETS} />
 
               <label className="wlbl">Notizen</label>
               <textarea className="winp" rows={3} defaultValue={selLead.notes || ""} key={selLead.id + "-notes"} onBlur={(e) => { if (e.target.value !== (selLead.notes || "")) patchLead(selLead.id, { notes: e.target.value }); }} />
@@ -594,10 +680,34 @@ export default function Werbung() {
                   <div className="wsection-h">
                     <h2>📥 Anfragen (Leads){crmUnseen > 0 && <span className="wsection-badge">{crmUnseen} neu</span>}</h2>
                     <div className="wcrm-actions">
+                      <button className={"wauto" + (autoSyncing ? " on" : "")} onClick={() => autoSyncLeads(true)} title="Jetzt aktualisieren">{autoSyncing ? "⟳ aktualisiere…" : "⟳ automatisch aktuell"}</button>
                       <button className="wbtn ghost sm" onClick={() => setShowStages((v) => !v)}>{showStages ? "Fertig" : "⚙ Pipeline"}</button>
-                      <button className="wbtn ghost sm" disabled={crmSyncing} onClick={syncCrm}>{crmSyncing ? "…" : "↻ Leads holen"}</button>
                     </div>
                   </div>
+
+                  {(() => {
+                    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+                    const due = crmCallbacks.filter((l) => l.callbackAt && new Date(l.callbackAt).getTime() <= todayEnd.getTime());
+                    return due.length > 0 ? (
+                      <div className="wcb-due">
+                        <div className="wcb-due-t">📞 Heute anrufen ({due.length})</div>
+                        {due.map((l) => (
+                          <div key={l.id} className={"wcb" + (isOverdue(l.callbackAt) ? " over" : "")}>
+                            <div className="wcb-main" onClick={() => openLead(l)}>
+                              <div className="wcb-name"><b>{l.name || "(ohne Namen)"}</b> · <span className="wcb-time">{fmtWhen(l.callbackAt)}</span></div>
+                              {l.callbackNote && <div className="wcb-note">{l.callbackNote}</div>}
+                              {l.phone && <div className="wcb-phone">{l.phone}</div>}
+                            </div>
+                            <div className="wcb-act">
+                              {l.phone && <a className="wcb-call" href={`tel:${l.phone}`} onClick={(e) => e.stopPropagation()}>Anrufen</a>}
+                              <button className="wcb-done" title="Erledigt" onClick={() => patchLead(l.id, { callbackAt: null, callbackNote: "" })}>✓</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
+
                   {crmUnseen > 0 && <div className="wnew-banner">🔔 {crmUnseen} {crmUnseen === 1 ? "neuer Lead wartet" : "neue Leads warten"} – noch nicht angesehen</div>}
 
                   {showStages && (
@@ -627,7 +737,7 @@ export default function Werbung() {
                     ))}
                   </div>
                   {crmLeads.length === 0 ? (
-                    <div className="wmuted">Noch keine Leads. Tippe „↻ Leads holen", um sie aus Facebook zu laden.</div>
+                    <div className="wmuted">Noch keine Leads. Sie werden automatisch aus Facebook geladen, sobald welche eingehen.</div>
                   ) : (
                     <div className="wleads">
                       {crmLeads.map((l) => {
@@ -636,6 +746,12 @@ export default function Werbung() {
                           <div key={l.id} className={"wlead crm" + (!l.seenAt ? " unseen" : "")} onClick={() => { openLead(l); setActDraft({ channel: "call", note: "" }); }}>
                             <div className="wlead-main">{!l.seenAt && <span className="wlead-dot" title="neu" />}<b>{l.name || "(ohne Namen)"}</b>{l.phone ? " · " + l.phone : ""}</div>
                             <div className="wlead-meta">{fmtAgo(l.receivedAt)}{l.leadFormName ? " · " + l.leadFormName : ""}{l.activities.length ? ` · ${l.activities.length} Kontakt(e)` : ""}</div>
+                            {(l.callbackAt || l.scheduledFor) && (
+                              <div className="wlead-when">
+                                {l.callbackAt && <span className={"wlead-tag cb" + (isOverdue(l.callbackAt) ? " over" : "")}>📞 {fmtWhen(l.callbackAt)}</span>}
+                                {l.scheduledFor && <span className={"wlead-tag ap" + (isOverdue(l.scheduledFor) ? " over" : "")}>🏠 {fmtWhen(l.scheduledFor)}</span>}
+                              </div>
+                            )}
                             <span className="wlead-stage" style={{ background: st.color }}>{st.label}</span>
                           </div>
                         );

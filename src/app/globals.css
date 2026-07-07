@@ -335,6 +335,16 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
   .wrange{flex:1;min-width:0}
   .wctrl-row{gap:8px}
   .wad-detail-head h3{font-size:15px}
+  /* CRM mobil: größere Touch-Ziele, mehr Luft */
+  .crm-panel{padding:16px 15px calc(28px + env(safe-area-inset-bottom))}
+  .crm-contact a,.crm-contact span{font-size:14px;padding:10px 13px}
+  .wstage-opt{font-size:14px;padding:11px 15px}
+  .wchip,.wchip-stage{padding:9px 13px;font-size:13px}
+  .wlead.crm{padding:13px 106px 13px 13px}
+  .wlead-main{font-size:14.5px}
+  .winp{font-size:16px} /* verhindert iOS-Zoom beim Fokus */
+  .when-chip{padding:9px 13px;font-size:13px}
+  .wcb-call{padding:11px 15px}
 }
 
 /* Leads */
@@ -368,7 +378,39 @@ textarea.ad-inp{resize:vertical;line-height:1.5}
 .wstage-row.add{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
 /* Status-Auswahl im Lead-Detail (farbig) */
 .wstage-pick{display:flex;flex-wrap:wrap;gap:7px}
-.wstage-opt{font-size:13px;font-weight:700;padding:8px 13px;border-radius:11px;border:1.5px solid;background:#fff;cursor:pointer}
+.wstage-opt{font-size:13.5px;font-weight:700;padding:10px 15px;border-radius:11px;border:1.5px solid;background:#fff;cursor:pointer;min-height:42px}
+/* Auto-Sync-Hinweis */
+.wauto{font-size:11.5px;font-weight:700;color:var(--sub);background:var(--chip);border:none;border-radius:9px;padding:6px 10px;cursor:pointer}
+.wauto.on{color:var(--accent)}
+/* Schnell-Zeitwähler (Rückruf / Termin) */
+.when{margin-top:4px}
+.when-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+.when-chip{font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:18px;border:1px solid var(--line);background:#fff;color:var(--accent);cursor:pointer;min-height:38px}
+.when-chip:hover{border-color:var(--accent);background:var(--accent-soft)}
+.when-row{display:flex;gap:7px;align-items:center}
+.when-input{flex:1}
+.when-clear{flex:none;width:42px;height:42px;border:1px solid var(--line);background:#fff;border-radius:11px;color:var(--sub);font-size:15px;cursor:pointer}
+.when-cur{font-size:12px;color:var(--sub);margin-top:5px}
+.when-cur.due{color:var(--red);font-weight:700}
+/* "Heute anrufen"-Block (fällige Rückrufe) */
+.wcb-due{background:#fff;border:2px solid var(--accent);border-radius:14px;padding:11px 12px;margin-bottom:12px}
+.wcb-due-t{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:8px}
+.wcb{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.wcb:first-of-type{border-top:none}
+.wcb-main{flex:1;min-width:0;cursor:pointer}
+.wcb-name{font-size:14px}
+.wcb-time{color:var(--accent);font-weight:700}
+.wcb.over .wcb-time{color:var(--red)}
+.wcb-note{font-size:12.5px;color:var(--ink);margin-top:2px}
+.wcb-phone{font-size:12px;color:var(--sub);margin-top:1px}
+.wcb-act{display:flex;align-items:center;gap:7px;flex:none}
+.wcb-call{background:var(--green);color:#fff;font-size:13px;font-weight:700;padding:9px 13px;border-radius:11px;text-decoration:none;white-space:nowrap}
+.wcb-done{width:42px;height:42px;border:1px solid var(--line);background:#fff;border-radius:11px;color:var(--green);font-size:17px;font-weight:800;cursor:pointer;flex:none}
+/* Rückruf/Termin-Tags in der Lead-Liste */
+.wlead-when{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
+.wlead-tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:9px;background:var(--accent-soft);color:var(--accent)}
+.wlead-tag.ap{background:var(--amber-soft);color:var(--amber)}
+.wlead-tag.over{background:var(--red-soft);color:var(--red)}
 /* CRM-Detail Overlay */
 .crm-overlay{position:fixed;inset:0;background:rgba(20,18,16,.4);z-index:60;display:flex;align-items:flex-end;justify-content:center}
 .crm-panel{background:#fff;width:100%;max-width:540px;max-height:92vh;overflow-y:auto;border-radius:18px 18px 0 0;padding:18px 18px 30px}

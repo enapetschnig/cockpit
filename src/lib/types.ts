@@ -103,6 +103,8 @@ export interface LeadDTO {
   status: string; // new | contacted | scheduled | won | lost
   notes: string | null;
   scheduledFor: string | null;
+  callbackAt: string | null; // Wiedervorlage (wann wieder anrufen)
+  callbackNote: string | null;
   lastContactedAt: string | null;
   receivedAt: string;
   seenAt: string | null; // null = neu/ungesehen

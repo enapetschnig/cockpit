@@ -14,7 +14,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const access = await requireAccountAccess(lead.adAccountId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
-  const b = (await req.json().catch(() => ({}))) as { status?: string; notes?: string; scheduledFor?: string | null; seen?: boolean };
+  const b = (await req.json().catch(() => ({}))) as { status?: string; notes?: string; scheduledFor?: string | null; callbackAt?: string | null; callbackNote?: string | null; seen?: boolean };
   const data: Prisma.LeadUpdateInput = {};
   if (typeof b.status === "string" && b.status.trim()) {
     // Status muss eine bestehende Pipeline-Stufe des Kontos sein.
@@ -33,6 +33,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       data.scheduledFor = dt;
     }
   }
+  if (b.callbackAt !== undefined) {
+    if (!b.callbackAt) data.callbackAt = null;
+    else {
+      const dt = new Date(b.callbackAt);
+      if (Number.isNaN(dt.getTime())) return NextResponse.json({ error: "Ungültige Zeit (callbackAt)" }, { status: 400 });
+      data.callbackAt = dt;
+    }
+  }
+  if (b.callbackNote !== undefined) data.callbackNote = b.callbackNote || null;
   if (b.seen && !lead.seenAt) data.seenAt = new Date();
 
   const updated = await prisma.lead.update({ where: { id }, data, include: { activities: { orderBy: { createdAt: "desc" } } } });

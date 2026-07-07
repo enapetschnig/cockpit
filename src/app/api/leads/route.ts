@@ -29,6 +29,13 @@ export async function GET(req: Request) {
   for (const g of grouped) counts[g.status] = g._count;
   // ungesehene (neu eingegangene) Leads
   const unseen = await prisma.lead.count({ where: { adAccountId: accountId, seenAt: null } });
+  // offene Rückrufe (Wiedervorlagen) – unabhängig vom Filter, für den „Heute anrufen"-Block
+  const callbackRows = await prisma.lead.findMany({
+    where: { adAccountId: accountId, callbackAt: { not: null } },
+    include: { activities: { orderBy: { createdAt: "desc" } } },
+    orderBy: { callbackAt: "asc" },
+    take: 50,
+  });
 
-  return NextResponse.json({ leads: leads.map(toLeadDTO), counts, unseen });
+  return NextResponse.json({ leads: leads.map(toLeadDTO), counts, unseen, callbacks: callbackRows.map(toLeadDTO) });
 }

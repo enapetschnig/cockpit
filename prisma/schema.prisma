@@ -362,7 +362,9 @@ model Lead {
   // CRM-Status
   status          String    @default("new") // new | contacted | scheduled | won | lost
   notes           String?
-  scheduledFor    DateTime? // Vor-Ort-Termin / Rückruftermin
+  scheduledFor    DateTime? // Vor-Ort-Termin (konkreter Termin)
+  callbackAt      DateTime? // Wiedervorlage: wann wieder anrufen
+  callbackNote    String?   // Notiz zum Rückruf (worum geht's)
   lastContactedAt DateTime?
 
   receivedAt DateTime // wann der Lead über das Formular kam
