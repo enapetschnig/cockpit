@@ -216,6 +216,8 @@ model AdAccount {
   status        String    @default("not_connected") // not_connected | connected | error
   lastError     String?
   lastSyncAt    DateTime?
+  lastLeadSyncAt DateTime? // letzter Lead-Sync (für inkrementelles Nachziehen)
+  leadFormCountsJson String @default("{}") // {formId: leadsCount} – nur gewachsene Formulare neu abfragen
 
   // Mandant (für späteren Kunden-Zugriff): wer dieses Konto sehen darf.
   ownerUserId String? // Supabase user.id des Kunden (null = nur ePower/Admin)

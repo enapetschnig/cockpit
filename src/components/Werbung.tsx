@@ -410,6 +410,16 @@ export default function Werbung() {
       await loadCrm();
     } catch { /* ignore */ } finally { setAutoSyncing(false); }
   }
+  // Vollständiger Neuabgleich (alle Formulare/Seiten) – zieht die komplette Historie in die App.
+  async function syncCrmFull() {
+    setCrmSyncing(true);
+    try {
+      const d = await (await fetch("/api/ads/sync/leads", { method: "POST", headers: json, body: JSON.stringify({ accountId: selId, full: true }) })).json();
+      const r = (d.results || [])[0];
+      await loadCrm();
+      flash(r?.error ? "Hinweis: " + r.error : `Vollständig abgeglichen – ${r?.created ?? 0} neue Leads.`);
+    } catch { flash("Abgleich fehlgeschlagen."); } finally { setCrmSyncing(false); }
+  }
   async function patchLead(id: string, fields: Record<string, unknown>) {
     try {
       const d = await (await fetch(`/api/leads/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(fields) })).json();
@@ -681,6 +691,7 @@ export default function Werbung() {
                     <h2>📥 Anfragen (Leads){crmUnseen > 0 && <span className="wsection-badge">{crmUnseen} neu</span>}</h2>
                     <div className="wcrm-actions">
                       <button className={"wauto" + (autoSyncing ? " on" : "")} onClick={() => autoSyncLeads(true)} title="Jetzt aktualisieren">{autoSyncing ? "⟳ aktualisiere…" : "⟳ automatisch aktuell"}</button>
+                      <button className="wbtn ghost sm" disabled={crmSyncing} onClick={syncCrmFull} title="Komplette Lead-Historie neu aus Facebook ziehen">{crmSyncing ? "…" : "⤓ alle laden"}</button>
                       <button className="wbtn ghost sm" onClick={() => setShowStages((v) => !v)}>{showStages ? "Fertig" : "⚙ Pipeline"}</button>
                     </div>
                   </div>

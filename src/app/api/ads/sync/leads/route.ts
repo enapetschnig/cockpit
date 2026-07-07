@@ -6,11 +6,11 @@ import { getSessionUser, accountScope, requireAccountAccess } from "@/lib/authz"
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-async function runSync(accountIds: string[]) {
+async function runSync(accountIds: string[], full = false) {
   const results: { id: string; created?: number; total?: number; note?: string; error?: string }[] = [];
   for (const id of accountIds) {
     try {
-      const r = await syncLeads(id);
+      const r = await syncLeads(id, { full });
       results.push({ id, created: r.created, total: r.total, note: r.note });
     } catch (e) {
       results.push({ id, error: e instanceof Error ? e.message : String(e) });
@@ -30,9 +30,9 @@ export async function GET(req: Request) {
   return NextResponse.json({ ok: true, results });
 }
 
-// POST /api/ads/sync/leads { accountId? } -> persistiert neue Leads (eigene Konten)
+// POST /api/ads/sync/leads { accountId?, full? } -> persistiert Leads (eigene Konten)
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { accountId?: string };
+  const body = (await req.json().catch(() => ({}))) as { accountId?: string; full?: boolean };
   let accountIds: string[];
   if (body.accountId) {
     const access = await requireAccountAccess(body.accountId);
@@ -44,6 +44,6 @@ export async function POST(req: Request) {
     const accs = await prisma.adAccount.findMany({ where: { ...accountScope(user), tokenCipher: { not: null } }, select: { id: true } });
     accountIds = accs.map((a) => a.id);
   }
-  const results = await runSync(accountIds);
+  const results = await runSync(accountIds, body.full === true);
   return NextResponse.json({ ok: true, results });
 }

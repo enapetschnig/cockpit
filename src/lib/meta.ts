@@ -32,6 +32,28 @@ async function graphGet(path: string, token: string, params: Record<string, stri
   return data as Record<string, unknown>;
 }
 
+// Holt ALLE Seiten einer Graph-Liste über Cursor-Pagination (bis cap / maxPages).
+// Fehler auf der ERSTEN Seite werfen (z. B. Rechte); spätere Seitenfehler brechen nur ab.
+async function graphGetAll(path: string, token: string, params: Record<string, string>, cap: number, maxPages = 60): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  let after: string | undefined;
+  for (let i = 0; i < maxPages && out.length < cap; i++) {
+    let resp: Record<string, unknown>;
+    try {
+      resp = await graphGet(path, token, { ...params, limit: "200", ...(after ? { after } : {}) });
+    } catch (e) {
+      if (i === 0) throw e;
+      break;
+    }
+    const data = (resp.data as Record<string, unknown>[]) ?? [];
+    out.push(...data);
+    const paging = resp.paging as { cursors?: { after?: string }; next?: string } | undefined;
+    after = paging?.cursors?.after;
+    if (!after || !paging?.next || data.length === 0) break;
+  }
+  return out.slice(0, cap);
+}
+
 async function graphPost(path: string, token: string, body: Record<string, string>): Promise<Record<string, unknown>> {
   const form = new URLSearchParams({ ...body, access_token: token });
   const res = await fetch(graphUrl(path), {
@@ -597,31 +619,91 @@ export async function listLeads(adAccountId: string, take = 50): Promise<{ leads
   return { leads: leads.slice(0, take), totalForms, forms: formCounts.slice(0, 30), note };
 }
 
-/** Holt die Meta-Leads und persistiert sie (Dedup über metaLeadId) – fürs CRM. Liefert Anzahl neuer Leads. */
-export async function syncLeads(adAccountId: string): Promise<{ total: number; created: number; note?: string }> {
-  const data = await listLeads(adAccountId, 200);
-  let created = 0;
-  for (const l of data.leads) {
-    const exists = await prisma.lead.findUnique({ where: { metaLeadId_adAccountId: { metaLeadId: l.id, adAccountId } }, select: { id: true } });
-    if (exists) {
-      // Kontaktdaten auffrischen, CRM-Felder (status/notes) NICHT überschreiben
-      await prisma.lead.update({
-        where: { id: exists.id },
-        data: { name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null, leadFormName: l.form, fieldDataJson: JSON.stringify(l.fields) },
-      });
-    } else {
-      await prisma.lead.create({
-        data: {
-          adAccountId, metaLeadId: l.id, leadFormName: l.form,
-          name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null,
-          fieldDataJson: JSON.stringify(l.fields),
-          receivedAt: l.createdTime ? new Date(l.createdTime) : new Date(),
-        },
-      });
-      created++;
+function parseLeadRow(l: Record<string, unknown>, formName: string): LeadRow {
+  const fd = (l.field_data as { name: string; values: string[] }[]) ?? [];
+  const get = (...keys: string[]) => fd.find((f) => keys.some((k) => (f.name || "").toLowerCase().includes(k)))?.values?.[0];
+  return {
+    id: String(l.id ?? ""), createdTime: String(l.created_time ?? ""), form: formName,
+    name: get("full_name", "name"), phone: get("phone"), email: get("email"), city: get("city", "ort"),
+    fields: fd.map((f) => ({ key: f.name, value: (f.values || []).join(", ") })),
+  };
+}
+
+/**
+ * Zieht ALLE Meta-Leads ins CRM (Dedup über metaLeadId) – alle Formulare + alle Seiten
+ * per Cursor-Pagination. Beim ersten Mal (oder full=true) vollständiger Backfill; danach
+ * inkrementell nur neue Leads seit dem letzten Sync (billig). CRM-Felder (Status/Notizen/
+ * Rückruf) werden NIE überschrieben.
+ */
+export async function syncLeads(adAccountId: string, opts: { full?: boolean } = {}): Promise<{ total: number; created: number; note?: string }> {
+  const acc = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
+  if (!acc) throw new Error("Werbekonto nicht gefunden.");
+  const token = await accountToken(acc);
+  const startedAt = new Date();
+  const GLOBAL_CAP = 4000;
+
+  // Inkrementell (mit 1 Tag Überlappung) außer beim ersten Mal / full
+  const incremental = !opts.full && !!acc.lastLeadSyncAt;
+  const sinceEpoch = incremental ? Math.floor(acc.lastLeadSyncAt!.getTime() / 1000) - 86400 : undefined;
+  // Zähler-Cache: nur Formulare abfragen, deren leads_count gewachsen ist (spart Requests)
+  let prevCounts: Record<string, number> = {};
+  try { prevCounts = JSON.parse(acc.leadFormCountsJson || "{}"); } catch { /* ignore */ }
+  const newCounts: Record<string, number> = {};
+
+  const pagesResp = await graphGet("me/accounts", token, { fields: "id,name,access_token", limit: "50" });
+  const pages = (pagesResp.data as Record<string, unknown>[]) ?? [];
+
+  // vorhandene Lead-IDs einmal laden → schnelles created-Zählen ohne N Einzelabfragen
+  const existing = new Set((await prisma.lead.findMany({ where: { adAccountId }, select: { metaLeadId: true } })).map((x) => x.metaLeadId));
+
+  let total = 0, created = 0, permissionBlocked = false;
+  for (const page of pages) {
+    if (total >= GLOBAL_CAP) break;
+    const pageToken = String(page.access_token ?? token);
+    const forms = await graphGetAll(`${page.id}/leadgen_forms`, pageToken, { fields: "id,name,leads_count" }, 500).catch(() => [] as Record<string, unknown>[]);
+    for (const form of forms) {
+      if (total >= GLOBAL_CAP) break;
+      const formId = String(form.id);
+      const count = Number(form.leads_count ?? NaN);
+      if (Number.isFinite(count)) newCounts[formId] = count;
+      // Inkrementell: Formular überspringen, wenn der Lead-Zähler nicht gewachsen ist.
+      if (incremental && Number.isFinite(count) && count <= (prevCounts[formId] ?? -1)) continue;
+      if (Number.isFinite(count) && count === 0) continue;
+
+      const params: Record<string, string> = { fields: "created_time,field_data" };
+      if (sinceEpoch) params.filtering = JSON.stringify([{ field: "time_created", operator: "GREATER_THAN", value: sinceEpoch }]);
+      let rows: Record<string, unknown>[];
+      try {
+        rows = await graphGetAll(`${formId}/leads`, pageToken, params, GLOBAL_CAP - total);
+      } catch (e) {
+        if (/leads_retrieval|#200/i.test(e instanceof Error ? e.message : "")) permissionBlocked = true;
+        continue;
+      }
+      for (const raw of rows) {
+        const l = parseLeadRow(raw, String(form.name ?? ""));
+        if (!l.id) continue;
+        total++;
+        const isNew = !existing.has(l.id);
+        await prisma.lead.upsert({
+          where: { metaLeadId_adAccountId: { metaLeadId: l.id, adAccountId } },
+          create: {
+            adAccountId, metaLeadId: l.id, leadFormName: l.form,
+            name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null,
+            fieldDataJson: JSON.stringify(l.fields), receivedAt: l.createdTime ? new Date(l.createdTime) : new Date(),
+          },
+          update: { name: l.name ?? null, phone: l.phone ?? null, email: l.email ?? null, city: l.city ?? null, leadFormName: l.form, fieldDataJson: JSON.stringify(l.fields) },
+        });
+        if (isNew) { created++; existing.add(l.id); }
+      }
     }
   }
-  return { total: data.leads.length, created, note: data.note };
+
+  // gemischte Zähler behalten (Formulare, die diesmal nicht neu geladen wurden, nicht verlieren)
+  const mergedCounts = { ...prevCounts, ...newCounts };
+  await prisma.adAccount.update({ where: { id: adAccountId }, data: { lastLeadSyncAt: startedAt, leadFormCountsJson: JSON.stringify(mergedCounts) } }).catch(() => {});
+  let note: string | undefined;
+  if (total === 0 && permissionBlocked) note = "Lead-Zugriff für den System-User auf Seiten-Ebene fehlt (Business-Einstellungen → Integrationen → Lead-Zugriff → Seite).";
+  return { total, created, note };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
