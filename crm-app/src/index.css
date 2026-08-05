@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 220 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+
+    --primary: 142 70% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 220 20% 20%;
+
+    --muted: 210 15% 94%;
+    --muted-foreground: 220 10% 45%;
+
+    --accent: 142 60% 95%;
+    --accent-foreground: 142 70% 30%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 210 100% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 220 15% 90%;
+    --input: 220 15% 90%;
+    --ring: 142 70% 45%;
+
+    --radius: 0.75rem;
+
+    /* Pipeline Stage Colors */
+    --stage-new: 210 100% 50%;
+    --stage-contact: 38 92% 50%;
+    --stage-qualified: 280 70% 50%;
+    --stage-meeting: 200 100% 45%;
+    --stage-won: 142 70% 45%;
+    --stage-lost: 0 84% 60%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 142 70% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 142 60% 95%;
+    --sidebar-accent-foreground: 142 70% 30%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 142 70% 45%;
+  }
+
+  .dark {
+    --background: 220 20% 8%;
+    --foreground: 210 20% 98%;
+
+    --card: 220 20% 12%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 220 20% 12%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 142 70% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 20% 18%;
+    --secondary-foreground: 210 20% 90%;
+
+    --muted: 220 15% 20%;
+    --muted-foreground: 220 10% 60%;
+
+    --accent: 142 50% 20%;
+    --accent-foreground: 142 70% 70%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 20%;
+    --input: 220 15% 20%;
+    --ring: 142 70% 50%;
+
+    --sidebar-background: 220 20% 10%;
+    --sidebar-foreground: 210 20% 90%;
+    --sidebar-primary: 142 70% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 142 50% 20%;
+    --sidebar-accent-foreground: 142 70% 70%;
+    --sidebar-border: 220 15% 20%;
+    --sidebar-ring: 142 70% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+@layer components {
+  .pipeline-stage {
+    @apply rounded-xl p-4 min-h-[500px] transition-all duration-200;
+  }
+
+  .lead-card {
+    @apply bg-card rounded-lg p-4 shadow-sm border border-border hover:shadow-md transition-all duration-200 cursor-pointer;
+  }
+
+  .lead-card:hover {
+    @apply border-primary/30;
+  }
+
+  .stage-badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+
+  .stage-new {
+    @apply bg-blue-100 text-blue-700;
+  }
+
+  .stage-contact {
+    @apply bg-amber-100 text-amber-700;
+  }
+
+  .stage-qualified {
+    @apply bg-purple-100 text-purple-700;
+  }
+
+  .stage-meeting {
+    @apply bg-cyan-100 text-cyan-700;
+  }
+
+  .stage-won {
+    @apply bg-green-100 text-green-700;
+  }
+
+  .stage-lost {
+    @apply bg-red-100 text-red-700;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-muted rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+}

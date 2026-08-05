@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "sdk_version": "0.24.0",
+  "path": "/functions/v1/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://wlalcftxyqozrmzcywus.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "epower-crm-mcp",
+      "version": "0.1.0",
+      "title": "epower CRM"
+    },
+    "tools": [
+      {
+        "name": "list_leads",
+        "title": "List leads",
+        "description": "List leads from the CRM, optionally filtered by stage and/or a text search across name, company, phone.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "enum": [
+                "new",
+                "qualified",
+                "unqualified",
+                "contacted",
+                "meeting",
+                "won",
+                "lost"
+              ],
+              "description": "Filter by pipeline stage."
+            },
+            "search": {
+              "type": "string",
+              "description": "Case-insensitive substring match on full_name, company_name or phone."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "Max rows to return (default 50)."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_lead",
+        "title": "Get lead",
+        "description": "Fetch one lead by id, including its contact logs.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Lead UUID."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "update_lead_stage",
+        "title": "Update lead stage",
+        "description": "Change the pipeline stage of a lead.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "new",
+                "qualified",
+                "unqualified",
+                "contacted",
+                "meeting",
+                "won",
+                "lost"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "stage"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "add_contact_log",
+        "title": "Add contact log",
+        "description": "Log a contact attempt (call, email, message) for a lead.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "lead_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "description": "e.g. call, email, whatsapp"
+            },
+            "reached_customer": {
+              "type": "boolean"
+            },
+            "comment": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO timestamp; defaults to now."
+            }
+          },
+          "required": [
+            "lead_id",
+            "type"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}

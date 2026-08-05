@@ -1,0 +1,7 @@
+project_id = "wlalcftxyqozrmzcywus"
+
+[functions.transcribe-summarize]
+verify_jwt = false
+
+[functions.import-lead]
+verify_jwt = false

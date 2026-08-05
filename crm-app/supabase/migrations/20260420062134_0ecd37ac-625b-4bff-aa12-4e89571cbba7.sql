@@ -1,0 +1,1 @@
+UPDATE public.leads SET offer_id = '4cd8f3f3-f5a1-4865-9fb9-721f817c61ef' WHERE phone IN ('+436649954854','+4366488385979') AND user_id = 'cc3bb025-6463-40dd-8615-bf9eaab01783';
