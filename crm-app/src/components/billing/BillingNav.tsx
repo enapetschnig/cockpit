@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Zap, FileText, Receipt, Users, BookOpen, Archive, Settings, LayoutGrid, ExternalLink } from 'lucide-react';
+import { Zap, FileText, Receipt, Users, BookOpen, Archive, Settings, LayoutGrid, ExternalLink, Wallet } from 'lucide-react';
 
 const ITEMS = [
   { to: '/', label: 'Pipeline', icon: LayoutGrid },
+  { to: '/buchhaltung', label: 'Buchhaltung', icon: Wallet },
   { to: '/angebote-rechnung', label: 'Angebote', icon: FileText },
   { to: '/rechnungen', label: 'Rechnungen', icon: Receipt },
   { to: '/kunden', label: 'Kunden', icon: Users },

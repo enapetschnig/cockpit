@@ -571,7 +571,10 @@ export default function Cockpit() {
           <svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" /><path d="M15 9a3 3 0 0 1 0 6" /></svg>Werbung
         </a>
         <a className="navi" href="/buchhaltung" style={{ textDecoration: "none" }}>
-          <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" /></svg>Buchhaltung
+          <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" /></svg>Belege
+        </a>
+        <a className="navi" href="https://app.epowergmbh.at/buchhaltung" style={{ textDecoration: "none" }}>
+          <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h12" /></svg>Rechnungen
         </a>
       </div>
     </div>

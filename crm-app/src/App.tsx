@@ -12,6 +12,7 @@ import DmcPage from "./pages/DmcPage";
 import OffersPage from "./pages/OffersPage";
 import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
+import BuchhaltungPage from "./pages/BuchhaltungPage";
 import BelegePage from "./pages/BelegePage";
 import BelegEditor from "./pages/BelegEditor";
 import KundenPage from "./pages/KundenPage";
@@ -113,6 +114,7 @@ const App = () => (
             }
           />
           <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
+          <Route path="/buchhaltung" element={<ProtectedRoute><BuchhaltungPage /></ProtectedRoute>} />
           <Route path="/angebote-rechnung" element={<ProtectedRoute><BelegePage mode="offer" /></ProtectedRoute>} />
           <Route path="/rechnungen" element={<ProtectedRoute><BelegePage mode="invoice" /></ProtectedRoute>} />
           <Route path="/beleg/:id" element={<ProtectedRoute><BelegEditor /></ProtectedRoute>} />

@@ -19,8 +19,9 @@ import {
 import { buildDocumentPdf, documentFileName } from '@/lib/documentPdf';
 import { sendDocumentMail } from '@/lib/sendMail';
 import {
-  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt,
+  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye,
 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 type Item = Partial<DocumentItem> & { _k: string };
 const key = () => Math.random().toString(36).slice(2);
@@ -49,6 +50,7 @@ export default function BelegEditor() {
   const [artQ, setArtQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [mailTo, setMailTo] = useState('');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -158,6 +160,11 @@ export default function BelegEditor() {
     await persist();
     const pdf = makePdf();
     pdf.save(documentFileName({ ...doc, id: doc.id || 'x' } as BillingDocument));
+  };
+
+  const showPreview = () => {
+    const url = makePdf().output('bloburl') as unknown as string;
+    setPreviewUrl(String(url));
   };
 
   const sendMail = async () => {
@@ -437,12 +444,20 @@ export default function BelegEditor() {
         )}
       </main>
 
+      <Dialog open={!!previewUrl} onOpenChange={(o) => { if (!o) setPreviewUrl(null); }}>
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+          <DialogHeader><DialogTitle>Vorschau · {doc.number || DOC_KIND_LABEL[kind]}</DialogTitle></DialogHeader>
+          {previewUrl && <iframe src={previewUrl} className="flex-1 w-full rounded-lg border" title="PDF-Vorschau" />}
+        </DialogContent>
+      </Dialog>
+
       {/* Aktionsleiste */}
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t p-3">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center gap-2">
           <div className="font-bold mr-auto">{eur(totals.gross)}</div>
           <Input className="w-full sm:w-56" placeholder="E-Mail-Empfänger" value={mailTo} onChange={(e) => setMailTo(e.target.value)} />
           <Button variant="outline" className="gap-1" disabled={busy} onClick={() => persist()}><Save className="w-4 h-4" /> Speichern</Button>
+          <Button variant="outline" className="gap-1" onClick={showPreview}><Eye className="w-4 h-4" /> Vorschau</Button>
           <Button variant="outline" className="gap-1" disabled={busy} onClick={downloadPdf}><Download className="w-4 h-4" /> PDF</Button>
           <Button className="gap-1" disabled={busy} onClick={sendMail}><Send className="w-4 h-4" /> Senden</Button>
         </div>
