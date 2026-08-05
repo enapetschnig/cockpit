@@ -11,6 +11,7 @@ const ALLOWED = new Set([
   "https://epower-crm.vercel.app",
   "http://localhost:5173",
   "http://localhost:8080",
+  "https://cockpit-flax-tau.vercel.app",
 ]);
 
 function cors(origin: string | null): Record<string, string> {

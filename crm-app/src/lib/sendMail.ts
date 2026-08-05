@@ -2,7 +2,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 /** Cockpit-Endpunkt (nutzt die dort verbundene Gmail-Verbindung). */
-const COCKPIT = import.meta.env.VITE_COCKPIT_URL || 'https://cockpit.epowergmbh.at';
+const COCKPIT = import.meta.env.VITE_COCKPIT_URL || 'https://cockpit-flax-tau.vercel.app';
 
 export interface SendMailInput {
   to: string;

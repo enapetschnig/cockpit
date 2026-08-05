@@ -38,7 +38,7 @@ export function BillingNav() {
               </Link>
             );
           })}
-          <a href="https://cockpit.epowergmbh.at" target="_blank" rel="noreferrer">
+          <a href="https://cockpit-flax-tau.vercel.app" target="_blank" rel="noreferrer">
             <Button variant="ghost" size="sm" className="gap-1.5 whitespace-nowrap text-muted-foreground">
               <ExternalLink className="w-4 h-4" /> <span className="hidden sm:inline">Cockpit</span>
             </Button>
