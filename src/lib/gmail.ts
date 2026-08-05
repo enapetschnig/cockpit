@@ -334,6 +334,63 @@ export async function sendReply(
   return { to, subject };
 }
 
+/** Sendet eine neue Mail mit optionalem PDF-Anhang (für Angebote/Rechnungen aus dem CRM). */
+export async function sendMailWithPdf(opts: {
+  account?: Account;
+  to: string;
+  subject: string;
+  body: string;
+  fileName?: string;
+  pdfBase64?: string;
+}): Promise<{ to: string }> {
+  const account = opts.account ?? ("firma" as Account);
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Gmail-Konto "${account}" ist nicht verbunden (unter /connect verbinden).`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: acc.refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: client });
+
+  const from = acc.email || "me";
+  const enc = (s: string) => `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
+  let raw: string;
+  if (opts.pdfBase64) {
+    const b = "b_" + Math.random().toString(36).slice(2);
+    const file = (opts.fileName || "Beleg.pdf").replace(/"/g, "");
+    raw = [
+      `From: ${from}`,
+      `To: ${opts.to}`,
+      `Subject: ${enc(opts.subject)}`,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary="${b}"`,
+      "",
+      `--${b}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from(opts.body, "utf8").toString("base64"),
+      "",
+      `--${b}`,
+      `Content-Type: application/pdf; name="${file}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${file}"`,
+      "",
+      opts.pdfBase64.replace(/(.{76})/g, "$1\n"),
+      "",
+      `--${b}--`,
+      "",
+    ].join("\r\n");
+  } else {
+    raw = [
+      `From: ${from}`, `To: ${opts.to}`, `Subject: ${enc(opts.subject)}`,
+      "MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64", "", Buffer.from(opts.body, "utf8").toString("base64"), "",
+    ].join("\r\n");
+  }
+  const encoded = Buffer.from(raw).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  await gmail.users.messages.send({ userId: "me", requestBody: { raw: encoded } });
+  return { to: opts.to };
+}
+
 /** Liefert die letzten Nachrichten eines Threads als Kontext-Text (für bessere Antworten). */
 export async function getThreadContext(account: Account, threadId: string, maxMessages = 4): Promise<string> {
   try {

@@ -21,6 +21,9 @@ export async function middleware(req: NextRequest) {
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();
 
+  // Beleg-Versand aus der CRM-App: prüft das Supabase-Token selbst (inkl. CORS-Preflight)
+  if (pathname === "/api/mail/send-document") return NextResponse.next();
+
   const { response, user, role } = await updateSession(req);
 
   // Login-Seite ist öffentlich (Session-Cookies trotzdem mitgeben)

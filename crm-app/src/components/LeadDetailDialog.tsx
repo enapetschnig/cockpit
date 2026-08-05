@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/select';
 import { Lead, LeadStage, ContactLog, STAGE_LABELS, SOURCE_LABELS } from '@/types/lead';
 import { Switch } from '@/components/ui/switch';
+import { useNavigate } from 'react-router-dom';
+import { FileText, Receipt } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Phone, Mail, Building2, MessageSquare, Trash2, Euro, CheckCircle2, XCircle, Clock, Save, Pencil, X, CalendarClock, Mic } from 'lucide-react';
 import { format } from 'date-fns';
@@ -61,6 +63,7 @@ export function LeadDetailDialog({
   onDeleteContactLog,
   onDelete,
 }: LeadDetailDialogProps) {
+  const navigate = useNavigate();
   const { offers } = useOffers();
   const [newComment, setNewComment] = useState('');
   const [reachedCustomer, setReachedCustomer] = useState(true);
@@ -188,6 +191,17 @@ export function LeadDetailDialog({
             />
           </DialogTitle>
         </DialogHeader>
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          <Button size="sm" variant="outline" className="gap-1.5"
+            onClick={() => navigate(`/beleg/neu?kind=offer&lead=${lead.id}`)}>
+            <FileText className="w-4 h-4" /> Angebot erstellen
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5"
+            onClick={() => navigate(`/beleg/neu?kind=invoice&lead=${lead.id}`)}>
+            <Receipt className="w-4 h-4" /> Rechnung erstellen
+          </Button>
+        </div>
 
         <Tabs defaultValue="overview" className="mt-4">
           <TabsList className="grid w-full grid-cols-3">

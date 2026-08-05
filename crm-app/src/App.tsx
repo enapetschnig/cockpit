@@ -12,6 +12,12 @@ import DmcPage from "./pages/DmcPage";
 import OffersPage from "./pages/OffersPage";
 import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
+import BelegePage from "./pages/BelegePage";
+import BelegEditor from "./pages/BelegEditor";
+import KundenPage from "./pages/KundenPage";
+import KassabuchPage from "./pages/KassabuchPage";
+import ArchivPage from "./pages/ArchivPage";
+import FirmaPage from "./pages/FirmaPage";
 
 const queryClient = new QueryClient();
 
@@ -107,6 +113,13 @@ const App = () => (
             }
           />
           <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
+          <Route path="/angebote-rechnung" element={<ProtectedRoute><BelegePage mode="offer" /></ProtectedRoute>} />
+          <Route path="/rechnungen" element={<ProtectedRoute><BelegePage mode="invoice" /></ProtectedRoute>} />
+          <Route path="/beleg/:id" element={<ProtectedRoute><BelegEditor /></ProtectedRoute>} />
+          <Route path="/kunden" element={<ProtectedRoute><KundenPage /></ProtectedRoute>} />
+          <Route path="/kassabuch" element={<ProtectedRoute><KassabuchPage /></ProtectedRoute>} />
+          <Route path="/archiv" element={<ProtectedRoute><ArchivPage /></ProtectedRoute>} />
+          <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
 
         </Routes>
