@@ -4,10 +4,11 @@ import { BillingNav } from '@/components/billing/BillingNav';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useDocuments } from '@/hooks/useBilling';
+import { useDocuments, useCompanySettings } from '@/hooks/useBilling';
+import { markPaid, repeatForNextMonth, sendReminder } from '@/hooks/useDocumentActions';
 import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, type BillingDocument } from '@/types/billing';
 import {
-  AlertTriangle, ArrowRight, Clock, FileText, Plus, Receipt, TrendingUp, Wallet, CheckCircle2,
+  AlertTriangle, ArrowRight, Clock, FileText, Plus, Receipt, TrendingUp, Wallet, CheckCircle2, Check, BellRing, RefreshCw,
 } from 'lucide-react';
 
 const isOpen = (d: BillingDocument) => !['paid', 'cancelled', 'rejected'].includes(d.status);
@@ -34,7 +35,8 @@ function Kpi({ label, value, sub, icon: Icon, tone = 'default', to }: {
 }
 
 export default function BuchhaltungPage() {
-  const { documents: invoices, isLoading } = useDocuments(['invoice', 'partial_invoice', 'final_invoice', 'credit_note']);
+  const { documents: invoices, isLoading, reload } = useDocuments(['invoice', 'partial_invoice', 'final_invoice', 'credit_note']);
+  const { settings } = useCompanySettings();
   const { documents: offers } = useDocuments(['offer']);
   const navigate = useNavigate();
 
@@ -56,7 +58,8 @@ export default function BuchhaltungPage() {
     };
   }, [invoices, offers]);
 
-  const Row = ({ d, showLate }: { d: BillingDocument; showLate?: boolean }) => (
+  const Row = ({ d, showLate, actions }: { d: BillingDocument; showLate?: boolean; actions?: boolean }) => (
+    <div className="group relative">
     <Link to={`/beleg/${d.id}`}>
       <div className="flex items-center gap-3 py-2.5 px-3 hover:bg-muted/60 rounded-lg">
         <div className="flex-1 min-w-0">
@@ -79,6 +82,23 @@ export default function BuchhaltungPage() {
         </div>
       </div>
     </Link>
+    {actions && (
+      <div className="hidden group-hover:flex absolute right-2 -bottom-1 gap-1 bg-card border rounded-lg shadow-sm p-1 z-10">
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
+          onClick={async (e) => { e.preventDefault(); if (await markPaid(d)) reload(); }}>
+          <Check className="w-3 h-3" /> bezahlt
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
+          onClick={async (e) => { e.preventDefault(); await sendReminder(d, settings, 1); reload(); }}>
+          <BellRing className="w-3 h-3" /> erinnern
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
+          onClick={async (e) => { e.preventDefault(); const id = await repeatForNextMonth(d, settings); if (id) navigate(`/beleg/${id}`); }}>
+          <RefreshCw className="w-3 h-3" /> wiederholen
+        </Button>
+      </div>
+    )}
+    </div>
   );
 
   return (
@@ -122,7 +142,7 @@ export default function BuchhaltungPage() {
                 <p className="text-sm text-muted-foreground flex items-center gap-2 py-6 justify-center">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Nichts überfällig – alles im grünen Bereich
                 </p>
-              ) : s.late.slice(0, 8).map((d) => <Row key={d.id} d={d} showLate />)}
+              ) : s.late.slice(0, 8).map((d) => <Row key={d.id} d={d} showLate actions />)}
             </Card>
 
             <Card className="p-4">
@@ -132,7 +152,7 @@ export default function BuchhaltungPage() {
               </div>
               {s.open.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">Keine offenen Rechnungen</p>
-              ) : s.open.slice(0, 8).map((d) => <Row key={d.id} d={d} />)}
+              ) : s.open.slice(0, 8).map((d) => <Row key={d.id} d={d} actions />)}
             </Card>
 
             <Card className="p-4">
@@ -150,7 +170,7 @@ export default function BuchhaltungPage() {
                 <h2 className="font-semibold flex items-center gap-2"><Receipt className="w-4 h-4" /> Zuletzt</h2>
                 <Link to="/rechnungen"><Button variant="ghost" size="sm" className="gap-1">Alle <ArrowRight className="w-3 h-3" /></Button></Link>
               </div>
-              {s.recent.map((d) => <Row key={d.id} d={d} />)}
+              {s.recent.map((d) => <Row key={d.id} d={d} actions />)}
             </Card>
           </div>
         )}

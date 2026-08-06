@@ -5,6 +5,7 @@ import { PipelineColumn } from '@/components/PipelineColumn';
 import { AddLeadDialog } from '@/components/AddLeadDialog';
 import { LeadDetailDialog } from '@/components/LeadDetailDialog';
 import { CallbackList } from '@/components/CallbackList';
+import { OpenInvoicesStrip } from '@/components/billing/OpenInvoicesStrip';
 import { Lead, LeadStage } from '@/types/lead';
 import { WeeklyActivityOverview } from '@/components/WeeklyActivityOverview';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -51,6 +52,7 @@ const Index = () => {
       />
 
       <div className="flex-1 p-6 overflow-hidden flex flex-col gap-4">
+        <OpenInvoicesStrip />
         <WeeklyActivityOverview leads={leads} />
         {hasCallbackLeads && (
           <CallbackList 

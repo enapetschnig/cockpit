@@ -16,7 +16,8 @@ import {
   DOC_KIND_LABEL, computeTotals, eur, lineNet, customerLabel,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
-import { buildDocumentPdf, documentFileName } from '@/lib/documentPdf';
+import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
+import { LivePreview } from '@/components/billing/LivePreview';
 import { sendDocumentMail } from '@/lib/sendMail';
 import {
   ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye,
@@ -50,7 +51,7 @@ export default function BelegEditor() {
   const [artQ, setArtQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [mailTo, setMailTo] = useState('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [mobilePreview, setMobilePreview] = useState(false);
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -149,22 +150,22 @@ export default function BelegEditor() {
     return newId;
   };
 
-  const makePdf = () => {
+  const makePdf = async () => {
     const full = {
       ...doc, id: doc.id || 'neu', net: totals.net, vat: totals.vat, gross: totals.gross,
     } as BillingDocument;
-    return buildDocumentPdf(full, items.map((i, n) => ({ ...i, position: n } as DocumentItem)), settings);
+    let qr: string | null = null;
+    if (full.kind !== 'offer' && settings?.iban) {
+      qr = await epcQr({ name: settings.company_name || '', iban: settings.iban, bic: settings.bic || '',
+        amount: totals.gross, reference: full.number || '' });
+    }
+    return buildDocumentPdf(full, items.map((i, n) => ({ ...i, position: n } as DocumentItem)), settings, qr);
   };
 
   const downloadPdf = async () => {
     await persist();
-    const pdf = makePdf();
+    const pdf = await makePdf();
     pdf.save(documentFileName({ ...doc, id: doc.id || 'x' } as BillingDocument));
-  };
-
-  const showPreview = () => {
-    const url = makePdf().output('bloburl') as unknown as string;
-    setPreviewUrl(String(url));
   };
 
   const sendMail = async () => {
@@ -172,7 +173,7 @@ export default function BelegEditor() {
     const savedId = await persist({ recipient_email: mailTo.trim() });
     if (!savedId) return;
     setBusy(true);
-    const pdf = makePdf();
+    const pdf = await makePdf();
     const base64 = pdf.output('datauristring').split(',')[1];
     const kindLabel = DOC_KIND_LABEL[(doc.kind as DocKind) || 'offer'];
     const ok = await sendDocumentMail({
@@ -246,11 +247,18 @@ export default function BelegEditor() {
   return (
     <div className="min-h-screen bg-background pb-24">
       <BillingNav />
-      <main className="max-w-5xl mx-auto px-4 py-5">
+      <main className="max-w-[1500px] mx-auto px-4 py-5 lg:grid lg:grid-cols-[minmax(0,1fr)_520px] lg:gap-6 lg:items-start">
+        <div className="min-w-0">
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="gap-1"><ArrowLeft className="w-4 h-4" /> Zurück</Button>
           <Badge variant="outline">{DOC_KIND_LABEL[kind]}</Badge>
-          {doc.number && <span className="font-semibold">{doc.number}</span>}
+          <Input
+            className="h-8 w-40 font-semibold"
+            value={doc.number || ''}
+            onChange={(e) => set({ number: e.target.value })}
+            placeholder="Nummer"
+            title="Laufende Nummer – frei änderbar"
+          />
           {doc.legacy_source && <Badge variant="outline">Archiv-Beleg</Badge>}
         </div>
 
@@ -442,12 +450,25 @@ export default function BelegEditor() {
             )}
           </Card>
         )}
+        </div>
+
+        {/* Live-Vorschau – zeigt das echte PDF schon vor dem Speichern */}
+        <aside className="hidden lg:block sticky top-20">
+          <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Eye className="w-3.5 h-3.5" /> Live-Vorschau
+          </div>
+          <LivePreview
+            doc={{ ...doc, net: totals.net, vat: totals.vat, gross: totals.gross }}
+            items={items} settings={settings}
+            className="h-[calc(100vh-220px)] min-h-[560px] bg-white shadow-sm"
+          />
+        </aside>
       </main>
 
-      <Dialog open={!!previewUrl} onOpenChange={(o) => { if (!o) setPreviewUrl(null); }}>
+      <Dialog open={mobilePreview} onOpenChange={setMobilePreview}>
         <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
           <DialogHeader><DialogTitle>Vorschau · {doc.number || DOC_KIND_LABEL[kind]}</DialogTitle></DialogHeader>
-          {previewUrl && <iframe src={previewUrl} className="flex-1 w-full rounded-lg border" title="PDF-Vorschau" />}
+          <LivePreview doc={{ ...doc, net: totals.net, vat: totals.vat, gross: totals.gross }} items={items} settings={settings} className="flex-1" />
         </DialogContent>
       </Dialog>
 
@@ -457,7 +478,7 @@ export default function BelegEditor() {
           <div className="font-bold mr-auto">{eur(totals.gross)}</div>
           <Input className="w-full sm:w-56" placeholder="E-Mail-Empfänger" value={mailTo} onChange={(e) => setMailTo(e.target.value)} />
           <Button variant="outline" className="gap-1" disabled={busy} onClick={() => persist()}><Save className="w-4 h-4" /> Speichern</Button>
-          <Button variant="outline" className="gap-1" onClick={showPreview}><Eye className="w-4 h-4" /> Vorschau</Button>
+          <Button variant="outline" className="gap-1 lg:hidden" onClick={() => setMobilePreview(true)}><Eye className="w-4 h-4" /> Vorschau</Button>
           <Button variant="outline" className="gap-1" disabled={busy} onClick={downloadPdf}><Download className="w-4 h-4" /> PDF</Button>
           <Button className="gap-1" disabled={busy} onClick={sendMail}><Send className="w-4 h-4" /> Senden</Button>
         </div>

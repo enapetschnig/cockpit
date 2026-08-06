@@ -1,7 +1,30 @@
 import jsPDF from 'jspdf';
+import QRCode from 'qrcode';
 import autoTable from 'jspdf-autotable';
 import type { BillingDocument, CompanySettings, DocumentItem } from '@/types/billing';
 import { DOC_KIND_LABEL, computeTotals, eur, fmtDate } from '@/types/billing';
+
+/**
+ * EPC-QR-Code (SEPA "Scan-to-Pay") – der Kunde scannt ihn mit seiner Banking-App
+ * und die Überweisung ist fertig ausgefüllt. Standard: EPC069-12.
+ */
+export async function epcQr(opts: { name: string; iban: string; bic?: string; amount: number; reference: string }): Promise<string | null> {
+  const iban = (opts.iban || '').replace(/\s/g, '');
+  if (!iban || !opts.amount) return null;
+  const payload = [
+    'BCD', '002', '1', 'SCT',
+    (opts.bic || '').replace(/\s/g, ''),
+    (opts.name || '').slice(0, 70),
+    iban,
+    `EUR${opts.amount.toFixed(2)}`,
+    '', '',
+    (opts.reference || '').slice(0, 140),
+    '',
+  ].join('\n');
+  try {
+    return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 0, width: 240 });
+  } catch { return null; }
+}
 
 /**
  * Erzeugt ein österreichisch konformes Beleg-PDF.
@@ -14,6 +37,7 @@ export function buildDocumentPdf(
   doc: BillingDocument,
   items: DocumentItem[],
   s: CompanySettings | null,
+  qrDataUrl?: string | null,
 ): jsPDF {
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const M = 20;
@@ -153,6 +177,16 @@ export function buildDocumentPdf(
     ].filter(Boolean).join('   ·   ');
     const lines = pdf.splitTextToSize(pay, W - 2 * M);
     pdf.text(lines, M, ty); ty += lines.length * 4.4;
+  }
+
+  // ── Scan-to-Pay (EPC-QR) ──
+  if (qrDataUrl && doc.kind !== 'offer') {
+    const qs = 26;
+    const qx = rx - qs;
+    const qy = Math.min(ty + 2, pdf.internal.pageSize.getHeight() - 46);
+    try { pdf.addImage(qrDataUrl, 'PNG', qx, qy, qs, qs); } catch { /* ignore */ }
+    pdf.setFontSize(7); pdf.setTextColor(...sub);
+    pdf.text('Scannen & bezahlen', qx + qs / 2, qy + qs + 3.5, { align: 'center' });
   }
 
   // ── Fußzeile auf allen Seiten ──
