@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BillingNav } from '@/components/billing/BillingNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,19 +23,28 @@ const STATUS_STYLE: Record<string, string> = {
 export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   const kinds: DocKind[] = mode === 'offer' ? ['offer'] : ['invoice', 'partial_invoice', 'final_invoice', 'credit_note'];
   const { documents, isLoading } = useDocuments(kinds);
+  const [sp, setSp] = useSearchParams();
   const [q, setQ] = useState('');
+  // Rechnungen starten mit den OFFENEN Posten – genau das will man zuerst sehen.
+  const initial = (sp.get('f') as 'offen' | 'overdue' | 'alle') || (mode === 'invoice' ? 'offen' : 'alle');
+  const [view, setView] = useState<'offen' | 'overdue' | 'alle'>(initial);
   const [status, setStatus] = useState<DocStatus | 'alle'>('alle');
   const navigate = useNavigate();
+  const isOverdue = (d: { status: string; due_date: string | null }) =>
+    !['paid', 'cancelled', 'rejected'].includes(d.status) && !!d.due_date && new Date(d.due_date) < new Date();
+  const daysLate = (d?: string | null) => (d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : 0);
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     return documents.filter((d) => {
+      if (view === 'offen' && ['paid', 'cancelled', 'rejected'].includes(d.status)) return false;
+      if (view === 'overdue' && !isOverdue(d)) return false;
       if (status !== 'alle' && d.status !== status) return false;
       if (!s) return true;
       return [d.number, d.recipient_name, d.recipient_company, d.title]
         .filter(Boolean).some((v) => String(v).toLowerCase().includes(s));
     });
-  }, [documents, q, status]);
+  }, [documents, q, status, view]);
 
   const sum = useMemo(() => {
     const open = list.filter((d) => !['paid', 'cancelled', 'rejected'].includes(d.status));
@@ -71,9 +80,10 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
             <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
             <Input className="pl-9" placeholder="Nummer, Kunde, Titel …" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          {(['alle', 'draft', 'sent', ...(mode === 'offer' ? ['accepted', 'rejected'] : ['paid', 'overdue'])] as const).map((s) => (
-            <Button key={s} size="sm" variant={status === s ? 'secondary' : 'outline'} onClick={() => setStatus(s as DocStatus | 'alle')}>
-              {s === 'alle' ? 'Alle' : DOC_STATUS_LABEL[s as DocStatus]}
+          {([['offen', 'Offen'], ['overdue', 'Überfällig'], ['alle', 'Alle']] as const).map(([v, label]) => (
+            <Button key={v} size="sm" variant={view === v ? 'secondary' : 'outline'}
+              onClick={() => { setView(v); setStatus('alle'); setSp(v === 'alle' ? {} : { f: v }); }}>
+              {label}
             </Button>
           ))}
         </div>
@@ -103,7 +113,13 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
                   </div>
                   <div className="text-right shrink-0">
                     <div className="font-semibold">{eur(Number(d.gross))}</div>
-                    <div className="text-xs text-muted-foreground">{fmtDate(d.doc_date)}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {isOverdue(d)
+                        ? <span className="text-red-600 font-semibold">{daysLate(d.due_date)} Tage überfällig</span>
+                        : d.due_date && !['paid', 'cancelled'].includes(d.status)
+                          ? `fällig ${fmtDate(d.due_date)}`
+                          : fmtDate(d.doc_date)}
+                    </div>
                   </div>
                   <span className={`text-[11px] font-semibold px-2 py-1 rounded-md shrink-0 ${STATUS_STYLE[d.status] || ''}`}>
                     {DOC_STATUS_LABEL[d.status] || d.status}

@@ -17,6 +17,7 @@ export function LivePreview({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const lastUrl = useRef<string | null>(null);
 
   const signature = JSON.stringify({ doc, items: items.map((i) => ({ ...i, _k: undefined })) });
@@ -35,14 +36,15 @@ export function LivePreview({
             amount: Number(full.gross) || 0, reference: full.number || '',
           });
         }
+        setErr(null);
         const pdf = buildDocumentPdf(full, its, settings, qr);
         const blobUrl = pdf.output('bloburl') as unknown as string;
         if (cancelled) return;
         if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
         lastUrl.current = String(blobUrl);
         setUrl(String(blobUrl));
-      } catch {
-        /* Vorschau ist unkritisch */
+      } catch (e) {
+        if (!cancelled) setErr((e as Error)?.message || 'Vorschau fehlgeschlagen');
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -60,8 +62,20 @@ export function LivePreview({
           <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
         </div>
       )}
-      {url ? (
-        <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title="Vorschau" className="w-full h-full" />
+      {err ? (
+        <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground p-6 text-center">
+          <span>Vorschau konnte nicht erstellt werden.</span>
+          <span className="text-xs opacity-70">{err}</span>
+        </div>
+      ) : url ? (
+        <>
+          <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title="Vorschau" className="w-full h-full" />
+          {(!doc.status || doc.status === 'draft') && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="text-[90px] font-black text-black/[0.06] -rotate-[30deg] tracking-widest select-none">ENTWURF</span>
+            </div>
+          )}
+        </>
       ) : (
         <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Vorschau wird erstellt …</div>
       )}

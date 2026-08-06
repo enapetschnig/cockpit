@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import {
-  useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, saveDocument,
+  useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
   DOC_KIND_LABEL, computeTotals, eur, lineNet, customerLabel,
@@ -142,6 +142,12 @@ export default function BelegEditor() {
     if (!user) return null;
     setBusy(true);
     const merged = { ...doc, ...extra };
+    // Verbindliche Nummer erst jetzt ziehen – Entwürfe reißen keine Lücke,
+    // und zwei gleichzeitige Speichervorgänge können nie dieselbe Nummer bekommen.
+    if (isNew && !merged.number_locked) {
+      const n = await reserveNumber((merged.kind as DocKind) || 'offer');
+      if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
+    }
     const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id);
     setBusy(false);
     if (!newId) return null;
@@ -252,13 +258,15 @@ export default function BelegEditor() {
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="gap-1"><ArrowLeft className="w-4 h-4" /> Zurück</Button>
           <Badge variant="outline">{DOC_KIND_LABEL[kind]}</Badge>
-          <Input
-            className="h-8 w-40 font-semibold"
-            value={doc.number || ''}
-            onChange={(e) => set({ number: e.target.value })}
-            placeholder="Nummer"
-            title="Laufende Nummer – frei änderbar"
-          />
+          {isNew ? (
+            <span className="text-sm text-muted-foreground" title="Die endgültige Nummer wird beim Speichern verbindlich vergeben">
+              Vorschlag: <b>{doc.number || '…'}</b>
+            </span>
+          ) : (
+            <Input className="h-8 w-40 font-semibold" value={doc.number || ''}
+              onChange={(e) => set({ number: e.target.value })} placeholder="Nummer"
+              title="Laufende Nummer – änderbar" />
+          )}
           {doc.legacy_source && <Badge variant="outline">Archiv-Beleg</Badge>}
         </div>
 

@@ -134,6 +134,14 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
               Rechnung
             </Button>
           </Link>
+          <Link to="/buchhaltung" className="md:hidden">
+            <Button variant="outline" size="icon" className="relative" title="Buchhaltung">
+              <Wallet className="w-4 h-4" />
+              {overdueCount > 0 && (
+                <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-red-500 text-white rounded-full px-1">{overdueCount}</span>
+              )}
+            </Button>
+          </Link>
           <Button onClick={onAddLead} className="gap-2">
             <Plus className="w-4 h-4" />
             Neuer Lead

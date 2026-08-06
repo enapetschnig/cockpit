@@ -118,6 +118,7 @@ export interface BillingDocument {
   pdf_path: string | null;
   legacy_source: string | null;
   legacy_ref: string | null;
+  number_locked?: boolean;
   notes: string | null;
   created_at: string;
   items?: DocumentItem[];

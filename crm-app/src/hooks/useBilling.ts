@@ -126,7 +126,17 @@ export function useDocuments(kinds?: DocKind[]) {
   return { documents, isLoading, reload: load };
 }
 
-/** Nächste Belegnummer im Format AN-2026-0001 / RE-2026-0001 (fortlaufend, lückenlos). */
+/**
+ * Zieht eine verbindliche Belegnummer aus der DB (Zeilensperre → nie doppelt).
+ * Wird ERST beim Speichern aufgerufen, damit abgebrochene Entwürfe keine Lücke reißen.
+ */
+export async function reserveNumber(kind: DocKind): Promise<string | null> {
+  const { data, error } = await db.rpc('next_document_number', { p_kind: kind });
+  if (error) { toast.error('Nummer konnte nicht vergeben werden'); return null; }
+  return data as string;
+}
+
+/** Unverbindlicher Vorschlag für die Anzeige (die echte Nummer kommt beim Speichern). */
 export async function nextNumber(kind: DocKind, settings: CompanySettings | null): Promise<string> {
   const year = new Date().getFullYear();
   const isOffer = kind === 'offer';
@@ -190,6 +200,7 @@ export async function saveDocument(
   );
   const payload = { ...doc, user_id: userId, net: t.net, vat: t.vat, gross: t.gross };
   delete (payload as Record<string, unknown>).items;
+  delete (payload as Record<string, unknown>).number_locked; // reiner UI-Merker
 
   let docId = doc.id;
   if (docId) {
