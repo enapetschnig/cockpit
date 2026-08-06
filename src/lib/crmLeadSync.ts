@@ -44,7 +44,7 @@ function moreThanFive(v: string | null): boolean {
   return m ? Number(m[1]) >= 5 : false;
 }
 
-export interface CrmSyncResult { account: string; found: number; created: number; linked?: number; note?: string }
+export interface CrmSyncResult { account: string; found: number; created: number; linked?: number; blocked?: number; note?: string }
 
 /** Synct ein Werbekonto in das CRM. `sinceDays` begrenzt auf frische Leads. */
 export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: string, sinceDays = 30): Promise<CrmSyncResult> {
@@ -88,11 +88,22 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
     if (p) byPhone.set(p, { id: b.id, meta_lead_id: b.meta_lead_id });
   }
 
+  // Sperrliste: bewusst entfernte Leads dürfen NICHT wieder importiert werden
+  const { data: blocked } = await sb.from("lead_blocklist").select("meta_lead_id, phone_norm").eq("user_id", ownerUserId);
+  const blockIds = new Set<string>();
+  const blockPhones = new Set<string>();
+  for (const b of ((blocked ?? []) as { meta_lead_id: string | null; phone_norm: string | null }[])) {
+    if (b.meta_lead_id) blockIds.add(b.meta_lead_id);
+    if (b.phone_norm) blockPhones.add(b.phone_norm.slice(-9));
+  }
+
   let linked = 0;
+  let skippedBlocked = 0;
   const fresh: typeof leads = [];
   for (const l of leads) {
     if (seen.has(l.id)) continue;
     const phone = normPhone(pick(l.field_data ?? [], "phone", "telefon"));
+    if (blockIds.has(l.id) || (phone && blockPhones.has(phone))) { skippedBlocked++; continue; }
     const hit = phone ? byPhone.get(phone) : undefined;
     if (hit) {
       // Person schon im CRM – nur verknüpfen, Pipeline-Stufe NICHT anfassen
@@ -132,11 +143,11 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
       created_at: l.created_time,
     };
   });
-  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked };
+  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked, blocked: skippedBlocked };
 
   // upsert auf meta_lead_id: parallele Läufe können nichts doppelt anlegen
   const { error, count } = await sb.from("leads")
     .upsert(rows, { onConflict: "meta_lead_id", ignoreDuplicates: true, count: "exact" });
-  if (error) return { account: acc.label, found: leads.length, created: 0, linked, note: error.message };
-  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked };
+  if (error) return { account: acc.label, found: leads.length, created: 0, linked, blocked: skippedBlocked, note: error.message };
+  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked, blocked: skippedBlocked };
 }
