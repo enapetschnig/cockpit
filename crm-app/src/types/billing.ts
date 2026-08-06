@@ -155,6 +155,7 @@ export interface CompanySettings {
   invoice_intro: string | null;
   invoice_outro: string | null;
   small_business: boolean;
+  prices_include_vat: boolean; // true = Preise sind Bruttopreise (wie in den bisherigen Belegen)
 }
 
 export interface CashBookEntry {
@@ -189,10 +190,22 @@ export interface ArchiveFile {
 // ── Rechnen (kaufmännisch gerundet, USt je Satz) ──────────────
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-export function lineNet(it: Pick<DocumentItem, 'quantity' | 'unit_price' | 'discount_percent' | 'is_heading'>): number {
+/** Zeilenbetrag in der eingegebenen Basis (brutto oder netto – je nach Einstellung). */
+export function lineAmount(it: Pick<DocumentItem, 'quantity' | 'unit_price' | 'discount_percent' | 'is_heading'>): number {
   if (it.is_heading) return 0;
   const raw = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0);
   return round2(raw * (1 - (Number(it.discount_percent) || 0) / 100));
+}
+
+/** Zeilen-NETTO – rechnet Bruttopreise bei Bedarf herunter. */
+export function lineNet(
+  it: Pick<DocumentItem, 'quantity' | 'unit_price' | 'discount_percent' | 'is_heading' | 'vat_rate'>,
+  pricesInclVat = false,
+): number {
+  const amount = lineAmount(it);
+  if (!pricesInclVat) return amount;
+  const r = Number(it.vat_rate) || 0;
+  return round2(amount / (1 + r / 100));
 }
 
 export interface Totals {
@@ -207,11 +220,12 @@ export function computeTotals(
   items: Pick<DocumentItem, 'quantity' | 'unit_price' | 'discount_percent' | 'vat_rate' | 'is_heading'>[],
   discountPercent = 0,
   deduct: { net: number; vat: number } = { net: 0, vat: 0 },
+  pricesInclVat = false,
 ): Totals {
   const groups = new Map<number, number>();
   for (const it of items) {
     if (it.is_heading) continue;
-    const n = lineNet(it) * (1 - (discountPercent || 0) / 100);
+    const n = lineNet(it, pricesInclVat) * (1 - (discountPercent || 0) / 100);
     const rate = Number(it.vat_rate) || 0;
     groups.set(rate, round2((groups.get(rate) || 0) + n));
   }

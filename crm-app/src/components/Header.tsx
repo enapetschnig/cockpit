@@ -55,26 +55,6 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
                 Kennzahlen
               </Button>
             </Link>
-            <Link to="/auftragsvolumen">
-              <Button 
-                variant={isOrderVolume ? "secondary" : "ghost"} 
-                size="sm"
-                className="gap-2"
-              >
-                <Euro className="w-4 h-4" />
-                Auftragsvolumen
-              </Button>
-            </Link>
-            <Link to="/dmc">
-              <Button
-                variant={isDmc ? "secondary" : "ghost"}
-                size="sm"
-                className="gap-2"
-              >
-                <Mail className="w-4 h-4" />
-                DMC
-              </Button>
-            </Link>
             <Link to="/buchhaltung">
               <Button variant={location.pathname.startsWith('/buchhaltung') ? "secondary" : "ghost"} size="sm" className="gap-2">
                 <Wallet className="w-4 h-4" />

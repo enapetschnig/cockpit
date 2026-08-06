@@ -1,11 +1,11 @@
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
-import autoTable from 'jspdf-autotable';
 import type { BillingDocument, CompanySettings, DocumentItem } from '@/types/billing';
-import { DOC_KIND_LABEL, computeTotals, eur, fmtDate } from '@/types/billing';
+import { DOC_KIND_LABEL, computeTotals, lineAmount, round2 } from '@/types/billing';
+import { EPOWER_LOGO } from './logoData';
 
 /**
- * EPC-QR-Code (SEPA "Scan-to-Pay") – der Kunde scannt ihn mit seiner Banking-App
+ * EPC-QR-Code (SEPA „Scan-to-Pay") – der Kunde scannt ihn mit seiner Banking-App
  * und die Überweisung ist fertig ausgefüllt. Standard: EPC069-12.
  */
 export async function epcQr(opts: { name: string; iban: string; bic?: string; amount: number; reference: string }): Promise<string | null> {
@@ -26,12 +26,23 @@ export async function epcQr(opts: { name: string; iban: string; bic?: string; am
   } catch { return null; }
 }
 
+// ── Formatierung wie in den bisherigen Belegen (de-AT, Tausenderpunkt via Leerzeichen) ──
+const money = (n: number) =>
+  (Number(n) || 0).toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const dateTime = (d?: string | null) => {
+  if (!d) return '';
+  const x = new Date(d);
+  const p = (v: number) => String(v).padStart(2, '0');
+  return `${p(x.getDate())}.${p(x.getMonth() + 1)}.${x.getFullYear()}`;
+};
+
 /**
- * Erzeugt ein österreichisch konformes Beleg-PDF.
- * Pflichtangaben lt. § 11 UStG: Name+Anschrift liefernd/leistend & Empfänger, Menge/Art der Leistung,
- * Leistungszeitraum, Entgelt je Steuersatz, Steuersatz + Steuerbetrag, Ausstellungsdatum,
- * fortlaufende Nummer, UID des Ausstellers (ab 10.000 € auch UID des Empfängers).
- * Bei Schlussrechnungen werden bereits verrechnete Anzahlungen inkl. USt abgezogen.
+ * Erzeugt das Beleg-PDF im gewohnten Layout (1:1 wie die bisherigen
+ * ePower-Rechnungen/Angebote aus HelloCash):
+ * Logo links, Absender rechts, kleine Absenderzeile, Empfängerblock,
+ * zentrierter Titel, Kopfzeile mit Beleg-Nr./Zahlungsart/Datum,
+ * Positionstabelle (Anzahl · Beschreibung · USt % · Einzelpreis € · Gesamt €),
+ * fette Summe, USt-Aufstellung, Hinweise, QR, Fußzeile mit Seitenzahl.
  */
 export function buildDocumentPdf(
   doc: BillingDocument,
@@ -40,168 +51,196 @@ export function buildDocumentPdf(
   qrDataUrl?: string | null,
 ): jsPDF {
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-  const M = 20;
-  const W = pdf.internal.pageSize.getWidth();
-  const kindLabel = DOC_KIND_LABEL[doc.kind] || 'Beleg';
-  const ink = [28, 27, 25] as [number, number, number];
-  const sub = [110, 105, 98] as [number, number, number];
+  const W = pdf.internal.pageSize.getWidth();   // 210
+  const H = pdf.internal.pageSize.getHeight();  // 297
+  const ML = 10;            // linker Rand wie im Original
+  const MR = 12;            // rechter Rand
+  const RX = W - MR;        // rechte Kante
+  const BLACK: [number, number, number] = [0, 0, 0];
+  const LINE: [number, number, number] = [150, 150, 150];
+  const isOffer = doc.kind === 'offer';
 
-  // ── Kopf: Absender ──
-  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(...ink);
-  pdf.text(s?.company_name || 'ePower GmbH', M, 24);
-  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5); pdf.setTextColor(...sub);
-  const senderLines = [
-    [s?.street, s?.postal_code && s?.city ? `${s.postal_code} ${s.city}` : s?.city].filter(Boolean).join(' · '),
-    [s?.phone, s?.email, s?.website].filter(Boolean).join(' · '),
-    [s?.uid_number ? `UID: ${s.uid_number}` : '', s?.firmenbuch ? `FN ${s.firmenbuch}` : ''].filter(Boolean).join(' · '),
-  ].filter(Boolean) as string[];
-  senderLines.forEach((l, i) => pdf.text(l, M, 30 + i * 4.2));
+  const setF = (size: number, style: 'normal' | 'bold' | 'italic' = 'normal') => {
+    pdf.setFont('helvetica', style); pdf.setFontSize(size); pdf.setTextColor(...BLACK);
+  };
+  const hr = (y: number, thick = 0.2) => {
+    pdf.setDrawColor(...LINE); pdf.setLineWidth(thick); pdf.line(ML, y, RX, y);
+  };
 
-  // ── Empfänger ──
-  let y = 52;
-  pdf.setFontSize(8); pdf.setTextColor(...sub);
-  pdf.text('Rechnungsempfänger', M, y); y += 5;
-  pdf.setFontSize(10.5); pdf.setTextColor(...ink); pdf.setFont('helvetica', 'bold');
-  pdf.text(doc.recipient_company || doc.recipient_name || '', M, y); y += 5;
-  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-  const rec = [
-    doc.recipient_company && doc.recipient_name ? doc.recipient_name : '',
-    doc.recipient_street || '',
-    [doc.recipient_zip, doc.recipient_city].filter(Boolean).join(' '),
-    doc.recipient_country && doc.recipient_country !== 'AT' ? doc.recipient_country : '',
-    doc.recipient_uid ? `UID: ${doc.recipient_uid}` : '',
-  ].filter(Boolean);
-  rec.forEach((l) => { pdf.text(l, M, y); y += 5; });
+  // ── 1) Logo links ──
+  try { pdf.addImage(EPOWER_LOGO, 'PNG', ML + 4, 8, 26, 26); } catch { /* Logo optional */ }
 
-  // ── Belegkopf rechts ──
-  const rx = W - M;
-  let ry = 52;
-  const meta: [string, string][] = [
-    [`${kindLabel}snummer`.replace('Angebotsnummer', 'Angebotsnummer'), doc.number || '—'],
-    ['Datum', fmtDate(doc.doc_date)],
-  ];
-  if (doc.kind === 'offer' && doc.valid_until) meta.push(['Gültig bis', fmtDate(doc.valid_until)]);
-  if (doc.kind !== 'offer' && doc.due_date) meta.push(['Fällig am', fmtDate(doc.due_date)]);
-  if (doc.service_date) meta.push(['Leistungsdatum', fmtDate(doc.service_date)]);
-  pdf.setFontSize(9);
-  meta.forEach(([k, v]) => {
-    pdf.setTextColor(...sub); pdf.text(k, rx - 42, ry, { align: 'left' });
-    pdf.setTextColor(...ink); pdf.setFont('helvetica', 'bold'); pdf.text(v, rx, ry, { align: 'right' });
-    pdf.setFont('helvetica', 'normal'); ry += 5;
-  });
-
-  // ── Titel ──
-  y = Math.max(y, ry) + 10;
-  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(17); pdf.setTextColor(...ink);
-  pdf.text(doc.title || kindLabel, M, y);
-  y += 8;
-
-  if (doc.intro_text) {
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...ink);
-    const lines = pdf.splitTextToSize(doc.intro_text, W - 2 * M);
-    pdf.text(lines, M, y); y += lines.length * 4.8 + 4;
+  // ── 2) Absender rechts (rechtsbündig) ──
+  let y = 12;
+  setF(11, 'bold'); pdf.text(s?.company_name || 'ePower GmbH', RX, y, { align: 'right' }); y += 4.6;
+  setF(9);
+  for (const l of [s?.street, [s?.postal_code, s?.city].filter(Boolean).join(' '), s?.country || 'Österreich'].filter(Boolean)) {
+    pdf.text(String(l), RX, y, { align: 'right' }); y += 4.2;
+  }
+  y += 2.6;
+  for (const l of [
+    s?.uid_number ? `UID Nr.: ${s.uid_number}` : '',
+    s?.firmenbuch ? `Firmenbuch Nr.: ${s.firmenbuch}` : '',
+    s?.iban ? `IBAN: ${s.iban.replace(/\s/g, '')}` : '',
+    s?.bic ? `BIC: ${s.bic}` : '',
+  ].filter(Boolean)) {
+    pdf.text(String(l), RX, y, { align: 'right' }); y += 4.2;
   }
 
-  // ── Positionen ──
-  const body = items.map((it, i) => {
-    if (it.is_heading) return [{ content: it.name, colSpan: 6, styles: { fontStyle: 'bold' as const, fillColor: [246, 244, 240] as [number, number, number] } }];
-    const net = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0) * (1 - (Number(it.discount_percent) || 0) / 100);
-    return [
-      String(i + 1),
-      it.description ? `${it.name}\n${it.description}` : it.name,
-      `${Number(it.quantity).toLocaleString('de-AT')} ${it.unit}`,
-      eur(Number(it.unit_price)),
-      `${Number(it.vat_rate)}%`,
-      eur(net),
-    ];
-  });
+  // ── 3) Kleine Absenderzeile über dem Empfänger ──
+  let ly = 52;
+  setF(6);
+  pdf.text([s?.company_name, s?.street, [s?.postal_code, s?.city].filter(Boolean).join(' ')]
+    .filter(Boolean).join(' | '), ML, ly);
+  ly += 6;
 
-  autoTable(pdf, {
-    startY: y,
-    head: [['Pos.', 'Bezeichnung', 'Menge', 'Einzelpreis', 'USt', 'Netto']],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    body: body as any,
-    margin: { left: M, right: M },
-    styles: { fontSize: 9, cellPadding: 2.5, textColor: ink, lineColor: [232, 228, 220], lineWidth: 0.1 },
-    headStyles: { fillColor: [28, 27, 25], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
-    columnStyles: {
-      0: { cellWidth: 11, halign: 'center' },
-      2: { cellWidth: 22, halign: 'right' },
-      3: { cellWidth: 26, halign: 'right' },
-      4: { cellWidth: 14, halign: 'right' },
-      5: { cellWidth: 26, halign: 'right' },
-    },
-  });
+  // ── 4) Empfängerblock ──
+  setF(10);
+  for (const l of [
+    doc.recipient_company,
+    doc.recipient_name,
+    doc.recipient_street,
+    [doc.recipient_zip, doc.recipient_city].filter(Boolean).join(' '),
+    doc.recipient_country && doc.recipient_country !== 'AT' && doc.recipient_country !== 'Österreich' ? doc.recipient_country : '',
+    doc.recipient_uid ? `UID: ${doc.recipient_uid}` : '',
+  ].filter(Boolean)) {
+    pdf.text(String(l), ML, ly); ly += 4.6;
+  }
 
-  // ── Summen ──
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let ty = ((pdf as any).lastAutoTable?.finalY || y) + 8;
-  const t = computeTotals(items, Number(doc.discount_percent) || 0,
-    { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 });
-  const boxX = W - M - 78;
-  const row = (label: string, val: string, bold = false, color = ink) => {
-    pdf.setFont('helvetica', bold ? 'bold' : 'normal');
-    pdf.setFontSize(bold ? 11 : 9.5); pdf.setTextColor(...color);
-    pdf.text(label, boxX, ty); pdf.text(val, rx, ty, { align: 'right' });
-    ty += bold ? 6.5 : 5.2;
+  // ── 5) Zentrierter Titel ──
+  let ty = Math.max(ly + 12, 86);
+  setF(14, 'bold');
+  pdf.text(isOffer ? 'Angebot' : (DOC_KIND_LABEL[doc.kind] || 'Rechnung'), W / 2, ty, { align: 'center' });
+  ty += 12;
+
+  // ── 6) Kopfzeile: Beleg-Nr. / Zahlungsart / Datum ──
+  const cols = isOffer
+    ? [{ l: 'Angebot Nr.', v: doc.number || '', x: ML },
+       { l: 'Mitarbeiter', v: 'Kassier', x: ML + 60 },
+       { l: 'Datum', v: dateTime(doc.doc_date), x: RX, align: 'right' as const }]
+    : [{ l: 'Beleg Nr.', v: doc.number || '', x: ML },
+       { l: 'Zahlungsart', v: doc.payment_method || 'Kreditrechnung', x: ML + 60 },
+       { l: 'Fällig am', v: dateTime(doc.due_date), x: ML + 120 },
+       { l: 'Datum', v: dateTime(doc.doc_date), x: RX, align: 'right' as const }];
+  setF(9);
+  cols.forEach((c) => pdf.text(c.l, c.x, ty, c.align ? { align: c.align } : undefined));
+  ty += 4.6;
+  setF(9, 'bold');
+  cols.forEach((c) => pdf.text(String(c.v), c.x, ty, c.align ? { align: c.align } : undefined));
+  ty += 3.2;
+  hr(ty); ty += 5;
+
+  // ── 7) Positionstabelle ──
+  const X_QTY = ML + 22;      // Anzahl (rechtsbündig)
+  const X_DESC = ML + 28;     // Beschreibung
+  const X_VAT = ML + 132;     // USt % (rechtsbündig)
+  const X_PRICE = ML + 166;   // Einzelpreis (rechtsbündig)
+  const X_SUM = RX;           // Gesamt (rechtsbündig)
+  const DESC_W = X_VAT - X_DESC - 6;
+
+  const header = () => {
+    setF(9, 'bold');
+    pdf.text('Anzahl', X_QTY, ty, { align: 'right' });
+    pdf.text('Beschreibung', X_DESC, ty);
+    pdf.text('USt %', X_VAT, ty, { align: 'right' });
+    pdf.text('Einzelpreis €', X_PRICE, ty, { align: 'right' });
+    pdf.text('Gesamt €', X_SUM, ty, { align: 'right' });
+    ty += 2.6; hr(ty); ty += 5;
   };
-  if (doc.discount_percent > 0) row(`Rabatt ${doc.discount_percent}%`, '', false, sub);
-  t.byRate.forEach((g) => row(`Nettobetrag ${g.rate}%`, eur(g.net)));
-  if (Number(doc.deducted_net) > 0) row('abzügl. Anzahlungen (netto)', '– ' + eur(Number(doc.deducted_net)), false, sub);
-  t.byRate.forEach((g) => row(`+ USt ${g.rate}%`, eur(g.vat)));
-  if (Number(doc.deducted_vat) > 0) row('abzügl. USt Anzahlungen', '– ' + eur(Number(doc.deducted_vat)), false, sub);
-  pdf.setDrawColor(232, 228, 220); pdf.line(boxX, ty - 2, rx, ty - 2); ty += 3;
-  row(doc.kind === 'offer' ? 'Gesamtbetrag' : 'Rechnungsbetrag', eur(t.gross), true);
+  header();
 
+  const inclVat = !!s?.prices_include_vat;
+  const t = computeTotals(items, Number(doc.discount_percent) || 0,
+    { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 }, inclVat);
+
+  setF(9);
+  for (const it of items) {
+    if (ty > H - 55) { pdf.addPage(); ty = 25; header(); }
+    if (it.is_heading) {
+      setF(9, 'bold'); pdf.text(it.name, X_DESC, ty); setF(9); ty += 5.6; continue;
+    }
+    const line = lineAmount(it);
+    const lines = pdf.splitTextToSize(it.name || '', DESC_W) as string[];
+    pdf.text(String(Number(it.quantity) || 0).replace('.', ','), X_QTY, ty, { align: 'right' });
+    pdf.text(lines[0] ?? '', X_DESC, ty);
+    pdf.text(String(Number(it.vat_rate) || 0), X_VAT, ty, { align: 'right' });
+    pdf.text(money(it.unit_price), X_PRICE, ty, { align: 'right' });
+    pdf.text(money(line), X_SUM, ty, { align: 'right' });
+    ty += 5.4;
+    for (const extra of lines.slice(1)) { pdf.text(extra, X_DESC, ty); ty += 5.4; }
+    if (it.description) {
+      for (const dl of pdf.splitTextToSize(it.description, DESC_W) as string[]) {
+        pdf.text(dl, X_DESC, ty); ty += 5.4;
+      }
+    }
+  }
+
+  // ── 8) Summe ──
+  ty += 1;
+  setF(14, 'bold');
+  pdf.text('Summe', ML, ty);
+  pdf.text(`€ ${money(t.gross)}`, X_SUM, ty, { align: 'right' });
+  ty += 4; hr(ty, 0.4); ty += 6;
+
+  // ── 9) USt-Aufstellung ──
+  setF(9, 'bold');
+  pdf.text('USt %', ML, ty);
+  pdf.text('Netto €', ML + 148, ty, { align: 'right' });
+  pdf.text('Steuer €', ML + 172, ty, { align: 'right' });
+  pdf.text('Brutto €', X_SUM, ty, { align: 'right' });
+  ty += 5;
+  setF(9, 'italic');
+  for (const g of t.byRate) {
+    pdf.text(String(g.rate), ML, ty);
+    pdf.text(money(g.net), ML + 148, ty, { align: 'right' });
+    pdf.text(money(g.vat), ML + 172, ty, { align: 'right' });
+    pdf.text(money(round2(g.net + g.vat)), X_SUM, ty, { align: 'right' });
+    ty += 5;
+  }
+  if (Number(doc.deducted_net) > 0) {
+    setF(9);
+    pdf.text(`abzüglich bereits verrechneter Anzahlungen: ${money(Number(doc.deducted_net))} netto / ${money(Number(doc.deducted_vat))} USt`, ML, ty + 1);
+    ty += 6;
+  }
+
+  // ── 10) Hinweise + Zahlungstext (wie bisher) ──
+  ty += 6;
+  setF(9);
+  if (!isOffer) {
+    pdf.text('Lieferdatum = Rechnungsdatum', ML, ty); ty += 8;
+    const tage = s?.default_payment_days ?? 7;
+    const zahl = doc.outro_text?.trim()
+      || `Bitte überweisen Sie den Rechnungsbetrag innerhalb von ${tage} Tagen an das Bankkonto rechts oben. `
+       + `Beachten Sie bitte, dass der Empfängername auf "${s?.company_name || 'ePower GmbH'}" lautet und in der Zahlungsreferenz die Rechnungsnummer steht.`;
+    for (const l of pdf.splitTextToSize(zahl, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
+  } else {
+    if (doc.valid_until) { pdf.text(`Dieses Angebot ist gültig bis ${dateTime(doc.valid_until)}.`, ML, ty); ty += 6; }
+    const outro = doc.outro_text?.trim();
+    if (outro) for (const l of pdf.splitTextToSize(outro, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
+  }
   if (s?.small_business) {
-    pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8.5); pdf.setTextColor(...sub);
-    pdf.text('Umsatzsteuerbefreit – Kleinunternehmerregelung gem. § 6 Abs. 1 Z 27 UStG.', M, ty + 2);
+    setF(9, 'italic');
+    pdf.text('Umsatzsteuerbefreit – Kleinunternehmerregelung gem. § 6 Abs. 1 Z 27 UStG.', ML, ty + 2);
     ty += 7;
   }
 
-  // ── Schlusstext + Zahlungsinfo ──
-  ty += 6;
-  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9.5); pdf.setTextColor(...ink);
-  if (doc.outro_text) {
-    const lines = pdf.splitTextToSize(doc.outro_text, W - 2 * M);
-    pdf.text(lines, M, ty); ty += lines.length * 4.6 + 3;
-  }
-  if (doc.kind !== 'offer' && (s?.iban || s?.bank_name)) {
-    pdf.setFontSize(9); pdf.setTextColor(...sub);
-    const pay = [
-      s?.bank_name ? `Bank: ${s.bank_name}` : '',
-      s?.iban ? `IBAN: ${s.iban}` : '',
-      s?.bic ? `BIC: ${s.bic}` : '',
-      doc.due_date ? `Zahlbar bis ${fmtDate(doc.due_date)}` : '',
-      doc.number ? `Zahlungsreferenz: ${doc.number}` : '',
-    ].filter(Boolean).join('   ·   ');
-    const lines = pdf.splitTextToSize(pay, W - 2 * M);
-    pdf.text(lines, M, ty); ty += lines.length * 4.4;
+  // ── 11) QR mittig (wie bisher an dieser Stelle) ──
+  if (qrDataUrl && !isOffer) {
+    const q = 28;
+    const qy = Math.min(ty + 8, H - 60);
+    try { pdf.addImage(qrDataUrl, 'PNG', (W - q) / 2, qy, q, q); } catch { /* optional */ }
+    setF(8);
+    pdf.text('Scannen & bezahlen', W / 2, qy + q + 4, { align: 'center' });
   }
 
-  // ── Scan-to-Pay (EPC-QR) ──
-  if (qrDataUrl && doc.kind !== 'offer') {
-    const qs = 26;
-    const qx = rx - qs;
-    const qy = Math.min(ty + 2, pdf.internal.pageSize.getHeight() - 46);
-    try { pdf.addImage(qrDataUrl, 'PNG', qx, qy, qs, qs); } catch { /* ignore */ }
-    pdf.setFontSize(7); pdf.setTextColor(...sub);
-    pdf.text('Scannen & bezahlen', qx + qs / 2, qy + qs + 3.5, { align: 'center' });
-  }
-
-  // ── Fußzeile auf allen Seiten ──
+  // ── 12) Fußzeile mit Seitenzahl ──
   const pages = pdf.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
     pdf.setPage(p);
-    const fy = pdf.internal.pageSize.getHeight() - 12;
-    pdf.setDrawColor(232, 228, 220); pdf.line(M, fy - 5, rx, fy - 5);
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(...sub);
-    const foot = [
-      s?.company_name, [s?.street, s?.postal_code && s?.city ? `${s.postal_code} ${s.city}` : ''].filter(Boolean).join(', '),
-      s?.uid_number ? `UID ${s.uid_number}` : '', s?.iban ? `IBAN ${s.iban}` : '',
-    ].filter(Boolean).join('  ·  ');
-    pdf.text(foot, M, fy);
-    pdf.text(`Seite ${p} von ${pages}`, rx, fy, { align: 'right' });
+    pdf.setDrawColor(...LINE); pdf.setLineWidth(0.2);
+    pdf.line(ML, H - 18, RX, H - 18);
+    setF(8);
+    pdf.text(`Seite ${p} / ${pages}`, W / 2, H - 13, { align: 'center' });
   }
   return pdf;
 }

@@ -13,7 +13,7 @@ import {
   useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
-  DOC_KIND_LABEL, computeTotals, eur, lineNet, customerLabel,
+  DOC_KIND_LABEL, computeTotals, eur, lineAmount, customerLabel,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
@@ -96,8 +96,9 @@ export default function BelegEditor() {
       quantity: Number(i.quantity) || 0, unit_price: Number(i.unit_price) || 0,
       discount_percent: Number(i.discount_percent) || 0, vat_rate: Number(i.vat_rate) || 0, is_heading: !!i.is_heading,
     })), Number(doc.discount_percent) || 0,
-    { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 }),
-    [items, doc.discount_percent, doc.deducted_net, doc.deducted_vat],
+    { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 },
+    !!settings?.prices_include_vat),
+    [items, doc.discount_percent, doc.deducted_net, doc.deducted_vat, settings?.prices_include_vat],
   );
 
   const custMatches = useMemo(() => {
@@ -164,7 +165,7 @@ export default function BelegEditor() {
       const n = await reserveNumber((merged.kind as DocKind) || 'offer');
       if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
     }
-    const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id);
+    const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id, !!settings?.prices_include_vat);
     setBusy(false);
     if (!newId) return null;
     if (isNew) navigate(`/beleg/${newId}`, { replace: true });
@@ -406,15 +407,15 @@ export default function BelegEditor() {
                     <Input type="number" step="0.01" value={it.quantity ?? 1} onChange={(e) => upd(it._k, { quantity: Number(e.target.value) })} /></div>
                   <div className="w-24"><Label className="text-[10px] text-muted-foreground">Einheit</Label>
                     <Input value={it.unit || 'Stk'} onChange={(e) => upd(it._k, { unit: e.target.value })} /></div>
-                  <div className="w-28"><Label className="text-[10px] text-muted-foreground">Einzelpreis €</Label>
+                  <div className="w-28"><Label className="text-[10px] text-muted-foreground">{settings?.prices_include_vat ? 'Preis brutto €' : 'Einzelpreis €'}</Label>
                     <Input type="number" step="0.01" value={it.unit_price ?? 0} onChange={(e) => upd(it._k, { unit_price: Number(e.target.value) })} /></div>
                   <div className="w-20"><Label className="text-[10px] text-muted-foreground">USt %</Label>
                     <Input type="number" value={it.vat_rate ?? 20} onChange={(e) => upd(it._k, { vat_rate: Number(e.target.value) })} /></div>
                   <div className="w-20"><Label className="text-[10px] text-muted-foreground">Rabatt %</Label>
                     <Input type="number" value={it.discount_percent ?? 0} onChange={(e) => upd(it._k, { discount_percent: Number(e.target.value) })} /></div>
                   <div className="flex-1 min-w-[90px] text-right">
-                    <Label className="text-[10px] text-muted-foreground">Netto</Label>
-                    <div className="font-semibold pt-1.5">{eur(lineNet({
+                    <Label className="text-[10px] text-muted-foreground">{settings?.prices_include_vat ? 'Betrag' : 'Netto'}</Label>
+                    <div className="font-semibold pt-1.5">{eur(lineAmount({
                       quantity: Number(it.quantity) || 0, unit_price: Number(it.unit_price) || 0,
                       discount_percent: Number(it.discount_percent) || 0, is_heading: false }))}</div>
                   </div>

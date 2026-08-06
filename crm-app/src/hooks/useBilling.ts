@@ -174,6 +174,7 @@ export async function saveDocument(
   doc: Partial<BillingDocument>,
   items: Partial<DocumentItem>[],
   userId: string,
+  pricesInclVat = false,
 ): Promise<string | null> {
   const clean = items.map((it, i) => ({
     position: i,
@@ -190,13 +191,15 @@ export async function saveDocument(
       quantity: Number(it.quantity) || 0,
       unit_price: Number(it.unit_price) || 0,
       discount_percent: Number(it.discount_percent) || 0,
+      vat_rate: Number(it.vat_rate) || 0,
       is_heading: !!it.is_heading,
-    }),
+    }, pricesInclVat),
   }));
   const t = computeTotals(
     clean.map((c) => ({ ...c })),
     Number(doc.discount_percent) || 0,
     { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 },
+    pricesInclVat,
   );
   const payload = { ...doc, user_id: userId, net: t.net, vat: t.vat, gross: t.gross };
   delete (payload as Record<string, unknown>).items;
