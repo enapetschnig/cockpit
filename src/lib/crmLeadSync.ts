@@ -29,6 +29,9 @@ async function crmClient() {
   return createClient(url, key, { auth: { persistSession: false }, db: { schema: "crm" } });
 }
 
+/** Telefonnummer auf reine Ziffern reduzieren – für den Abgleich mit dem Bestand. */
+const normPhone = (v?: string | null) => (v || '').replace(/\D/g, '').slice(-9);
+
 const pick = (fd: FieldData[], ...keys: string[]) =>
   fd.find((f) => keys.some((k) => (f.name || "").toLowerCase().includes(k)))?.values?.[0]?.trim() || null;
 
@@ -41,7 +44,7 @@ function moreThanFive(v: string | null): boolean {
   return m ? Number(m[1]) >= 5 : false;
 }
 
-export interface CrmSyncResult { account: string; found: number; created: number; note?: string }
+export interface CrmSyncResult { account: string; found: number; created: number; linked?: number; note?: string }
 
 /** Synct ein Werbekonto in das CRM. `sinceDays` begrenzt auf frische Leads. */
 export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: string, sinceDays = 30): Promise<CrmSyncResult> {
@@ -69,12 +72,40 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
   }
   if (!leads.length) return { account: acc.label, found: 0, created: 0 };
 
-  // schon vorhandene Meta-IDs (Dedup ohne Doppel-Insert)
+  // Dedup auf ZWEI Wegen:
+  //  1) gleiche Meta-ID  → derselbe Lead
+  //  2) gleiche Telefonnummer → dieselbe Person ist schon im CRM (auch aus der
+  //     Zeit vor diesem Sync). Dann wird NICHT neu angelegt, sondern nur die
+  //     Meta-ID nachgetragen, damit künftige Läufe ihn sicher erkennen.
   const ids = leads.map((l) => l.id);
   const { data: known } = await sb.from("leads").select("meta_lead_id").in("meta_lead_id", ids);
   const seen = new Set((known ?? []).map((k) => (k as { meta_lead_id: string }).meta_lead_id));
 
-  const rows = leads.filter((l) => !seen.has(l.id)).map((l) => {
+  const { data: bestand } = await sb.from("leads").select("id, phone, meta_lead_id").eq("user_id", ownerUserId);
+  const byPhone = new Map<string, { id: string; meta_lead_id: string | null }>();
+  for (const b of ((bestand ?? []) as { id: string; phone: string | null; meta_lead_id: string | null }[])) {
+    const p = normPhone(b.phone);
+    if (p) byPhone.set(p, { id: b.id, meta_lead_id: b.meta_lead_id });
+  }
+
+  let linked = 0;
+  const fresh: typeof leads = [];
+  for (const l of leads) {
+    if (seen.has(l.id)) continue;
+    const phone = normPhone(pick(l.field_data ?? [], "phone", "telefon"));
+    const hit = phone ? byPhone.get(phone) : undefined;
+    if (hit) {
+      // Person schon im CRM – nur verknüpfen, Pipeline-Stufe NICHT anfassen
+      if (!hit.meta_lead_id) {
+        await sb.from("leads").update({ meta_lead_id: l.id }).eq("id", hit.id);
+        linked++;
+      }
+      continue;
+    }
+    fresh.push(l);
+  }
+
+  const rows = fresh.map((l) => {
     const fd = l.field_data ?? [];
     const branche = pick(fd, "branche");
     const mitarbeiter = pick(fd, "mitarbeiter");
@@ -101,11 +132,11 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
       created_at: l.created_time,
     };
   });
-  if (!rows.length) return { account: acc.label, found: leads.length, created: 0 };
+  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked };
 
   // upsert auf meta_lead_id: parallele Läufe können nichts doppelt anlegen
   const { error, count } = await sb.from("leads")
     .upsert(rows, { onConflict: "meta_lead_id", ignoreDuplicates: true, count: "exact" });
-  if (error) return { account: acc.label, found: leads.length, created: 0, note: error.message };
-  return { account: acc.label, found: leads.length, created: count ?? rows.length };
+  if (error) return { account: acc.label, found: leads.length, created: 0, linked, note: error.message };
+  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked };
 }
