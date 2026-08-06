@@ -11,16 +11,39 @@ const db = supabase as any;
 const addDays = (d: string, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
 const addMonths = (d: string, n: number) => { const x = new Date(d); x.setMonth(x.getMonth() + n); return x.toISOString().slice(0, 10); };
 
-/** Rechnung als bezahlt markieren (mit Betrag + Datum). */
-export async function markPaid(doc: BillingDocument, on = new Date().toISOString().slice(0, 10)) {
-  const { error } = await db.from('documents')
-    .update({ status: 'paid', paid_at: on, paid_amount: doc.gross }).eq('id', doc.id);
-  if (error) { toast.error('Konnte nicht gespeichert werden'); return false; }
-  await db.from('payments').insert({
-    user_id: doc.user_id, document_id: doc.id, amount: doc.gross, paid_on: on, method: 'Überweisung',
-  }).then(() => {}, () => {});
-  toast.success(`${doc.number} als bezahlt markiert`);
+/**
+ * Zahlung erfassen – auch Teilzahlungen. Status wird automatisch gesetzt:
+ * voll bezahlt → 'paid', teilweise → 'partly_paid'.
+ */
+export async function addPayment(
+  doc: BillingDocument,
+  amount: number,
+  on = new Date().toISOString().slice(0, 10),
+  method = 'Überweisung',
+): Promise<boolean> {
+  const amt = Math.round((Number(amount) || 0) * 100) / 100;
+  if (amt <= 0) { toast.error('Betrag fehlt'); return false; }
+  const { error: pErr } = await db.from('payments')
+    .insert({ user_id: doc.user_id, document_id: doc.id, amount: amt, paid_on: on, method });
+  if (pErr) { toast.error('Zahlung konnte nicht gespeichert werden: ' + pErr.message); return false; }
+
+  const paid = Math.round(((Number(doc.paid_amount) || 0) + amt) * 100) / 100;
+  const full = paid >= Math.round(Number(doc.gross) * 100) / 100 - 0.01;
+  const { error } = await db.from('documents').update({
+    paid_amount: paid,
+    status: full ? 'paid' : 'partly_paid',
+    paid_at: full ? on : null,
+    payment_method: method,
+  }).eq('id', doc.id);
+  if (error) { toast.error('Status konnte nicht gesetzt werden'); return false; }
+  toast.success(full ? `${doc.number} vollständig bezahlt` : `Teilzahlung ${amt.toFixed(2)} € erfasst – offen: ${(Number(doc.gross) - paid).toFixed(2)} €`);
   return true;
+}
+
+/** Schnellaktion: komplette offene Restsumme als bezahlt buchen. */
+export async function markPaid(doc: BillingDocument, on = new Date().toISOString().slice(0, 10)) {
+  const rest = Math.round((Number(doc.gross) - (Number(doc.paid_amount) || 0)) * 100) / 100;
+  return addPayment(doc, rest > 0 ? rest : Number(doc.gross), on);
 }
 
 /** Nächste freie Nummer im gleichen Kreis. */

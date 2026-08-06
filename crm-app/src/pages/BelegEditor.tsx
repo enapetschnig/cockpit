@@ -52,6 +52,7 @@ export default function BelegEditor() {
   const [busy, setBusy] = useState(false);
   const [mailTo, setMailTo] = useState('');
   const [mobilePreview, setMobilePreview] = useState(false);
+  const [inlineIdx, setInlineIdx] = useState<string | null>(null); // Positions-Autocomplete
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -133,6 +134,21 @@ export default function BelegEditor() {
     }]);
     bump(a.id, a.use_count);
     setArtQ('');
+  };
+
+  /** Vorlage direkt in die getippte Zeile übernehmen – oder Menge erhöhen, wenn schon vorhanden. */
+  const applyArticleTo = (k: string, aId: string) => {
+    const a = articles.find((x) => x.id === aId); if (!a) return;
+    const dup = items.find((i) => i._k !== k && i.article_id === a.id);
+    if (dup) {
+      setItems((its) => its.filter((i) => i._k !== k).map((i) =>
+        (i._k === dup._k ? { ...i, quantity: (Number(i.quantity) || 0) + 1 } : i)));
+    } else {
+      upd(k, { article_id: a.id, name: a.name, description: a.description || undefined,
+        unit: a.unit, unit_price: Number(a.unit_price), vat_rate: Number(a.vat_rate) });
+    }
+    bump(a.id, a.use_count);
+    setInlineIdx(null);
   };
 
   const upd = (k: string, p: Partial<Item>) => setItems((its) => its.map((i) => (i._k === k ? { ...i, ...p } : i)));
@@ -359,7 +375,27 @@ export default function BelegEditor() {
                 <div className="flex gap-2 items-start">
                   <span className="text-xs text-muted-foreground pt-2.5 w-5 text-right">{idx + 1}</span>
                   <div className="flex-1 space-y-1.5">
-                    <Input placeholder="Bezeichnung" value={it.name || ''} onChange={(e) => upd(it._k, { name: e.target.value })} />
+                    <div className="relative">
+                      <Input placeholder="Bezeichnung – tippen für Vorlagen" value={it.name || ''}
+                        onChange={(e) => { upd(it._k, { name: e.target.value, article_id: null }); setInlineIdx(e.target.value.trim().length >= 2 ? it._k : null); }}
+                        onFocus={() => { if ((it.name || '').trim().length >= 2) setInlineIdx(it._k); }}
+                        onBlur={() => setTimeout(() => setInlineIdx((cur) => (cur === it._k ? null : cur)), 150)} />
+                      {inlineIdx === it._k && (() => {
+                        const q = (it.name || '').toLowerCase();
+                        const hits = articles.filter((a) => a.name.toLowerCase().includes(q)).slice(0, 6);
+                        return hits.length ? (
+                          <div className="absolute z-30 left-0 right-0 mt-1 bg-card border rounded-lg shadow-lg overflow-hidden">
+                            {hits.map((a) => (
+                              <button key={a.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex justify-between gap-2"
+                                onMouseDown={(e) => { e.preventDefault(); applyArticleTo(it._k, a.id); }}>
+                                <span className="truncate">{a.is_favorite ? '★ ' : ''}{a.name}</span>
+                                <span className="text-muted-foreground shrink-0">{eur(Number(a.unit_price))} / {a.unit}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
                     <Textarea placeholder="Beschreibung (optional)" rows={1} className="text-sm"
                       value={it.description || ''} onChange={(e) => upd(it._k, { description: e.target.value })} />
                   </div>

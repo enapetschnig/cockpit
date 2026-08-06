@@ -13,6 +13,7 @@ import OffersPage from "./pages/OffersPage";
 import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
 import BuchhaltungPage from "./pages/BuchhaltungPage";
+import ExportPage from "./pages/ExportPage";
 import BelegePage from "./pages/BelegePage";
 import BelegEditor from "./pages/BelegEditor";
 import KundenPage from "./pages/KundenPage";
@@ -121,6 +122,7 @@ const App = () => (
           <Route path="/kunden" element={<ProtectedRoute><KundenPage /></ProtectedRoute>} />
           <Route path="/kassabuch" element={<ProtectedRoute><KassabuchPage /></ProtectedRoute>} />
           <Route path="/archiv" element={<ProtectedRoute><ArchivPage /></ProtectedRoute>} />
+          <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
 
