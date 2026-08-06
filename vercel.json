@@ -1,6 +1,16 @@
 {
   "crons": [
-    { "path": "/api/gmail/sync", "schedule": "*/5 * * * *" },
-    { "path": "/api/buchhaltung/worker", "schedule": "*/2 * * * *" }
+    {
+      "path": "/api/gmail/sync",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/buchhaltung/worker",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/ads/sync/crm-leads",
+      "schedule": "*/15 * * * *"
+    }
   ]
 }
