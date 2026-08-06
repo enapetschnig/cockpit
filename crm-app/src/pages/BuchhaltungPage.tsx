@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BillingNav } from '@/components/billing/BillingNav';
+import { MonthlyRevenue } from '@/components/billing/MonthlyRevenue';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -128,6 +129,8 @@ export default function BuchhaltungPage() {
           <Kpi label="Diesen Monat" value={eur(s.monthSum)} icon={Clock} />
           <Kpi label="Offene Angebote" value={eur(s.offerSum)} sub={`${s.openOffers.length} Angebote`} icon={FileText} to="/angebote-rechnung" />
         </div>
+
+        <div className="mb-4"><MonthlyRevenue /></div>
 
         {isLoading ? <p className="text-muted-foreground">Laden …</p> : (
           <div className="grid lg:grid-cols-2 gap-4">

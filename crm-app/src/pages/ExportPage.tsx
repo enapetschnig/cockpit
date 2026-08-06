@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BillingNav } from '@/components/billing/BillingNav';
+import { MonthlyRevenue } from '@/components/billing/MonthlyRevenue';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -71,6 +72,8 @@ export default function ExportPage() {
           und eine Umsatzsteuer-Zusammenfassung in einer ZIP-Datei.
         </p>
 
+        <div className="mb-4"><MonthlyRevenue compact /></div>
+
         <Card className="p-4 mb-4">
           <div className="flex flex-wrap gap-4">
             <div>
@@ -130,8 +133,14 @@ export default function ExportPage() {
                   Kassabuch: Eingänge {eur(sum.cashIn)} · Ausgänge {eur(sum.cashOut)}
                 </p>
               )}
+              {sum.cancelledCount > 0 && (
+                <p className="text-xs text-red-600 mt-2">
+                  ⚠ {sum.cancelledCount} stornierte Belege über {eur(sum.cancelledSum)} sind im Zeitraum vorhanden und
+                  wurden NICHT mitgerechnet (weder in den Summen noch im ZIP).
+                </p>
+              )}
               <p className="text-[11px] text-muted-foreground mt-2">
-                Sollversteuerung nach Ausstellungsdatum · stornierte Belege nicht enthalten · Gutschriften negativ gerechnet.
+                Sollversteuerung nach Ausstellungsdatum · Gutschriften negativ gerechnet.
               </p>
             </>
           )}

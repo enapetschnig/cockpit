@@ -9,6 +9,9 @@ const db = supabase as any;
 
 export interface Period { from: string; to: string; label: string }
 
+// Stornos des zuletzt geladenen Zeitraums (für transparente Ausweisung)
+let cancelledInPeriod: BillingDocument[] = [];
+
 export const monthPeriod = (year: number, month: number): Period => {
   const from = `${year}-${String(month).padStart(2, '0')}-01`;
   const to = new Date(year, month, 0).toISOString().slice(0, 10);
@@ -25,6 +28,7 @@ const dateDe = (d?: string | null) => (d ? new Date(d).toLocaleDateString('de-AT
 
 export interface VatSummary {
   net: number; vat: number; gross: number; count: number;
+  cancelledCount: number; cancelledSum: number;
   byRate: { rate: number; net: number; vat: number }[];
   cashIn: number; cashOut: number;
 }
@@ -35,7 +39,9 @@ export async function loadPeriod(p: Period): Promise<{ docs: BillingDocument[]; 
     .in('kind', ['invoice', 'partial_invoice', 'final_invoice', 'credit_note'])
     .gte('doc_date', p.from).lte('doc_date', p.to)
     .order('doc_date', { ascending: true }).limit(2000);
-  const list = ((docs as BillingDocument[]) || []).filter((d) => d.status !== 'cancelled');
+  const all = (docs as BillingDocument[]) || [];
+  const list = all.filter((d) => d.status !== 'cancelled');
+  cancelledInPeriod = all.filter((d) => d.status === 'cancelled');
   const ids = list.map((d) => d.id);
   const items: Record<string, DocumentItem[]> = {};
   for (let i = 0; i < ids.length; i += 200) {
@@ -78,6 +84,8 @@ export function summarize(docs: BillingDocument[], items: Record<string, Documen
   const vat = round2(byRate.reduce((s, r) => s + r.vat, 0));
   return {
     net, vat, gross: round2(net + vat), count: docs.length, byRate,
+    cancelledCount: cancelledInPeriod.length,
+    cancelledSum: round2(cancelledInPeriod.reduce((a, d) => a + Number(d.gross || 0), 0)),
     cashIn: round2(cash.filter((c) => c.direction === 'in').reduce((a, c) => a + Number(c.gross || 0), 0)),
     cashOut: round2(cash.filter((c) => c.direction === 'out').reduce((a, c) => a + Number(c.gross || 0), 0)),
   };
@@ -158,6 +166,7 @@ export async function buildExportZip(
     `${settings?.company_name || ''}${settings?.uid_number ? ` · UID ${settings.uid_number}` : ''}`,
     '',
     `Belege: ${sum.count}`,
+    ...(sum.cancelledCount ? [`Stornierte Belege (nicht gerechnet): ${sum.cancelledCount} über ${num(sum.cancelledSum)} EUR`] : []),
     ...sum.byRate.map((r) => `Entgelte ${r.rate}%: ${num(r.net)} EUR   USt: ${num(r.vat)} EUR`),
     '',
     `Netto gesamt:  ${num(sum.net)} EUR`,

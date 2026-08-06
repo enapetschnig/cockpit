@@ -15,11 +15,35 @@ export default function KassabuchPage() {
 
   const years = useMemo(() => [...new Set(entries.map((e) => e.entry_date?.slice(0, 4)).filter(Boolean))].sort().reverse(), [entries]);
   const list = useMemo(() => entries.filter((e) => !year || e.entry_date?.startsWith(year)), [entries, year]);
+  // Aktueller Kassenstand über ALLE Einträge (stornierte zählen nicht)
+  const kassenstand = useMemo(
+    () => entries.filter((e) => !e.cancelled)
+      .reduce((a, e) => a + (e.direction === 'in' ? 1 : -1) * Number(e.gross || 0), 0),
+    [entries],
+  );
+  // Saldovortrag = Stand vor dem gefilterten Zeitraum
   const sums = useMemo(() => {
-    const inS = list.filter((e) => e.direction === 'in' && !e.cancelled).reduce((a, e) => a + Number(e.gross || 0), 0);
-    const outS = list.filter((e) => e.direction === 'out' && !e.cancelled).reduce((a, e) => a + Number(e.gross || 0), 0);
-    return { inS, outS, saldo: inS - outS };
-  }, [list]);
+    const act = list.filter((e) => !e.cancelled);
+    const inS = act.filter((e) => e.direction === 'in').reduce((a, e) => a + Number(e.gross || 0), 0);
+    const outS = act.filter((e) => e.direction === 'out').reduce((a, e) => a + Number(e.gross || 0), 0);
+    const first = list.length ? list[list.length - 1].entry_date : null;
+    const vortrag = first
+      ? entries.filter((e) => !e.cancelled && e.entry_date < first)
+          .reduce((a, e) => a + (e.direction === 'in' ? 1 : -1) * Number(e.gross || 0), 0)
+      : 0;
+    return { inS, outS, saldo: inS - outS, vortrag, storniert: list.length - act.length };
+  }, [list, entries]);
+
+  // Laufender Saldo je Zeile (Liste ist absteigend sortiert)
+  const runningById = useMemo(() => {
+    const map: Record<string, number> = {};
+    let bal = sums.vortrag;
+    for (const e of [...list].reverse()) {
+      if (!e.cancelled) bal += (e.direction === 'in' ? 1 : -1) * Number(e.gross || 0);
+      map[e.id] = bal;
+    }
+    return map;
+  }, [list, sums.vortrag]);
 
   const submit = async () => {
     const g = Number(String(form.gross).replace(',', '.'));
@@ -34,8 +58,22 @@ export default function KassabuchPage() {
     <div className="min-h-screen bg-background">
       <BillingNav />
       <main className="max-w-5xl mx-auto px-4 py-6">
-        <h1 className="text-2xl font-bold mb-1">Kassabuch</h1>
-        <p className="text-sm text-muted-foreground mb-4">{list.length} Einträge · Einnahmen {eur(sums.inS)} · Ausgaben {eur(sums.outS)} · Saldo <b>{eur(sums.saldo)}</b></p>
+        <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+          <div>
+            <h1 className="text-2xl font-bold mb-1">Kassabuch</h1>
+            <p className="text-sm text-muted-foreground">
+              {list.length} Einträge{sums.storniert > 0 ? ` (${sums.storniert} storniert, nicht gerechnet)` : ''} ·
+              Eingänge {eur(sums.inS)} · Ausgänge {eur(sums.outS)}
+            </p>
+          </div>
+          <Card className="px-4 py-3 bg-primary/5 border-primary/30">
+            <div className="text-xs text-muted-foreground">Aktueller Kassenstand</div>
+            <div className="text-2xl font-bold">{eur(kassenstand)}</div>
+            {sums.vortrag !== 0 && (
+              <div className="text-[11px] text-muted-foreground">Saldovortrag Zeitraum: {eur(sums.vortrag)}</div>
+            )}
+          </Card>
+        </div>
 
         <Card className="p-4 mb-4">
           <div className="flex flex-wrap gap-2 items-end">
@@ -68,8 +106,13 @@ export default function KassabuchPage() {
                   <div className="text-sm truncate">{e.description || (e.receipt_no ? `Beleg ${e.receipt_no}` : '—')}</div>
                   <div className="text-xs text-muted-foreground">{fmtDate(e.entry_date)}{e.receipt_no ? ` · Beleg ${e.receipt_no}` : ''}{e.payment_method ? ` · ${e.payment_method}` : ''}</div>
                 </div>
-                <div className={`font-semibold shrink-0 ${e.direction === 'in' ? 'text-emerald-700' : 'text-red-600'}`}>
-                  {e.direction === 'in' ? '+' : '–'} {eur(Number(e.gross))}
+                <div className="text-right shrink-0">
+                  <div className={`font-semibold ${e.direction === 'in' ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {e.direction === 'in' ? '+' : '–'} {eur(Number(e.gross))}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {e.cancelled ? 'storniert' : `Stand ${eur(runningById[e.id] ?? 0)}`}
+                  </div>
                 </div>
                 <Button size="icon" variant="ghost" onClick={() => remove(e.id)}><Trash2 className="w-4 h-4" /></Button>
               </Card>
