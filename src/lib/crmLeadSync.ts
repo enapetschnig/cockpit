@@ -44,7 +44,7 @@ function moreThanFive(v: string | null): boolean {
   return m ? Number(m[1]) >= 5 : false;
 }
 
-export interface CrmSyncResult { account: string; found: number; created: number; linked?: number; blocked?: number; note?: string }
+export interface CrmSyncResult { account: string; found: number; created: number; linked?: number; repeats?: number; blocked?: number; note?: string }
 
 /** Synct ein Werbekonto in das CRM. `sinceDays` begrenzt auf frische Leads. */
 export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: string, sinceDays = 30): Promise<CrmSyncResult> {
@@ -81,12 +81,19 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
   const { data: known } = await sb.from("leads").select("meta_lead_id").in("meta_lead_id", ids);
   const seen = new Set((known ?? []).map((k) => (k as { meta_lead_id: string }).meta_lead_id));
 
-  const { data: bestand } = await sb.from("leads").select("id, phone, meta_lead_id").eq("user_id", ownerUserId);
-  const byPhone = new Map<string, { id: string; meta_lead_id: string | null }>();
-  for (const b of ((bestand ?? []) as { id: string; phone: string | null; meta_lead_id: string | null }[])) {
+  const { data: bestand } = await sb.from("leads")
+    .select("id, phone, meta_lead_id, stage, qualification_notes, inquiry_count, last_inquiry_at, created_at").eq("user_id", ownerUserId);
+  type Best = { id: string; phone: string | null; meta_lead_id: string | null; stage: string;
+    qualification_notes: string | null; inquiry_count: number | null;
+    last_inquiry_at: string | null; created_at: string };
+  const byPhone = new Map<string, Best>();
+  for (const b of ((bestand ?? []) as Best[])) {
     const p = normPhone(b.phone);
-    if (p) byPhone.set(p, { id: b.id, meta_lead_id: b.meta_lead_id });
+    if (p) byPhone.set(p, b);
   }
+  // Stufen, in denen aktiv gearbeitet wird – die werden bei einer erneuten
+  // Anfrage NICHT zurückgesetzt (sonst reißt man laufende Termine aus dem Ablauf).
+  const AKTIV = new Set(["contacted", "meeting_scheduled", "meeting_done", "won", "follow_up"]);
 
   // Sperrliste: bewusst entfernte Leads dürfen NICHT wieder importiert werden
   const { data: blocked } = await sb.from("lead_blocklist").select("meta_lead_id, phone_norm").eq("user_id", ownerUserId);
@@ -98,6 +105,7 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
   }
 
   let linked = 0;
+  let repeats = 0;
   let skippedBlocked = 0;
   const fresh: typeof leads = [];
   for (const l of leads) {
@@ -106,10 +114,36 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
     if (blockIds.has(l.id) || (phone && blockPhones.has(phone))) { skippedBlocked++; continue; }
     const hit = phone ? byPhone.get(phone) : undefined;
     if (hit) {
-      // Person schon im CRM – nur verknüpfen, Pipeline-Stufe NICHT anfassen
       if (!hit.meta_lead_id) {
-        await sb.from("leads").update({ meta_lead_id: l.id }).eq("id", hit.id);
+        // war bisher unverknüpft → Meta-ID nachtragen, Stufe unangetastet lassen
+        await sb.from("leads").update({ meta_lead_id: l.id, last_inquiry_at: l.created_time }).eq("id", hit.id);
         linked++;
+      } else if (hit.meta_lead_id !== l.id
+                 && new Date(l.created_time) > new Date(hit.last_inquiry_at || hit.created_at)) {
+        // nur ECHTE Neu-Anfragen zählen (neuer als die zuletzt bekannte) –
+        // ältere Zweit-Einreichungen derselben Person lösen nichts aus
+        // ERNEUTE Anfrage derselben Person – das ist ein starkes Signal und
+        // darf nicht lautlos verschwinden: Notiz ergänzen und (außer bei
+        // laufender Bearbeitung) zurück in „Neu" holen.
+        const datum = new Date(l.created_time).toLocaleDateString("de-AT");
+        const hinweis = `Erneute Anfrage über die Werbung am ${datum}`;
+        const notes = hit.qualification_notes?.includes(hinweis)
+          ? hit.qualification_notes
+          : [hinweis, hit.qualification_notes].filter(Boolean).join(" · ");
+        await sb.from("leads").update({
+          // neueste Meta-ID übernehmen → der nächste Lauf erkennt sie und
+          // zählt die Anfrage NICHT erneut (sonst würde die Stufe immer wieder
+          // auf „Neu" springen)
+          meta_lead_id: l.id,
+          qualification_notes: notes,
+          last_inquiry_at: l.created_time,
+          inquiry_count: (hit.inquiry_count ?? 1) + 1,
+          ...(AKTIV.has(hit.stage) ? {} : { stage: "new" }),
+        }).eq("id", hit.id);
+        hit.meta_lead_id = l.id;
+        hit.last_inquiry_at = l.created_time;
+        hit.inquiry_count = (hit.inquiry_count ?? 1) + 1;
+        repeats++;
       }
       continue;
     }
@@ -143,11 +177,11 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
       created_at: l.created_time,
     };
   });
-  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked, blocked: skippedBlocked };
+  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked, repeats, blocked: skippedBlocked };
 
   // upsert auf meta_lead_id: parallele Läufe können nichts doppelt anlegen
   const { error, count } = await sb.from("leads")
     .upsert(rows, { onConflict: "meta_lead_id", ignoreDuplicates: true, count: "exact" });
-  if (error) return { account: acc.label, found: leads.length, created: 0, linked, blocked: skippedBlocked, note: error.message };
-  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked, blocked: skippedBlocked };
+  if (error) return { account: acc.label, found: leads.length, created: 0, linked, repeats, blocked: skippedBlocked, note: error.message };
+  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked, repeats, blocked: skippedBlocked };
 }
