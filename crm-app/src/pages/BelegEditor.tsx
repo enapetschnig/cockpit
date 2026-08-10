@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import {
-  useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, reserveNumber, saveDocument,
+  useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
   DOC_KIND_LABEL, computeTotals, eur, lineAmount, customerLabel,
@@ -53,6 +53,7 @@ export default function BelegEditor() {
   const [mailTo, setMailTo] = useState('');
   const [mobilePreview, setMobilePreview] = useState(false);
   const [inlineIdx, setInlineIdx] = useState<string | null>(null); // Positions-Autocomplete
+  const [numberEdited, setNumberEdited] = useState(false);         // Nummer selbst eingetippt?
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -157,13 +158,30 @@ export default function BelegEditor() {
 
   const persist = async (extra: Partial<BillingDocument> = {}) => {
     if (!user) return null;
-    setBusy(true);
     const merged = { ...doc, ...extra };
-    // Verbindliche Nummer erst jetzt ziehen – Entwürfe reißen keine Lücke,
-    // und zwei gleichzeitige Speichervorgänge können nie dieselbe Nummer bekommen.
+    const typed = (merged.number || '').trim();
+    const offerDoc = ((merged.kind as DocKind) || 'offer') === 'offer';
+
+    // Selbst eingetippte Nummern gegen den Bestand prüfen – zwei Belege mit
+    // derselben Nummer wären ein Buchhaltungsfehler.
+    if (typed && (numberEdited || !isNew) && (await numberTaken(typed, doc.id))) {
+      toast.error(`Nummer ${typed} ist schon vergeben`);
+      return null;
+    }
+
+    setBusy(true);
     if (isNew && !merged.number_locked) {
-      const n = await reserveNumber((merged.kind as DocKind) || 'offer');
-      if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
+      if (offerDoc && numberEdited && typed) {
+        // Frei gewählte Angebotsnummer: 1:1 übernehmen, der automatische
+        // Zähler wird dafür NICHT weitergedreht.
+        merged.number = typed; merged.number_locked = true;
+        setDoc((d) => ({ ...d, number: typed, number_locked: true }));
+      } else {
+        // Verbindliche Nummer erst jetzt ziehen – Entwürfe reißen keine Lücke,
+        // und zwei gleichzeitige Speichervorgänge bekommen nie dieselbe Nummer.
+        const n = await reserveNumber((merged.kind as DocKind) || 'offer');
+        if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
+      }
     }
     const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id, !!settings?.prices_include_vat);
     setBusy(false);
@@ -275,14 +293,23 @@ export default function BelegEditor() {
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="gap-1"><ArrowLeft className="w-4 h-4" /> Zurück</Button>
           <Badge variant="outline">{DOC_KIND_LABEL[kind]}</Badge>
-          {isNew ? (
+          {isNew && !isOffer ? (
             <span className="text-sm text-muted-foreground" title="Die endgültige Nummer wird beim Speichern verbindlich vergeben">
               Vorschlag: <b>{doc.number || '…'}</b>
             </span>
           ) : (
-            <Input className="h-8 w-40 font-semibold" value={doc.number || ''}
-              onChange={(e) => set({ number: e.target.value })} placeholder="Nummer"
-              title="Laufende Nummer – änderbar" />
+            <>
+              <Input className="h-8 w-44 font-semibold" value={doc.number || ''}
+                onChange={(e) => { setNumberEdited(true); set({ number: e.target.value }); }}
+                placeholder="Nummer"
+                title={isNew ? 'Angebotsnummer frei wählbar – leer lassen für die nächste automatische Nummer'
+                             : 'Laufende Nummer – änderbar'} />
+              {isNew && (
+                <span className="text-xs text-muted-foreground hidden sm:inline">
+                  {numberEdited ? 'eigene Nummer' : 'Vorschlag – frei überschreibbar'}
+                </span>
+              )}
+            </>
           )}
           {doc.legacy_source && <Badge variant="outline">Archiv-Beleg</Badge>}
         </div>

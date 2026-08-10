@@ -136,6 +136,17 @@ export async function reserveNumber(kind: DocKind): Promise<string | null> {
   return data as string;
 }
 
+/**
+ * Ist diese Nummer schon vergeben? Wird bei frei eingetippten Nummern geprüft,
+ * damit nie zwei Belege dieselbe Nummer tragen.
+ */
+export async function numberTaken(number: string, exceptId?: string): Promise<boolean> {
+  let q = db.from('documents').select('id').eq('number', number).limit(1);
+  if (exceptId) q = q.neq('id', exceptId);
+  const { data } = await q;
+  return !!(data && data.length);
+}
+
 /** Unverbindlicher Vorschlag für die Anzeige (die echte Nummer kommt beim Speichern). */
 export async function nextNumber(kind: DocKind, settings: CompanySettings | null): Promise<string> {
   const year = new Date().getFullYear();
