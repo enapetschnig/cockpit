@@ -1,4 +1,5 @@
-import jsPDF from 'jspdf';
+// Benannter Import: funktioniert im Browser-Build wie im Node-Build gleichermassen.
+import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import type { BillingDocument, CompanySettings, DocumentItem } from '@/types/billing';
 import { DOC_KIND_LABEL, computeTotals, docInclVat, lineAmount, round2 } from '@/types/billing';
@@ -116,7 +117,7 @@ export function buildDocumentPdf(
   // ── 6) Kopfzeile: Beleg-Nr. / Zahlungsart / Datum ──
   const cols = isOffer
     ? [{ l: 'Angebot Nr.', v: doc.number || '', x: ML },
-       { l: 'Mitarbeiter', v: 'Kassier', x: ML + 60 },
+       { l: 'Gültig bis', v: dateTime(doc.valid_until), x: ML + 60 },
        { l: 'Datum', v: dateTime(doc.doc_date), x: RX, align: 'right' as const }]
     : [{ l: 'Beleg Nr.', v: doc.number || '', x: ML },
        { l: 'Zahlungsart', v: doc.payment_method || 'Kreditrechnung', x: ML + 60 },
@@ -129,6 +130,38 @@ export function buildDocumentPdf(
   cols.forEach((c) => pdf.text(String(c.v), c.x, ty, c.align ? { align: c.align } : undefined));
   ty += 3.2;
   hr(ty); ty += 5;
+
+  /**
+   * Fließtext setzen. Zeilen ohne Kleinbuchstaben werden zu Abschnitts-
+   * überschriften, „•" zu Aufzählungen – und der Text bricht sauber auf die
+   * nächste Seite um, statt unten aus dem Blatt zu laufen.
+   */
+  const flow = (text: string, size = 9.5, lead = 4.8) => {
+    const need = (h: number) => { if (ty + h > H - 26) { pdf.addPage(); ty = 25; } };
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line) { ty += lead * 0.75; continue; }
+      if (!/[a-zäöüß]/.test(line) && /[A-ZÄÖÜ]/.test(line) && line.length > 3) {
+        need(lead * 2.6); ty += lead * 0.8;
+        setF(size, 'bold');
+        for (const l of pdf.splitTextToSize(line, RX - ML) as string[]) { need(lead); pdf.text(l, ML, ty); ty += lead; }
+        ty += 1.4;
+        continue;
+      }
+      const bullet = line.startsWith('•');
+      const x = bullet ? ML + 5 : ML;
+      setF(size);
+      (pdf.splitTextToSize(bullet ? line.replace(/^•\s*/, '') : line, RX - x) as string[])
+        .forEach((l, i) => {
+          need(lead);
+          if (bullet && i === 0) pdf.text('•', ML + 1, ty);
+          pdf.text(l, x, ty); ty += lead;
+        });
+    }
+  };
+
+  // ── 6b) Anschreiben ──
+  if (doc.intro_text?.trim()) { flow(doc.intro_text.trim()); ty += 5; }
 
   // ── 7) Positionstabelle ──
   const X_QTY = ML + 22;      // Anzahl (rechtsbündig)
@@ -153,11 +186,13 @@ export function buildDocumentPdf(
   const t = computeTotals(items, Number(doc.discount_percent) || 0,
     { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 }, inclVat);
 
+  // Angebote bekommen etwas mehr Luft je Zeile – Rechnungen bleiben eng wie bisher.
+  const ROW = isOffer ? 6.6 : 5.4;
   setF(9);
   for (const it of items) {
     if (ty > H - 55) { pdf.addPage(); ty = 25; header(); }
     if (it.is_heading) {
-      setF(9, 'bold'); pdf.text(it.name, X_DESC, ty); setF(9); ty += 5.6; continue;
+      setF(9, 'bold'); pdf.text(it.name, X_DESC, ty); setF(9); ty += isOffer ? 7.2 : 5.6; continue;
     }
     const line = lineAmount(it);
     const lines = pdf.splitTextToSize(it.name || '', DESC_W) as string[];
@@ -166,11 +201,11 @@ export function buildDocumentPdf(
     pdf.text(String(Number(it.vat_rate) || 0), X_VAT, ty, { align: 'right' });
     pdf.text(money(it.unit_price), X_PRICE, ty, { align: 'right' });
     pdf.text(money(line), X_SUM, ty, { align: 'right' });
-    ty += 5.4;
-    for (const extra of lines.slice(1)) { pdf.text(extra, X_DESC, ty); ty += 5.4; }
+    ty += ROW;
+    for (const extra of lines.slice(1)) { pdf.text(extra, X_DESC, ty); ty += ROW; }
     if (it.description) {
       for (const dl of pdf.splitTextToSize(it.description, DESC_W) as string[]) {
-        pdf.text(dl, X_DESC, ty); ty += 5.4;
+        pdf.text(dl, X_DESC, ty); ty += ROW;
       }
     }
   }
@@ -225,9 +260,15 @@ export function buildDocumentPdf(
        + `Beachten Sie bitte, dass der Empfängername auf "${s?.company_name || 'ePower GmbH'}" lautet und in der Zahlungsreferenz die Rechnungsnummer steht.`;
     for (const l of pdf.splitTextToSize(zahl, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
   } else {
-    if (doc.valid_until) { pdf.text(`Dieses Angebot ist gültig bis ${dateTime(doc.valid_until)}.`, ML, ty); ty += 6; }
     const outro = doc.outro_text?.trim();
-    if (outro) for (const l of pdf.splitTextToSize(outro, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
+    if (outro) { flow(outro); ty += 3; }
+    // Die Gültigkeit steht am Schluss – mit konkretem Datum statt Fristangabe.
+    if (doc.valid_until) {
+      if (ty > H - 34) { pdf.addPage(); ty = 25; }
+      setF(9.5, 'bold');
+      pdf.text(`Dieses Angebot ist gültig bis ${dateTime(doc.valid_until)}.`, ML, ty + 2);
+      ty += 8;
+    }
   }
   if (s?.small_business) {
     setF(9, 'italic');
