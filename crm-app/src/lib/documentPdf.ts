@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import type { BillingDocument, CompanySettings, DocumentItem } from '@/types/billing';
-import { DOC_KIND_LABEL, computeTotals, lineAmount, round2 } from '@/types/billing';
+import { DOC_KIND_LABEL, computeTotals, docInclVat, lineAmount, round2 } from '@/types/billing';
 import { EPOWER_LOGO } from './logoData';
 
 /**
@@ -149,7 +149,7 @@ export function buildDocumentPdf(
   };
   header();
 
-  const inclVat = !!s?.prices_include_vat;
+  const inclVat = docInclVat(doc, s);
   const t = computeTotals(items, Number(doc.discount_percent) || 0,
     { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 }, inclVat);
 
@@ -176,10 +176,12 @@ export function buildDocumentPdf(
   }
 
   // ── 8) Summe ──
+  // Brutto-Basis: eine große „Summe" – exakt wie in den bisherigen Belegen.
+  // Netto-Basis: Zwischensumme netto hier, Gesamtbetrag erst nach der USt-Aufstellung.
   ty += 1;
   setF(14, 'bold');
-  pdf.text('Summe', ML, ty);
-  pdf.text(`€ ${money(t.gross)}`, X_SUM, ty, { align: 'right' });
+  pdf.text(inclVat ? 'Summe' : 'Zwischensumme netto', ML, ty);
+  pdf.text(`€ ${money(inclVat ? t.gross : t.net)}`, X_SUM, ty, { align: 'right' });
   ty += 4; hr(ty, 0.4); ty += 6;
 
   // ── 9) USt-Aufstellung ──
@@ -201,6 +203,15 @@ export function buildDocumentPdf(
     setF(9);
     pdf.text(`abzüglich bereits verrechneter Anzahlungen: ${money(Number(doc.deducted_net))} netto / ${money(Number(doc.deducted_vat))} USt`, ML, ty + 1);
     ty += 6;
+  }
+
+  // Bei Netto-Basis steht der zahlbare Betrag erst hier – nach der USt-Aufstellung.
+  if (!inclVat) {
+    ty += 1;
+    setF(14, 'bold');
+    pdf.text('Gesamtbetrag', ML, ty);
+    pdf.text(`€ ${money(t.gross)}`, X_SUM, ty, { align: 'right' });
+    ty += 4; hr(ty, 0.4); ty += 2;
   }
 
   // ── 10) Hinweise + Zahlungstext (wie bisher) ──

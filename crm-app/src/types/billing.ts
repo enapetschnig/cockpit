@@ -118,6 +118,9 @@ export interface BillingDocument {
   pdf_path: string | null;
   legacy_source: string | null;
   legacy_ref: string | null;
+  /** Preisbasis dieses Belegs: true = Positionspreise brutto, false = netto.
+   *  null → Firmeneinstellung (company_settings.prices_include_vat) gilt. */
+  prices_include_vat: boolean | null;
   number_locked?: boolean;
   notes: string | null;
   created_at: string;
@@ -207,6 +210,16 @@ export function lineNet(
   const r = Number(it.vat_rate) || 0;
   return round2(amount / (1 + r / 100));
 }
+
+/**
+ * Sind die Positionspreise dieses Belegs brutto oder netto zu lesen?
+ * Der Beleg schlägt die Firmeneinstellung – so kann ein netto kalkuliertes
+ * Angebot neben den brutto erfassten Altbelegen bestehen.
+ */
+export const docInclVat = (
+  doc: { prices_include_vat?: boolean | null } | null | undefined,
+  settings: { prices_include_vat?: boolean | null } | null | undefined,
+): boolean => doc?.prices_include_vat ?? !!settings?.prices_include_vat;
 
 export interface Totals {
   net: number;

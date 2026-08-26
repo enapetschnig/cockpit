@@ -13,7 +13,7 @@ import {
   useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
-  DOC_KIND_LABEL, computeTotals, eur, lineAmount, customerLabel,
+  DOC_KIND_LABEL, computeTotals, docInclVat, eur, lineAmount, customerLabel,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
@@ -92,14 +92,17 @@ export default function BelegEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, settings, doc.kind]);
 
+  // Preisbasis: was am Beleg steht, schlägt die Firmeneinstellung
+  const inclVat = docInclVat(doc, settings);
+
   const totals = useMemo(
     () => computeTotals(items.map((i) => ({
       quantity: Number(i.quantity) || 0, unit_price: Number(i.unit_price) || 0,
       discount_percent: Number(i.discount_percent) || 0, vat_rate: Number(i.vat_rate) || 0, is_heading: !!i.is_heading,
     })), Number(doc.discount_percent) || 0,
     { net: Number(doc.deducted_net) || 0, vat: Number(doc.deducted_vat) || 0 },
-    !!settings?.prices_include_vat),
-    [items, doc.discount_percent, doc.deducted_net, doc.deducted_vat, settings?.prices_include_vat],
+    inclVat),
+    [items, doc.discount_percent, doc.deducted_net, doc.deducted_vat, inclVat],
   );
 
   const custMatches = useMemo(() => {
@@ -183,7 +186,7 @@ export default function BelegEditor() {
         if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
       }
     }
-    const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id, !!settings?.prices_include_vat);
+    const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id, inclVat);
     setBusy(false);
     if (!newId) return null;
     if (isNew) navigate(`/beleg/${newId}`, { replace: true });
@@ -434,14 +437,14 @@ export default function BelegEditor() {
                     <Input type="number" step="0.01" value={it.quantity ?? 1} onChange={(e) => upd(it._k, { quantity: Number(e.target.value) })} /></div>
                   <div className="w-24"><Label className="text-[10px] text-muted-foreground">Einheit</Label>
                     <Input value={it.unit || 'Stk'} onChange={(e) => upd(it._k, { unit: e.target.value })} /></div>
-                  <div className="w-28"><Label className="text-[10px] text-muted-foreground">{settings?.prices_include_vat ? 'Preis brutto €' : 'Einzelpreis €'}</Label>
+                  <div className="w-28"><Label className="text-[10px] text-muted-foreground">{inclVat ? 'Preis brutto €' : 'Preis netto €'}</Label>
                     <Input type="number" step="0.01" value={it.unit_price ?? 0} onChange={(e) => upd(it._k, { unit_price: Number(e.target.value) })} /></div>
                   <div className="w-20"><Label className="text-[10px] text-muted-foreground">USt %</Label>
                     <Input type="number" value={it.vat_rate ?? 20} onChange={(e) => upd(it._k, { vat_rate: Number(e.target.value) })} /></div>
                   <div className="w-20"><Label className="text-[10px] text-muted-foreground">Rabatt %</Label>
                     <Input type="number" value={it.discount_percent ?? 0} onChange={(e) => upd(it._k, { discount_percent: Number(e.target.value) })} /></div>
                   <div className="flex-1 min-w-[90px] text-right">
-                    <Label className="text-[10px] text-muted-foreground">{settings?.prices_include_vat ? 'Betrag' : 'Netto'}</Label>
+                    <Label className="text-[10px] text-muted-foreground">{inclVat ? 'Brutto' : 'Netto'}</Label>
                     <div className="font-semibold pt-1.5">{eur(lineAmount({
                       quantity: Number(it.quantity) || 0, unit_price: Number(it.unit_price) || 0,
                       discount_percent: Number(it.discount_percent) || 0, is_heading: false }))}</div>
@@ -467,6 +470,18 @@ export default function BelegEditor() {
                   <Input type="number" step="0.01" value={doc.deducted_vat ?? 0} onChange={(e) => set({ deducted_vat: Number(e.target.value) })} /></div>
               </>
             )}
+            {/* Preisbasis nur für diesen Beleg – Altbelege bleiben unangetastet */}
+            <div>
+              <Label className="text-xs text-muted-foreground">Preise sind</Label>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" variant={inclVat ? 'secondary' : 'outline'}
+                  onClick={() => set({ prices_include_vat: true })}
+                  title="Positionspreise verstehen sich inklusive Umsatzsteuer">brutto</Button>
+                <Button type="button" size="sm" variant={!inclVat ? 'secondary' : 'outline'}
+                  onClick={() => set({ prices_include_vat: false })}
+                  title="Positionspreise verstehen sich zuzüglich Umsatzsteuer">netto</Button>
+              </div>
+            </div>
           </div>
           <div className="ml-auto max-w-xs space-y-1 text-sm">
             {totals.byRate.map((g) => (
