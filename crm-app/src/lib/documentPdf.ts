@@ -137,29 +137,40 @@ export function buildDocumentPdf(
    * nächste Seite um, statt unten aus dem Blatt zu laufen.
    */
   const flow = (text: string, size = 9.5, lead = 4.8) => {
-    const need = (h: number) => { if (ty + h > H - 26) { pdf.addPage(); ty = 25; } };
-    for (const raw of text.split('\n')) {
-      const line = raw.trim();
+    const bottom = H - 26;
+    const brk = () => { pdf.addPage(); ty = 25; };
+    const zeilen = text.split('\n').map((l) => l.trim());
+    const istUeberschrift = (l: string) => !/[a-zäöüß]/.test(l) && /[A-ZÄÖÜ]/.test(l) && l.length > 3;
+    const umbruch = (l: string, breite: number) => pdf.splitTextToSize(l.replace(/^•\s*/, ''), breite) as string[];
+
+    for (let i = 0; i < zeilen.length; i++) {
+      const line = zeilen[i];
       if (!line) { ty += lead * 0.75; continue; }
-      if (!/[a-zäöüß]/.test(line) && /[A-ZÄÖÜ]/.test(line) && line.length > 3) {
-        // Überschrift nie allein am Seitenfuß stehen lassen – zwei Textzeilen mitnehmen
-        need(lead * 4); ty += lead * 0.8;
+
+      if (istUeberschrift(line)) {
         setF(size, 'bold');
-        for (const l of pdf.splitTextToSize(line, RX - ML) as string[]) { need(lead); pdf.text(l, ML, ty); ty += lead; }
+        const kopf = umbruch(line, RX - ML);
+        // Nächsten Absatz mitmessen, damit die Überschrift nie allein am Fuß steht.
+        let n = i + 1; while (n < zeilen.length && !zeilen[n]) n++;
+        const folge = n < zeilen.length && !istUeberschrift(zeilen[n])
+          ? umbruch(zeilen[n], RX - ML - (zeilen[n].startsWith('•') ? 5 : 0)).length : 0;
+        const brauche = lead * 0.8 + kopf.length * lead + 1.4 + Math.min(folge, 6) * lead;
+        if (ty + brauche > bottom) brk(); else ty += lead * 0.8;
+        for (const l of kopf) { pdf.text(l, ML, ty); ty += lead; }
         ty += 1.4;
         continue;
       }
+
       const bullet = line.startsWith('•');
       const x = bullet ? ML + 5 : ML;
       setF(size);
-      const parts = pdf.splitTextToSize(bullet ? line.replace(/^•\s*/, '') : line, RX - x) as string[];
-      // Kurze Absätze lieber ganz auf die nächste Seite nehmen, statt einzelne
-      // Wörter als Waise hinüberzuziehen.
-      const passt = Math.floor((H - 26 - ty) / lead);
-      if (parts.length > passt && (parts.length <= 6 || passt < 2)) { pdf.addPage(); ty = 25; }
-      parts.forEach((l, i) => {
-        need(lead);
-        if (bullet && i === 0) pdf.text('•', ML + 1, ty);
+      const teile = umbruch(line, RX - x);
+      // Kurze Absätze lieber ganz auf die neue Seite, statt einzelne Wörter zu vererben.
+      const passt = Math.floor((bottom - ty) / lead);
+      if (teile.length > passt && (teile.length <= 6 || passt < 2)) brk();
+      teile.forEach((l, k) => {
+        if (ty + lead > bottom) brk();
+        if (bullet && k === 0) pdf.text('•', ML + 1, ty);
         pdf.text(l, x, ty); ty += lead;
       });
     }
