@@ -142,7 +142,8 @@ export function buildDocumentPdf(
       const line = raw.trim();
       if (!line) { ty += lead * 0.75; continue; }
       if (!/[a-zäöüß]/.test(line) && /[A-ZÄÖÜ]/.test(line) && line.length > 3) {
-        need(lead * 2.6); ty += lead * 0.8;
+        // Überschrift nie allein am Seitenfuß stehen lassen – zwei Textzeilen mitnehmen
+        need(lead * 4); ty += lead * 0.8;
         setF(size, 'bold');
         for (const l of pdf.splitTextToSize(line, RX - ML) as string[]) { need(lead); pdf.text(l, ML, ty); ty += lead; }
         ty += 1.4;
@@ -151,12 +152,16 @@ export function buildDocumentPdf(
       const bullet = line.startsWith('•');
       const x = bullet ? ML + 5 : ML;
       setF(size);
-      (pdf.splitTextToSize(bullet ? line.replace(/^•\s*/, '') : line, RX - x) as string[])
-        .forEach((l, i) => {
-          need(lead);
-          if (bullet && i === 0) pdf.text('•', ML + 1, ty);
-          pdf.text(l, x, ty); ty += lead;
-        });
+      const parts = pdf.splitTextToSize(bullet ? line.replace(/^•\s*/, '') : line, RX - x) as string[];
+      // Kurze Absätze lieber ganz auf die nächste Seite nehmen, statt einzelne
+      // Wörter als Waise hinüberzuziehen.
+      const passt = Math.floor((H - 26 - ty) / lead);
+      if (parts.length > passt && (parts.length <= 6 || passt < 2)) { pdf.addPage(); ty = 25; }
+      parts.forEach((l, i) => {
+        need(lead);
+        if (bullet && i === 0) pdf.text('•', ML + 1, ty);
+        pdf.text(l, x, ty); ty += lead;
+      });
     }
   };
 
