@@ -9,6 +9,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { appLabel, secretGleich, sendTelegram } from './_apps.js';
 
+// Vercels Node-Runtime übergibt Node-Objekte (kein Web-Request).
+interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown }
+interface Res { status(c: number): Res; json(b: unknown): void }
+
 interface Payload {
   id?: string; art?: string; status?: string; text?: string;
   antwort?: string | null; seite?: string | null;
@@ -16,6 +20,10 @@ interface Payload {
   erstellt_am?: string; aktualisiert_am?: string;
 }
 
+const kopf = (r: Req, name: string): string => {
+  const v = r.headers[name];
+  return (Array.isArray(v) ? v[0] : v) ?? '';
+};
 const str = (v: unknown): string | null => {
   const s = (v ?? '').toString().trim();
   return s ? s : null;
@@ -27,27 +35,29 @@ const datum = (v: unknown): string => {
 
 const ART_LABEL: Record<string, string> = { wunsch: 'Wunsch', fehler: 'Fehler', frage: 'Frage' };
 
-export default async function handler(req: Request): Promise<Response> {
-  const ok = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-
-  if (req.method !== 'POST') return ok({ error: 'nur POST' }, 405);
+export default async function handler(req: Req, res: Res): Promise<void> {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'nur POST' });
 
   const secret = process.env.FEEDBACK_SHARED_SECRET;
-  if (!secret || !secretGleich(req.headers.get('x-cockpit-secret') ?? '', secret)) {
-    return ok({ error: 'unauthorized' }, 401);
+  if (!secret || !secretGleich(kopf(req, 'x-cockpit-secret'), secret)) {
+    return res.status(401).json({ error: 'unauthorized' });
   }
-  const appKey = (req.headers.get('x-app-key') ?? '').trim();
-  if (!appKey) return ok({ error: 'x-app-key fehlt' }, 400);
+  const appKey = kopf(req, 'x-app-key').trim();
+  if (!appKey) return res.status(400).json({ error: 'x-app-key fehlt' });
 
-  const b = (await req.json().catch(() => ({}))) as Payload;
+  // Vercel parst JSON-Bodies selbst; als Absicherung auch Strings annehmen.
+  let b: Payload = {};
+  try {
+    b = (typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {})) as Payload;
+  } catch { return res.status(400).json({ error: 'Body ist kein gültiges JSON' }); }
+
   const id = str(b.id);
   const text = str(b.text);
-  if (!id || !text) return ok({ error: 'id und text nötig' }, 400);
+  if (!id || !text) return res.status(400).json({ error: 'id und text nötig' });
 
   const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return ok({ error: 'Supabase-Zugang fehlt' }, 500);
+  if (!url || !key) return res.status(500).json({ error: 'Supabase-Zugang fehlt' });
   const sb = createClient(url, key, { auth: { persistSession: false }, db: { schema: 'crm' } });
 
   const felder = {
@@ -69,12 +79,12 @@ export default async function handler(req: Request): Promise<Response> {
   if (vorhanden) {
     // Update – customer_id und gesehen_am bleiben, wie sie sind.
     const { error } = await sb.from('app_wuensche').update(felder).eq('id', id);
-    if (error) return ok({ error: error.message }, 500);
+    if (error) return res.status(500).json({ error: error.message });
   } else {
     // Erster Eingang: Kunde einmalig über den app_key zuordnen.
     const { data: kunde } = await sb.from('customers').select('id').eq('app_key', appKey).maybeSingle();
     const { error } = await sb.from('app_wuensche').insert({ id, ...felder, customer_id: kunde?.id ?? null });
-    if (error) return ok({ error: error.message }, 500);
+    if (error) return res.status(500).json({ error: error.message });
 
     // Push nur beim erstmaligen Eingang mit Status "neu" – Updates pingen nicht.
     if (felder.status === 'neu') {
@@ -84,5 +94,5 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // Der Trigger wertet die Antwort nicht aus – immer 200.
-  return ok({ ok: true });
+  return res.status(200).json({ ok: true });
 }
