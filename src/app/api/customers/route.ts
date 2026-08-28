@@ -9,7 +9,14 @@ export async function GET() {
     orderBy: { createdAt: "asc" },
     include: { todos: true, emails: true },
   });
-  return NextResponse.json(customers.map(toCustomerDTO));
+  // Noch nicht gesehene App-Wünsche je Kunde – ein Aufruf statt N Zählabfragen.
+  const offen = await prisma.appWunsch.groupBy({
+    by: ["customerId"],
+    where: { gesehenAm: null, customerId: { not: null } },
+    _count: { _all: true },
+  });
+  const proKunde = new Map(offen.map((r) => [r.customerId as string, r._count._all]));
+  return NextResponse.json(customers.map((c) => toCustomerDTO(c, proKunde.get(c.id) ?? 0)));
 }
 
 export async function POST(req: Request) {

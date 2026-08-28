@@ -182,7 +182,8 @@ export function toLeadDTO(l: Lead & { activities?: LeadActivity[] }): LeadDTO {
 }
 
 export function toCustomerDTO(
-  c: Customer & { todos?: Todo[]; emails?: Email[] }
+  c: Customer & { todos?: Todo[]; emails?: Email[] },
+  neueWuensche = 0
 ): CustomerDTO {
   const todos = c.todos ?? [];
   return {
@@ -190,8 +191,10 @@ export function toCustomerDTO(
     name: c.name,
     meta: c.meta,
     color: c.color,
+    appKey: c.appKey,
     openTodos: todos.filter((t) => !t.done).length,
     todos: todos.map((t) => ({ id: t.id, text: t.text, done: t.done })),
     emailCount: c.emails?.length ?? 0,
+    neueWuensche,
   };
 }

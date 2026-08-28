@@ -18,6 +18,9 @@ export async function middleware(req: NextRequest) {
     if (cron && (bearer || keyParam)) return NextResponse.next();
   }
 
+  // Wunsch-Eingang der Apps: prüft FEEDBACK_SHARED_SECRET selbst
+  if (pathname === "/api/wuensche/eingang") return NextResponse.next();
+
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();
 
