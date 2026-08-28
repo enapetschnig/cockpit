@@ -20,6 +20,7 @@ import KundenPage from "./pages/KundenPage";
 import KassabuchPage from "./pages/KassabuchPage";
 import ArchivPage from "./pages/ArchivPage";
 import FirmaPage from "./pages/FirmaPage";
+import WuenschePage from './pages/WuenschePage';
 
 const queryClient = new QueryClient();
 
@@ -124,6 +125,7 @@ const App = () => (
           <Route path="/archiv" element={<ProtectedRoute><ArchivPage /></ProtectedRoute>} />
           <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
+          <Route path="/wuensche" element={<ProtectedRoute><WuenschePage /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
 
         </Routes>

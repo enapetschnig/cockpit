@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Zap, FileText, Receipt, Users, BookOpen, Archive, Settings, LayoutGrid, ExternalLink, Wallet, Package } from 'lucide-react';
+import { Zap, FileText, Receipt, Users, BookOpen, Archive, Settings, LayoutGrid, ExternalLink, Wallet, Package, MessageSquare } from 'lucide-react';
 
 const ITEMS = [
   { to: '/', label: 'Pipeline', icon: LayoutGrid },
@@ -11,6 +11,7 @@ const ITEMS = [
   { to: '/kassabuch', label: 'Kassabuch', icon: BookOpen },
   { to: '/archiv', label: 'Archiv', icon: Archive },
   { to: '/export', label: 'Export', icon: Package },
+  { to: '/wuensche', label: 'Wünsche', icon: MessageSquare },
   { to: '/firma', label: 'Firma', icon: Settings },
 ];
 
