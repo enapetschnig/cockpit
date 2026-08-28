@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { LABELS } from "@/lib/labels";
 import type { EmailDTO, CustomerDTO } from "@/lib/types";
-import { APPS } from "@/lib/apps";
 
 type Tab = "firmenrelevant" | "wichtig" | "buchhaltung" | "zuordnen" | "alle";
 type Acc = "alle" | "firma" | "privat";
@@ -54,17 +53,6 @@ export default function Cockpit() {
     const r = await fetch("/api/customers");
     setCustomers(await r.json());
   }
-  /** Kunde einer Handwerker-App zuordnen – danach landen deren Wünsche bei ihm. */
-  async function setAppKey(customerId: string, appKey: string) {
-    const r = await fetch(`/api/customers/${customerId}`, {
-      method: "PATCH", headers: json, body: JSON.stringify({ appKey }),
-    });
-    if (r.ok) { await loadCustomers(); pushToast("Gespeichert", appKey ? "App zugeordnet – die Wünsche landen jetzt bei diesem Kunden." : "Zuordnung entfernt."); }
-    else pushToast("Ging nicht", (await r.json().catch(() => ({}))).error ?? "Bitte nochmal versuchen.");
-  }
-
-  // Ungesehene App-Wünsche über alle Kunden – füttert das Badge in der Navigation.
-  const neueWuensche = customers.reduce((n, c) => n + (c.neueWuensche ?? 0), 0);
   useEffect(() => {
     Promise.all([loadEmails(), loadCustomers()]).finally(() => setLoading(false));
   }, []);
@@ -479,12 +467,6 @@ export default function Cockpit() {
             <div key={c.id} className="kcard" onClick={() => { setActiveCustomerId(c.id); setView("kunde"); }}>
               <div className="av" style={{ background: c.color || "#2f6df0" }}>{initials(c.name)}</div>
               <div><div className="kname">{c.name}</div><div className="kmeta">{c.meta || "—"}</div></div>
-              {c.neueWuensche > 0 && (
-                <div className="kbadge" style={{ background: "#e8f0fe", color: "#1a56c4" }}
-                  onClick={(ev) => { ev.stopPropagation(); window.location.href = "/wuensche?app=" + encodeURIComponent(c.appKey || ""); }}>
-                  {c.neueWuensche} {c.neueWuensche === 1 ? "neuer Wunsch" : "neue Wünsche"}
-                </div>
-              )}
               {c.openTodos > 0 && <div className="kbadge">{c.openTodos} offen</div>}
             </div>
           ))}
@@ -515,21 +497,6 @@ export default function Cockpit() {
                     <div className="ttxt">{t.text}</div>
                   </div>
                 )) : <div className="muted">Keine offenen Aufgaben.</div>}
-              </div>
-              <div className="card">
-                <div className="kv" style={{ marginBottom: 6, fontWeight: 700, color: "var(--ink)" }}>Handwerker-App</div>
-                <select
-                  value={activeCustomer.appKey || ""}
-                  onChange={(e) => setAppKey(activeCustomer.id, e.target.value)}
-                  style={{ width: "100%", padding: "9px 10px", borderRadius: 9, border: "1px solid #e2ddd4", background: "#fff", fontSize: 14 }}
-                >
-                  <option value="">— keine App zugeordnet —</option>
-                  {APPS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
-                </select>
-                <div className="kmeta" style={{ marginTop: 6 }}>
-                  Legt fest, welchem Kunden die Wünsche aus dieser App zugeordnet werden.
-                  {activeCustomer.neueWuensche > 0 && <> · <a href={"/wuensche?app=" + encodeURIComponent(activeCustomer.appKey || "")}>{activeCustomer.neueWuensche} neu</a></>}
-                </div>
               </div>
               <div className="card">
                 <div className="kv" style={{ marginBottom: 8, fontWeight: 700, color: "var(--ink)" }}>Zugeordnete E-Mails</div>
@@ -600,10 +567,6 @@ export default function Cockpit() {
         <button className={"navi" + (view === "kalender" ? " active" : "")} onClick={() => setView("kalender")}>
           <svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" /></svg>Kalender
         </button>
-        <a className="navi" href="/wuensche" style={{ textDecoration: "none", position: "relative" }}>
-          <svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.5 9.5 0 0 1-2.9-.4L3 21l1.6-4.6A8.2 8.2 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4z" /></svg>Wünsche
-          {neueWuensche > 0 && <span className="badge" style={{ top: 2, right: 10 }}>{neueWuensche}</span>}
-        </a>
         <a className="navi" href="/werbung" style={{ textDecoration: "none" }}>
           <svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" /><path d="M15 9a3 3 0 0 1 0 6" /></svg>Werbung
         </a>

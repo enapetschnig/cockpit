@@ -18,36 +18,10 @@ model Customer {
   name       String
   meta       String? // kurze Beschreibung, z. B. "Lagerverwaltungs-Software"
   color      String? // Akzentfarbe für Avatar im Cockpit
-  appKey     String?     @unique // Schlüssel der zugehörigen Handwerker-App ("groismaier", …)
   createdAt  DateTime    @default(now())
   emails     Email[]
   todos      Todo[]
   adAccounts AdAccount[]
-  wuensche   AppWunsch[]
-}
-
-/// Änderungswunsch / Fehlermeldung aus einer Handwerker-App.
-/// Die App ist die Wahrheit: sie schickt jede Änderung per Trigger hierher.
-/// Bilder und Sprachnachrichten bleiben im Bucket der App – hier steht nur der Pfad.
-model AppWunsch {
-  id           String    @id // UUID aus der Quell-App (stabil, dient dem Upsert)
-  appKey       String // "groismaier", "cspowermetall", …
-  customerId   String?
-  customer     Customer? @relation(fields: [customerId], references: [id])
-  art          String // wunsch | fehler | frage
-  status       String // neu | gesehen | umgesetzt | abgelehnt (wird in der App gepflegt)
-  text         String
-  antwort      String?
-  seite        String? // wo in der App gemeldet
-  melder       String?
-  bildPfad     String? // Pfad im App-Bucket, KEINE Datei
-  audioPfad    String?
-  erstelltAm   DateTime
-  aktualisiert DateTime
-  gesehenAm    DateTime? // "im Cockpit gesehen" – rein cockpit-eigen, nie von der App überschrieben
-
-  @@index([appKey, status])
-  @@index([erstelltAm])
 }
 
 model Email {

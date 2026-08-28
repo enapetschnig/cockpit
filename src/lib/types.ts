@@ -23,31 +23,9 @@ export interface CustomerDTO {
   name: string;
   meta: string | null;
   color: string | null;
-  appKey: string | null;
   openTodos: number;
   todos: { id: string; text: string; done: boolean }[];
   emailCount: number;
-  neueWuensche: number;
-}
-
-/** Ein Änderungswunsch aus einer Handwerker-App, wie ihn der Cockpit-Bereich anzeigt. */
-export interface WunschDTO {
-  id: string;
-  appKey: string;
-  appLabel: string;
-  kunde: string | null;
-  kundeFarbe: string | null;
-  art: string;
-  status: string;
-  text: string;
-  antwort: string | null;
-  seite: string | null;
-  melder: string | null;
-  hatBild: boolean;
-  hatAudio: boolean;
-  erstelltAm: string;
-  aktualisiert: string;
-  gesehenAm: string | null;
 }
 
 export interface ClassifyResult {
