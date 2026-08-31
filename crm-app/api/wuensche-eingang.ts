@@ -96,7 +96,9 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     if (error) return res.status(500).json({ error: error.message });
 
     // Push nur beim erstmaligen Eingang mit Status "neu" – Updates pingen nicht.
-    if (felder.status === 'neu') {
+    // `x-kein-ping: 1` unterdrückt ihn zusätzlich: beim Nachtragen der
+    // Altmeldungen einer frisch angebundenen App will niemand 20 Telegrams.
+    if (felder.status === 'neu' && kopf(req, 'x-kein-ping') !== '1') {
       const anfang = text.length > 160 ? text.slice(0, 160) + ' …' : text;
       await sendTelegram(`🛠 ${appLabel(appKey)}: ${ART_LABEL[felder.art] ?? felder.art} — ${anfang}`);
     }
