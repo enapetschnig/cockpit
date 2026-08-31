@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import {
-  useArticles, useCompanySettings, useCustomers, useDocument, nextNumber, numberTaken, reserveNumber, saveDocument,
+  useArticles, useCompanySettings, useCustomers, useDocument, naechsteRechnungsnummer, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
   DOC_KIND_LABEL, computeTotals, docInclVat, eur, lineAmount, customerLabel,
@@ -54,6 +54,7 @@ export default function BelegEditor() {
   const [mobilePreview, setMobilePreview] = useState(false);
   const [inlineIdx, setInlineIdx] = useState<string | null>(null); // Positions-Autocomplete
   const [numberEdited, setNumberEdited] = useState(false);         // Nummer selbst eingetippt?
+  const [anzProzent, setAnzProzent] = useState(50);                // Anzahlungshöhe in %
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -67,7 +68,7 @@ export default function BelegEditor() {
     if (!isNew || !settings || doc.number) return;
     (async () => {
       const kind = (doc.kind as DocKind) || 'offer';
-      const num = await nextNumber(kind, settings);
+      const num = kind === 'offer' ? await nextNumber(kind, settings) : await naechsteRechnungsnummer(settings);
       const today = doc.doc_date || new Date().toISOString().slice(0, 10);
       set({
         number: num,
@@ -179,11 +180,16 @@ export default function BelegEditor() {
         // Zähler wird dafür NICHT weitergedreht.
         merged.number = typed; merged.number_locked = true;
         setDoc((d) => ({ ...d, number: typed, number_locked: true }));
-      } else {
+      } else if (offerDoc) {
         // Verbindliche Nummer erst jetzt ziehen – Entwürfe reißen keine Lücke,
         // und zwei gleichzeitige Speichervorgänge bekommen nie dieselbe Nummer.
-        const n = await reserveNumber((merged.kind as DocKind) || 'offer');
+        const n = await reserveNumber('offer');
         if (n) { merged.number = n; merged.number_locked = true; setDoc((d) => ({ ...d, number: n, number_locked: true })); }
+      } else {
+        // Rechnungen laufen im Bestandsstil fortlaufend weiter (1423, 1424, …)
+        const n = typed && !(await numberTaken(typed)) ? typed : await naechsteRechnungsnummer(settings);
+        merged.number = n; merged.number_locked = true;
+        setDoc((d) => ({ ...d, number: n, number_locked: true }));
       }
     }
     const newId = await saveDocument(merged, items.filter((i) => i.name || i.is_heading), user.id, inclVat);
@@ -240,7 +246,10 @@ export default function BelegEditor() {
     const srcId = doc.id || (await persist());
     if (!srcId) return;
     setBusy(true);
-    const num = await nextNumber(kind === 'offer' ? 'offer' : 'invoice', settings);
+    // Verbindliche Nummer – kein blosser Vorschlag, sonst kollidieren Folgebelege.
+    const num = kind === 'offer'
+      ? (await reserveNumber('offer')) ?? (await nextNumber('offer', settings))
+      : await naechsteRechnungsnummer(settings);
     const today = new Date().toISOString().slice(0, 10);
     let newItems: Partial<DocumentItem>[];
     let extra: Partial<BillingDocument> = {};
@@ -258,7 +267,8 @@ export default function BelegEditor() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { supabase } = await import('@/integrations/supabase/client') as any;
       const { data: parts } = await supabase.from('documents').select('net,vat')
-        .eq('parent_document_id', srcId).eq('kind', 'partial_invoice');
+        .eq('parent_document_id', srcId).eq('kind', 'partial_invoice')
+        .neq('status', 'cancelled'); // stornierte Anzahlungen zählen nicht
       const dNet = (parts || []).reduce((a: number, p: { net: number }) => a + Number(p.net || 0), 0);
       const dVat = (parts || []).reduce((a: number, p: { vat: number }) => a + Number(p.vat || 0), 0);
       newItems = items.filter((i) => i.name || i.is_heading).map((i) => ({ ...i }));
@@ -512,9 +522,15 @@ export default function BelegEditor() {
                   <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('invoice')}>
                     <Receipt className="w-4 h-4" /> In Rechnung umwandeln
                   </Button>
-                  <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('partial_invoice', 50)}>
-                    <FileText className="w-4 h-4" /> 50 % Anzahlungsrechnung
-                  </Button>
+                  <span className="flex items-center gap-1">
+                    <Input type="number" min={1} max={99} value={anzProzent}
+                      onChange={(e) => setAnzProzent(Math.min(99, Math.max(1, Number(e.target.value) || 50)))}
+                      className="h-8 w-16 text-center" aria-label="Anzahlung in Prozent" />
+                    <Button size="sm" variant="outline" className="gap-1" disabled={busy}
+                      onClick={() => createFollowUp('partial_invoice', anzProzent)}>
+                      <FileText className="w-4 h-4" /> % Anzahlungsrechnung
+                    </Button>
+                  </span>
                   <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('final_invoice')}>
                     <FileText className="w-4 h-4" /> Schlussrechnung (mit Abzug)
                   </Button>

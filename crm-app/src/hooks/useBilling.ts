@@ -154,6 +154,30 @@ export async function numberTaken(number: string, exceptId?: string): Promise<bo
   return !!(data && data.length);
 }
 
+/**
+ * Nächste RECHNUNGSnummer im Stil des Bestands.
+ *
+ * Die Rechnungen laufen seit HelloCash als reine Zahl (1368, 1369, … 1422).
+ * Solange der Bestand so nummeriert ist, wird schlicht weitergezählt –
+ * ein zweiter Nummernkreis "RE-2026-0001" daneben wäre steuerlich Murks.
+ * Gibt es keine numerischen Nummern (frisches System), greift das
+ * Präfix-Schema aus den Firmeneinstellungen.
+ */
+export async function naechsteRechnungsnummer(settings: CompanySettings | null): Promise<string> {
+  const { data } = await db.from('documents').select('number')
+    .in('kind', ['invoice', 'partial_invoice', 'final_invoice', 'credit_note'])
+    .not('number', 'is', null).limit(3000);
+  const zahlen = ((data || []) as { number: string }[])
+    .map((d) => d.number).filter((n) => /^\d+$/.test(n)).map(Number);
+  if (zahlen.length) {
+    let n = Math.max(...zahlen) + 1;
+    // Sicherheitsnetz gegen Doppelvergabe (z. B. zwei offene Browser-Tabs)
+    for (let i = 0; i < 25 && (await numberTaken(String(n))); i++) n++;
+    return String(n);
+  }
+  return nextNumber('invoice', settings);
+}
+
 /** Unverbindlicher Vorschlag für die Anzeige (die echte Nummer kommt beim Speichern). */
 export async function nextNumber(kind: DocKind, settings: CompanySettings | null): Promise<string> {
   const year = new Date().getFullYear();
