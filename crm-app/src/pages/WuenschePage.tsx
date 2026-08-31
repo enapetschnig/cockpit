@@ -29,6 +29,7 @@ interface Wunsch {
   bild_pfad: string | null;
   audio_pfad: string | null;
   erstellt_am: string;
+  aktualisiert: string;
   gesehen_am: string | null;
   kunde?: string | null;
 }
@@ -38,8 +39,11 @@ const ART: Record<string, { label: string; cls: string }> = {
   fehler: { label: 'Fehler', cls: 'bg-red-50 text-red-700 border-red-200' },
   frage: { label: 'Frage', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
-const STATUS: Record<string, string> = {
-  neu: 'Neu', gesehen: 'Gesehen', umgesetzt: 'Umgesetzt', abgelehnt: 'Abgelehnt',
+const STATUS: Record<string, { label: string; cls: string }> = {
+  neu:       { label: 'Neu',       cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+  gesehen:   { label: 'In Arbeit', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  umgesetzt: { label: '✓ Erledigt', cls: 'bg-green-100 text-green-800 border-green-300 font-bold' },
+  abgelehnt: { label: 'Abgelehnt', cls: 'bg-muted text-muted-foreground border-border' },
 };
 
 function wann(iso: string): string {
@@ -57,6 +61,7 @@ export default function WuenschePage() {
   const [fApp, setFApp] = useState('');
   const [fArt, setFArt] = useState('');
   const [nurOffen, setNurOffen] = useState(false);
+  const [fStatus, setFStatus] = useState('');
   const [bildOffen, setBildOffen] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
 
@@ -86,8 +91,9 @@ export default function WuenschePage() {
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
 
   const gefiltert = useMemo(() => items.filter((w) =>
-    (!fApp || w.app_key === fApp) && (!fArt || w.art === fArt) && (!nurOffen || !w.gesehen_am)),
-    [items, fApp, fArt, nurOffen]);
+    (!fApp || w.app_key === fApp) && (!fArt || w.art === fArt)
+    && (!fStatus || w.status === fStatus) && (!nurOffen || !w.gesehen_am)),
+    [items, fApp, fArt, fStatus, nurOffen]);
 
   const neu = items.filter((w) => !w.gesehen_am).length;
   const apps = useMemo(() => [...new Set(items.map((w) => w.app_key))], [items]);
@@ -127,6 +133,11 @@ export default function WuenschePage() {
           {Object.entries(ART).map(([k, v]) => (
             <Button key={k} size="sm" variant={fArt === k ? 'secondary' : 'outline'} onClick={() => setFArt(k)}>{v.label}</Button>
           ))}
+          <span className="text-xs text-muted-foreground mx-1 ml-3">Stand</span>
+          <Button size="sm" variant={!fStatus ? 'secondary' : 'outline'} onClick={() => setFStatus('')}>alle</Button>
+          {Object.entries(STATUS).map(([k, v]) => (
+            <Button key={k} size="sm" variant={fStatus === k ? 'secondary' : 'outline'} onClick={() => setFStatus(k)}>{v.label}</Button>
+          ))}
           <Button size="sm" variant={nurOffen ? 'secondary' : 'outline'} className="ml-auto"
             onClick={() => setNurOffen((v) => !v)}>
             {nurOffen && <Check className="w-3.5 h-3.5" />} nur ungesehene
@@ -147,18 +158,30 @@ export default function WuenschePage() {
           </Card>
         ) : gefiltert.map((w) => {
           const art = ART[w.art] ?? { label: w.art, cls: 'bg-muted text-muted-foreground' };
+          const st = STATUS[w.status] ?? { label: w.status, cls: 'bg-muted text-muted-foreground border-border' };
           const offen = !w.gesehen_am;
+          // Wurde in der App weiterbearbeitet, nicht nur gemeldet?
+          const bearbeitet = w.status !== 'neu'
+            && new Date(w.aktualisiert).getTime() - new Date(w.erstellt_am).getTime() > 60_000;
+          const erledigt = w.status === 'umgesetzt';
           return (
-            <Card key={w.id} className={'p-4 mb-3 ' + (offen ? 'border-l-4 border-l-blue-600' : '')}>
+            <Card key={w.id} className={'p-4 mb-3 ' +
+              (offen ? (erledigt ? 'border-l-4 border-l-green-600' : 'border-l-4 border-l-blue-600') : '')}>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <strong className="text-[15px]">{w.kunde || (APP_LABEL[w.app_key] ?? w.app_key)}</strong>
                 {w.kunde && <span className="text-xs text-muted-foreground">· {APP_LABEL[w.app_key] ?? w.app_key}</span>}
                 <span className={'text-xs font-semibold px-2 py-0.5 rounded-full border ' + art.cls}>{art.label}</span>
-                <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">{STATUS[w.status] ?? w.status}</span>
+                <span className={'text-xs font-semibold px-2 py-0.5 rounded-full border ' + st.cls}>{st.label}</span>
                 <span className="text-xs text-muted-foreground ml-auto">{wann(w.erstellt_am)}</span>
               </div>
 
               <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{w.text}</div>
+
+              {bearbeitet && (
+                <div className={'mt-2 text-xs font-semibold ' + (erledigt ? 'text-green-700' : 'text-amber-700')}>
+                  {erledigt ? '✓ In der App als erledigt gekennzeichnet' : 'In der App bearbeitet'} · {wann(w.aktualisiert)}
+                </div>
+              )}
 
               {(w.melder || w.seite) && (
                 <div className="text-xs text-muted-foreground mt-1.5">
@@ -173,15 +196,23 @@ export default function WuenschePage() {
                 </div>
               )}
 
-              {w.bild_pfad && (
+              {w.bild_pfad && token && (
                 <div className="mt-3">
-                  {bildOffen === w.id ? (
-                    <img src={datei(w, 'bild')} alt="Screenshot" className="max-w-full rounded-lg border" />
-                  ) : (
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setBildOffen(w.id)}>
-                      <ImageIcon className="w-4 h-4" /> Screenshot ansehen
-                    </Button>
-                  )}
+                  {/* Direkt sichtbar – man soll nicht erst klicken müssen, um zu
+                      verstehen, worum es geht. Klick vergrößert auf volle Breite. */}
+                  <img
+                    src={datei(w, 'bild')}
+                    alt="Bildschirmfoto aus der App"
+                    loading="lazy"
+                    onClick={() => setBildOffen(bildOffen === w.id ? null : w.id)}
+                    className={'rounded-lg border cursor-zoom-in bg-muted/30 ' +
+                      (bildOffen === w.id ? 'w-full cursor-zoom-out' : 'max-h-56 object-contain')}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                  <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
+                    <ImageIcon className="w-3 h-3" />
+                    {bildOffen === w.id ? 'Klick zum Verkleinern' : 'Klick zum Vergrößern'}
+                  </div>
                 </div>
               )}
 

@@ -74,11 +74,20 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     aktualisiert: datum(b.aktualisiert_am ?? b.erstellt_am),
   };
 
-  const { data: vorhanden } = await sb.from('app_wuensche').select('id').eq('id', id).maybeSingle();
+  const { data: vorhanden } = await sb.from('app_wuensche')
+    .select('id, status, antwort').eq('id', id).maybeSingle();
 
   if (vorhanden) {
-    // Update – customer_id und gesehen_am bleiben, wie sie sind.
-    const { error } = await sb.from('app_wuensche').update(felder).eq('id', id);
+    // Update – customer_id bleibt unangetastet.
+    //
+    // Ausnahme bei `gesehen_am`: Wird die Meldung in der App weiterbearbeitet
+    // (Status geändert oder Antwort geschrieben), soll sie hier WIEDER
+    // auftauchen – sonst bekäme man nie mit, dass ein Wunsch erledigt wurde.
+    // Reine Textnachträge (Sprach-Abschrift) lösen das nicht aus.
+    const bearbeitet = felder.status !== vorhanden.status
+      || (felder.antwort ?? '') !== (vorhanden.antwort ?? '');
+    const { error } = await sb.from('app_wuensche')
+      .update(bearbeitet ? { ...felder, gesehen_am: null } : felder).eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
   } else {
     // Erster Eingang: Kunde einmalig über den app_key zuordnen.
