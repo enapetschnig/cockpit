@@ -13,7 +13,7 @@ import {
   useArticles, useCompanySettings, useCustomers, useDocument, naechsteRechnungsnummer, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
-  DOC_KIND_LABEL, computeTotals, docInclVat, eur, lineAmount, customerLabel,
+  DOC_KIND_LABEL, computeTotals, docInclVat, eur, lineAmount, customerLabel, round2,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
@@ -55,6 +55,7 @@ export default function BelegEditor() {
   const [inlineIdx, setInlineIdx] = useState<string | null>(null); // Positions-Autocomplete
   const [numberEdited, setNumberEdited] = useState(false);         // Nummer selbst eingetippt?
   const [anzProzent, setAnzProzent] = useState(50);                // Anzahlungshöhe in %
+  const [planRaten, setPlanRaten] = useState(2);                   // Zahlungsplan: Anzahl Rechnungen
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -291,6 +292,65 @@ export default function BelegEditor() {
     }, newItems, user.id);
     setBusy(false);
     if (newId) { toast.success(`${DOC_KIND_LABEL[kind]} erstellt`); navigate(`/beleg/${newId}`); }
+  };
+
+  /**
+   * Ein Klick, N Rechnungen: (n−1) gleiche Anzahlungsrechnungen plus eine
+   * Schlussrechnung, die genau diese Anzahlungen (netto + USt) abzieht.
+   * Fälligkeiten monatlich gestaffelt, alle als Entwurf zum Prüfen.
+   */
+  const zahlungsplanErstellen = async (n: number) => {
+    if (!user || n < 2) return;
+    const srcId = doc.id || (await persist());
+    if (!srcId) return;
+    setBusy(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const zahlTage = settings?.default_payment_days || 7;
+    const prozent = Math.floor(100 / n);
+    const vatSatz = items.find((i) => !i.is_heading)?.vat_rate ?? 20;
+    const empfaenger = {
+      customer_id: doc.customer_id, lead_id: doc.lead_id,
+      recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
+      recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
+      recipient_city: doc.recipient_city, recipient_country: doc.recipient_country,
+      recipient_email: doc.recipient_email, recipient_uid: doc.recipient_uid,
+      title: doc.title, intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
+      source_document: srcId, parent_document_id: srcId, discount_percent: 0,
+    };
+    const faellig = (monate: number) => {
+      const x = new Date(today); x.setMonth(x.getMonth() + monate); x.setDate(x.getDate() + zahlTage);
+      return x.toISOString().slice(0, 10);
+    };
+    let dNet = 0; let dVat = 0; const nummern: string[] = [];
+    try {
+      for (let k = 1; k < n; k++) {
+        const num = await naechsteRechnungsnummer(settings);
+        const teilNet = Math.round(totals.net * prozent) / 100;
+        const ok = await saveDocument({
+          kind: 'partial_invoice', number: num, status: 'draft', doc_date: today,
+          due_date: faellig(k - 1), project_total: totals.net, part_percent: prozent, ...empfaenger,
+        }, [{
+          name: `${prozent} % Anzahlung (Rate ${k} von ${n})`,
+          description: `Anzahlung laut ${DOC_KIND_LABEL[(doc.kind as DocKind) || 'offer']} ${doc.number || ''}`.trim(),
+          quantity: 1, unit: 'Pauschal', unit_price: teilNet, vat_rate: vatSatz, discount_percent: 0, is_heading: false,
+        }], user.id);
+        if (!ok) throw new Error(`Rate ${k} von ${n}`);
+        nummern.push(num);
+        dNet = round2(dNet + teilNet); dVat = round2(dVat + teilNet * vatSatz / 100);
+      }
+      const num = await naechsteRechnungsnummer(settings);
+      const ok = await saveDocument({
+        kind: 'final_invoice', number: num, status: 'draft', doc_date: today,
+        due_date: faellig(n - 1), deducted_net: dNet, deducted_vat: dVat, ...empfaenger,
+      }, items.filter((i) => i.name || i.is_heading).map((i) => ({ ...i })), user.id);
+      if (!ok) throw new Error('Schlussrechnung');
+      nummern.push(num);
+      toast.success(`${n} Rechnungen erstellt: ${nummern.join(', ')}`);
+      navigate('/rechnungen?f=alle');
+    } catch (e) {
+      toast.error(`Zahlungsplan unvollständig (${(e as Error).message}) – bitte unter Rechnungen nachsehen.`);
+    }
+    setBusy(false);
   };
 
   const kind = (doc.kind as DocKind) || 'offer';
@@ -534,6 +594,16 @@ export default function BelegEditor() {
                   <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('final_invoice')}>
                     <FileText className="w-4 h-4" /> Schlussrechnung (mit Abzug)
                   </Button>
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">Aufteilen auf</span>
+                    <Input type="number" min={2} max={12} value={planRaten}
+                      onChange={(e) => setPlanRaten(Math.min(12, Math.max(2, Number(e.target.value) || 2)))}
+                      className="h-8 w-14 text-center" aria-label="Anzahl Rechnungen im Zahlungsplan" />
+                    <Button size="sm" variant="outline" className="gap-1" disabled={busy}
+                      onClick={() => zahlungsplanErstellen(planRaten)}>
+                      <Receipt className="w-4 h-4" /> Rechnungen erzeugen
+                    </Button>
+                  </span>
                 </>
               )}
               <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp(kind)}>
@@ -549,6 +619,7 @@ export default function BelegEditor() {
             {isOffer && (
               <p className="text-[11px] text-muted-foreground mt-2">
                 Anzahlung + Schlussrechnung: Die Schlussrechnung zieht bereits verrechnete Anzahlungen inkl. USt ab (§ 11 UStG).
+                „Aufteilen" erzeugt alle Rechnungen auf einmal – gleiche Raten, monatlich fällig, als Entwürfe zum Prüfen.
               </p>
             )}
           </Card>
