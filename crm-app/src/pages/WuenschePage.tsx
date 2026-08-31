@@ -64,6 +64,7 @@ export default function WuenschePage() {
   const [fStatus, setFStatus] = useState('');
   const [bildOffen, setBildOffen] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [kunden, setKunden] = useState<{ id: string; name: string; app_key: string }[]>([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setToken(data.session?.access_token ?? null));
@@ -83,6 +84,17 @@ export default function WuenschePage() {
       for (const w of list) w.kunde = w.customer_id ? byId.get(w.customer_id) ?? null : null;
     }
     setItems(list);
+
+    // ALLE Kunden mit App-Zuordnung – auch die, von denen noch nichts kam.
+    // Sonst sähe man nicht, dass eine App überhaupt angebunden ist.
+    const { data: zug } = await db.from('customers')
+      .select('id, company_name, first_name, last_name, app_key').not('app_key', 'is', null);
+    setKunden(((zug || []) as Record<string, string | null>[]).map((c) => ({
+      id: String(c.id),
+      name: c.company_name || [c.first_name, c.last_name].filter(Boolean).join(' ') || String(c.app_key),
+      app_key: String(c.app_key),
+    })).sort((a, b) => a.name.localeCompare(b.name, 'de')));
+
     setLoading(false);
   }, []);
 
@@ -96,7 +108,27 @@ export default function WuenschePage() {
     [items, fApp, fArt, fStatus, nurOffen]);
 
   const neu = items.filter((w) => !w.gesehen_am).length;
-  const apps = useMemo(() => [...new Set(items.map((w) => w.app_key))], [items]);
+
+  /** Eine Kachel je angebundenem Kunden – plus Apps, die (noch) keinem zugeordnet sind. */
+  const uebersicht = useMemo(() => {
+    const zaehl = new Map<string, { offen: number; gesamt: number; erledigt: number }>();
+    for (const w of items) {
+      const e = zaehl.get(w.app_key) ?? { offen: 0, gesamt: 0, erledigt: 0 };
+      e.gesamt++;
+      if (!w.gesehen_am) e.offen++;
+      if (w.status === 'umgesetzt') e.erledigt++;
+      zaehl.set(w.app_key, e);
+    }
+    const zugeordnet = kunden.map((k) => ({
+      key: k.app_key, name: k.name, app: APP_LABEL[k.app_key] ?? k.app_key,
+      ...(zaehl.get(k.app_key) ?? { offen: 0, gesamt: 0, erledigt: 0 }),
+    }));
+    // Meldungen ohne zugeordneten Kunden trotzdem zeigen
+    const ohne = [...zaehl.keys()]
+      .filter((k) => !kunden.some((x) => x.app_key === k))
+      .map((k) => ({ key: k, name: APP_LABEL[k] ?? k, app: 'kein Kunde zugeordnet', ...zaehl.get(k)! }));
+    return [...zugeordnet, ...ohne].sort((a, b) => b.offen - a.offen || a.name.localeCompare(b.name, 'de'));
+  }, [items, kunden]);
 
   async function gesehen(w: Wunsch) {
     const wert = w.gesehen_am ? null : new Date().toISOString();
@@ -120,15 +152,48 @@ export default function WuenschePage() {
           Änderungswünsche, Fehler und Fragen aus allen Handwerker-Apps. Die Apps melden selbstständig hierher.
         </p>
 
-        <Card className="p-3 mb-4 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-muted-foreground mr-1">App</span>
-          <Button size="sm" variant={!fApp ? 'secondary' : 'outline'} onClick={() => setFApp('')}>alle</Button>
-          {apps.map((k) => (
-            <Button key={k} size="sm" variant={fApp === k ? 'secondary' : 'outline'} onClick={() => setFApp(k)}>
-              {APP_LABEL[k] ?? k}
-            </Button>
+        {/* Kundenübersicht: auf einen Blick sehen, wo etwas offen ist */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
+          <button
+            onClick={() => setFApp('')}
+            className={'text-left rounded-xl border p-3 transition-colors ' +
+              (!fApp ? 'border-primary bg-primary/5' : 'bg-card hover:bg-accent/50')}
+          >
+            <div className="font-semibold text-sm">Alle Kunden</div>
+            <div className="text-xs text-muted-foreground mb-1.5">{uebersicht.length} angebunden</div>
+            <div className="flex items-center gap-1.5">
+              <span className={'text-2xl font-bold ' + (neu ? 'text-blue-600' : 'text-muted-foreground')}>{neu}</span>
+              <span className="text-xs text-muted-foreground">offen</span>
+            </div>
+          </button>
+
+          {uebersicht.map((u) => (
+            <button
+              key={u.key}
+              onClick={() => setFApp(fApp === u.key ? '' : u.key)}
+              className={'text-left rounded-xl border p-3 transition-colors ' +
+                (fApp === u.key ? 'border-primary bg-primary/5' : 'bg-card hover:bg-accent/50')}
+            >
+              <div className="font-semibold text-sm leading-tight line-clamp-2" title={u.name}>{u.name}</div>
+              <div className="text-xs text-muted-foreground mb-1.5">{u.app}</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={'text-2xl font-bold ' + (u.offen ? 'text-blue-600' : 'text-muted-foreground')}>{u.offen}</span>
+                <span className="text-xs text-muted-foreground">offen</span>
+                {u.gesamt > 0 && (
+                  <span className="ml-auto text-[11px] text-muted-foreground">
+                    {u.gesamt} gesamt{u.erledigt ? ` · ${u.erledigt} erledigt` : ''}
+                  </span>
+                )}
+              </div>
+              {u.gesamt === 0 && (
+                <div className="text-[11px] text-muted-foreground mt-0.5">noch keine Meldung</div>
+              )}
+            </button>
           ))}
-          <span className="text-xs text-muted-foreground mx-1 ml-3">Art</span>
+        </div>
+
+        <Card className="p-3 mb-4 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground mx-1">Art</span>
           <Button size="sm" variant={!fArt ? 'secondary' : 'outline'} onClick={() => setFArt('')}>alle</Button>
           {Object.entries(ART).map(([k, v]) => (
             <Button key={k} size="sm" variant={fArt === k ? 'secondary' : 'outline'} onClick={() => setFArt(k)}>{v.label}</Button>
