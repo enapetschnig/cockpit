@@ -1,3 +1,19 @@
+> **ERLEDIGT am 31.08.2026 — diese Anleitung ist Doku, keine Aufgabe mehr.**
+>
+> Umgesetzt wurde sie NICHT im Cockpit, sondern im **CRM/Buchhaltungssystem**
+> auf `app.epowergmbh.at`: `cockpit.epowergmbh.at` hat keinen DNS-Eintrag und
+> die `*.vercel.app`-Adresse des Cockpits steckt hinter Vercels SSO — die Apps
+> könnten sie also gar nicht erreichen.
+>
+> - **Eingang (für die Apps):** `https://app.epowergmbh.at/api/wuensche-eingang`
+> - **Bereich zum Ansehen:** `https://app.epowergmbh.at/wuensche` (Menüpunkt „Wünsche")
+> - **Datei-Proxy:** `/api/wuensche-datei?id=…&art=bild|audio`
+> - **Tabellen:** `crm.app_wuensche`, Zuordnung über `crm.customers.app_key`
+> - **Code:** `epower-cockpit/crm-app/api/wuensche-*.ts` und
+>   `crm-app/src/pages/WuenschePage.tsx`
+>
+> Zum Anbinden einer weiteren App siehe `melde-feature-einbau.md`, Schritt 7.
+
 # epower-cockpit: Änderungswünsche aller Apps empfangen (eigener Bereich)
 
 Anleitung für die Session (z. B. Antigravity) im Repo
