@@ -1,5 +1,6 @@
-import { Zap, Plus, BarChart3, LogOut, Euro, Mail, Tag, Wallet, Receipt, FileText, MessageSquare } from 'lucide-react';
+import { Zap, Plus, BarChart3, LogOut, Euro, Mail, Tag, Wallet, Receipt, FileText, MessageSquare, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useCurrentYearTotal } from '@/hooks/useOrderVolumes';
@@ -23,6 +24,18 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
   const yearlyOrderVolume = useCurrentYearTotal();
   const { openSum, openCount, overdueCount } = useOpenInvoices();
   const { anzahl: offeneWuensche } = useOffeneWuensche();
+
+  // Auftragsvolumen lässt sich ausblenden – man hat nicht immer Lust, die Zahl
+  // jedem zu zeigen, der auf den Bildschirm schaut. Merker bleibt im Browser.
+  const [zeigeVolumen, setZeigeVolumen] = useState(() => {
+    try { return localStorage.getItem('volumen-verbergen') !== '1'; } catch { return true; }
+  });
+  const volumenUmschalten = () => {
+    setZeigeVolumen((v) => {
+      try { localStorage.setItem('volumen-verbergen', v ? '1' : '0'); } catch { /* egal */ }
+      return !v;
+    });
+  };
 
   return (
     <header className="bg-card border-b border-border px-6 py-4">
@@ -113,10 +126,28 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
               <p className="text-muted-foreground">offen ({openCount})</p>
             </Link>
             <div className="w-px h-10 bg-border" />
-            <Link to="/auftragsvolumen" className="text-center hover:opacity-80 transition-opacity">
-              <p className="text-2xl font-bold text-foreground">{yearlyOrderVolume.toLocaleString('de-DE')} €</p>
+            <div className="text-center group">
+              <div className="flex items-center justify-center gap-1">
+                {zeigeVolumen ? (
+                  <Link to="/auftragsvolumen" className="hover:opacity-80 transition-opacity">
+                    <p className="text-2xl font-bold text-foreground">{yearlyOrderVolume.toLocaleString('de-DE')} €</p>
+                  </Link>
+                ) : (
+                  <p className="text-2xl font-bold text-muted-foreground tracking-widest select-none">••••</p>
+                )}
+                <button
+                  type="button"
+                  onClick={volumenUmschalten}
+                  title={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
+                  aria-label={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
+                  className={'text-muted-foreground hover:text-foreground transition-opacity ' +
+                    (zeigeVolumen ? 'opacity-0 group-hover:opacity-100 focus:opacity-100' : 'opacity-100')}
+                >
+                  {zeigeVolumen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
               <p className="text-muted-foreground">Auftragsvolumen netto</p>
-            </Link>
+            </div>
           </div>
 
           <Link to="/beleg/neu?kind=invoice" className="hidden sm:block">
