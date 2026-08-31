@@ -21,6 +21,7 @@ export const APPS: AppInfo[] = [
   { key: 'holzbaulutz', label: 'Holzbau Lutz' },
   { key: 'fliesentilger', label: 'Fliesen Tilger' },
   { key: 'holzbaugasser', label: 'Holzbau Gasser' },
+  { key: 'birgmann', label: 'Tischlerei Birgmann' },
 ];
 
 export const APP_LABEL: Record<string, string> =

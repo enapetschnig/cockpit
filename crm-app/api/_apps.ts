@@ -26,6 +26,9 @@ export const APPS: AppInfo[] = [
   // geprüft – die config.toml des Repos zeigt auf ein fremdes Projekt.
   { key: 'fliesentilger', label: 'Fliesen Tilger', projectRef: 'qrmzuxwjcxrmdhvtpryf' },
   { key: 'holzbaugasser', label: 'Holzbau Gasser', projectRef: 'htmpybiittuagaveqwqi' },
+  // Ordner heißt tischlerei_birgmann. projectRef aus dem Live-Bundle von
+  // birgmann.app – die config.toml des Repos enthält nur "DEIN-PROJEKT-ID".
+  { key: 'birgmann', label: 'Tischlerei Birgmann', projectRef: 'irfhbetcnxhuvoxgjeym' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
