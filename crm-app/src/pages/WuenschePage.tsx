@@ -158,7 +158,7 @@ export default function WuenschePage() {
   return (
     <div className="min-h-screen bg-background">
       <BillingNav />
-      <main className="max-w-4xl mx-auto px-4 py-6">
+      <main className="max-w-6xl mx-auto px-4 py-6">
         <div className="flex items-baseline gap-3 mb-1">
           <h1 className="text-2xl font-bold">Wünsche</h1>
           {neu > 0 && <Badge className="bg-blue-600">{neu} offen</Badge>}

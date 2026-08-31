@@ -39,11 +39,11 @@ const OffersPage = () => {
       <main className="flex-1 p-6 max-w-3xl w-full mx-auto">
         <div className="flex items-center gap-2 mb-6">
           <Tag className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold">Angebote verwalten</h1>
+          <h1 className="text-2xl font-bold">Etiketten</h1>
         </div>
 
         <Card className="p-4 mb-6">
-          <h2 className="font-semibold mb-3">Neues Angebot anlegen</h2>
+          <h2 className="font-semibold mb-3">Neues Etikett anlegen</h2>
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 space-y-1">
               <Label htmlFor="offerName" className="text-xs text-muted-foreground">Name</Label>
@@ -51,7 +51,7 @@ const OffersPage = () => {
                 id="offerName"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="z.B. Premium-Angebot"
+                placeholder="z. B. Zeiterfassung, Premium-Paket"
                 onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
               />
             </div>
@@ -80,7 +80,7 @@ const OffersPage = () => {
 
         <div className="space-y-2">
           {offers.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">Noch keine Angebote vorhanden</p>
+            <p className="text-center text-muted-foreground py-8">Noch keine Etiketten angelegt</p>
           )}
           {offers.map((offer) => (
             <OfferRow
@@ -150,7 +150,7 @@ function OfferRow({ offer, usage, onUpdate, onDelete }: OfferRowProps) {
                 size="sm"
                 variant="destructive"
                 onClick={() => {
-                  if (confirm(`Angebot "${offer.name}" wirklich löschen? Es wird bei ${usage} Lead(s) entfernt.`)) {
+                  if (confirm(`Etikett "${offer.name}" wirklich löschen? Es wird bei ${usage} Lead(s) entfernt.`)) {
                     onDelete(offer.id);
                   }
                 }}

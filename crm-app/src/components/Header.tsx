@@ -1,11 +1,16 @@
-import { Zap, Plus, BarChart3, LogOut, Euro, Mail, Tag, Wallet, Receipt, FileText, MessageSquare, Eye, EyeOff } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+/**
+ * Kopf der CRM-Seiten (Pipeline, Kennzahlen, …): die gemeinsame Navigation
+ * plus eine ruhige Zahlenleiste darunter – Leads, Verkäufe, offene
+ * Rechnungen, Auftragsvolumen. Früher standen diese Zahlen riesig in der
+ * Kopfzeile selbst; jetzt tragen sie leise Information statt laut Dekor.
+ */
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { Link } from 'react-router-dom';
+import { Plus, Eye, EyeOff } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AppNav } from '@/components/AppNav';
 import { useCurrentYearTotal } from '@/hooks/useOrderVolumes';
 import { useOpenInvoices } from '@/hooks/useOpenInvoices';
-import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 
 interface HeaderProps {
   onAddLead: () => void;
@@ -14,16 +19,18 @@ interface HeaderProps {
   totalRevenue: number;
 }
 
-export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderProps) {
-  const location = useLocation();
-  const isStatistics = location.pathname === '/kennzahlen';
-  const isOrderVolume = location.pathname === '/auftragsvolumen';
-  const isDmc = location.pathname === '/dmc';
-  const isOffers = location.pathname === '/angebote';
-  const { signOut } = useAuth();
+function Wert({ zahl, label, klasse }: { zahl: string; label: string; klasse?: string }) {
+  return (
+    <span className="whitespace-nowrap">
+      <span className={'font-semibold tabular-nums ' + (klasse ?? 'text-foreground')}>{zahl}</span>
+      <span className="text-muted-foreground"> {label}</span>
+    </span>
+  );
+}
+
+export function Header({ onAddLead, leadCount, wonCount }: HeaderProps) {
   const yearlyOrderVolume = useCurrentYearTotal();
   const { openSum, openCount, overdueCount } = useOpenInvoices();
-  const { anzahl: offeneWuensche } = useOffeneWuensche();
 
   // Auftragsvolumen lässt sich ausblenden – man hat nicht immer Lust, die Zahl
   // jedem zu zeigen, der auf den Bildschirm schaut. Merker bleibt im Browser.
@@ -38,150 +45,45 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
   };
 
   return (
-    <header className="bg-card border-b border-border px-6 py-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary text-primary-foreground">
-              <Zap className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">epower CRM</h1>
-              <p className="text-sm text-muted-foreground">Lead Management</p>
-            </div>
-          </Link>
+    <>
+      <AppNav>
+        <Button size="sm" onClick={onAddLead} className="gap-1.5">
+          <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Neuer Lead</span>
+        </Button>
+      </AppNav>
 
-          <nav className="hidden md:flex items-center gap-1 ml-4">
-            <Link to="/">
-              <Button
-                variant={!isStatistics && !isOrderVolume && !isDmc && !isOffers ? "secondary" : "ghost"}
-                size="sm"
-              >
-                Pipeline
-              </Button>
-            </Link>
-            <Link to="/kennzahlen">
-              <Button 
-                variant={isStatistics ? "secondary" : "ghost"} 
-                size="sm"
-                className="gap-2"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Kennzahlen
-              </Button>
-            </Link>
-            <Link to="/buchhaltung">
-              <Button variant={location.pathname.startsWith('/buchhaltung') ? "secondary" : "ghost"} size="sm" className="gap-2">
-                <Wallet className="w-4 h-4" />
-                Buchhaltung
-                {overdueCount > 0 && (
-                  <span className="ml-1 text-[10px] font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5">{overdueCount}</span>
-                )}
-              </Button>
-            </Link>
-            <Link to="/rechnungen">
-              <Button variant={location.pathname.startsWith('/rechnungen') ? "secondary" : "ghost"} size="sm" className="gap-2">
-                <Receipt className="w-4 h-4" />
-                Rechnungen
-              </Button>
-            </Link>
-            <Link to="/angebote">
-              <Button
-                variant={isOffers ? "secondary" : "ghost"}
-                size="sm"
-                className="gap-2"
-              >
-                <Tag className="w-4 h-4" />
-                Angebote
-              </Button>
-            </Link>
-            <Link to="/wuensche">
-              <Button variant={location.pathname.startsWith('/wuensche') ? "secondary" : "ghost"} size="sm" className="gap-2">
-                <MessageSquare className="w-4 h-4" />
-                Wünsche
-                {offeneWuensche > 0 && (
-                  <span className="ml-1 text-[10px] font-bold bg-blue-600 text-white rounded-full px-1.5 py-0.5">{offeneWuensche}</span>
-                )}
-              </Button>
-            </Link>
-          </nav>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="hidden md:flex items-center gap-6 text-sm">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-foreground">{leadCount}</p>
-              <p className="text-muted-foreground">Leads</p>
-            </div>
-            <div className="w-px h-10 bg-border" />
-            <div className="text-center">
-              <p className="text-2xl font-bold text-success">{wonCount}</p>
-              <p className="text-muted-foreground">Verkäufe</p>
-            </div>
-            <div className="w-px h-10 bg-border" />
-            <Link to="/buchhaltung" className="text-center hover:opacity-80 transition-opacity">
-              <p className={`text-2xl font-bold ${overdueCount > 0 ? 'text-red-600' : 'text-foreground'}`}>
-                {openSum.toLocaleString('de-AT', { maximumFractionDigits: 0 })} €
-              </p>
-              <p className="text-muted-foreground">offen ({openCount})</p>
-            </Link>
-            <div className="w-px h-10 bg-border" />
-            <div className="text-center group">
-              <div className="flex items-center justify-center gap-1">
-                {zeigeVolumen ? (
-                  <Link to="/auftragsvolumen" className="hover:opacity-80 transition-opacity">
-                    <p className="text-2xl font-bold text-foreground">{yearlyOrderVolume.toLocaleString('de-DE')} €</p>
-                  </Link>
-                ) : (
-                  <p className="text-2xl font-bold text-muted-foreground tracking-widest select-none">••••</p>
-                )}
-                <button
-                  type="button"
-                  onClick={volumenUmschalten}
-                  title={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
-                  aria-label={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
-                  className={'text-muted-foreground hover:text-foreground transition-opacity ' +
-                    (zeigeVolumen ? 'opacity-0 group-hover:opacity-100 focus:opacity-100' : 'opacity-100')}
-                >
-                  {zeigeVolumen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <p className="text-muted-foreground">Auftragsvolumen netto</p>
-            </div>
-          </div>
-
-          <Link to="/beleg/neu?kind=invoice" className="hidden sm:block">
-            <Button variant="outline" className="gap-2">
-              <FileText className="w-4 h-4" />
-              Rechnung
-            </Button>
+      <div className="bg-card/60 border-b border-border">
+        <div className="max-w-[1400px] mx-auto px-4 py-1.5 flex items-center gap-4 text-sm overflow-x-auto no-scrollbar">
+          <Wert zahl={String(leadCount)} label="Leads" />
+          <Wert zahl={String(wonCount)} label="Verkäufe" klasse="text-success" />
+          <Link to="/buchhaltung" className="hover:opacity-75 transition-opacity">
+            <Wert
+              zahl={`${openSum.toLocaleString('de-AT', { maximumFractionDigits: 0 })} €`}
+              label={`offen (${openCount})`}
+              klasse={overdueCount > 0 ? 'text-red-600' : 'text-foreground'}
+            />
           </Link>
-          <Link to="/buchhaltung" className="md:hidden">
-            <Button variant="outline" size="icon" className="relative" title="Buchhaltung">
-              <Wallet className="w-4 h-4" />
-              {overdueCount > 0 && (
-                <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-red-500 text-white rounded-full px-1">{overdueCount}</span>
-              )}
-            </Button>
-          </Link>
-          <Link to="/wuensche" className="md:hidden">
-            <Button variant="outline" size="icon" className="relative" title="Wünsche aus den Apps">
-              <MessageSquare className="w-4 h-4" />
-              {offeneWuensche > 0 && (
-                <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-blue-600 text-white rounded-full px-1">{offeneWuensche}</span>
-              )}
-            </Button>
-          </Link>
-          <Button onClick={onAddLead} className="gap-2">
-            <Plus className="w-4 h-4" />
-            Neuer Lead
-          </Button>
-
-          <Button variant="ghost" size="icon" onClick={signOut} title="Ausloggen">
-            <LogOut className="w-4 h-4" />
-          </Button>
+          <span className="flex items-center gap-1 whitespace-nowrap group">
+            {zeigeVolumen ? (
+              <Link to="/auftragsvolumen" className="hover:opacity-75 transition-opacity">
+                <Wert zahl={`${yearlyOrderVolume.toLocaleString('de-DE')} €`} label="Auftragsvolumen" />
+              </Link>
+            ) : (
+              <Wert zahl="••••" label="Auftragsvolumen" klasse="text-muted-foreground tracking-widest select-none" />
+            )}
+            <button
+              type="button"
+              onClick={volumenUmschalten}
+              title={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
+              aria-label={zeigeVolumen ? 'Auftragsvolumen ausblenden' : 'Auftragsvolumen einblenden'}
+              className={'text-muted-foreground hover:text-foreground transition-opacity ' +
+                (zeigeVolumen ? 'opacity-0 group-hover:opacity-100 focus:opacity-100' : 'opacity-100')}
+            >
+              {zeigeVolumen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </span>
         </div>
       </div>
-    </header>
+    </>
   );
 }

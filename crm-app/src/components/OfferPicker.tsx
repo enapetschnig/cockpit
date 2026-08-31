@@ -47,18 +47,18 @@ export function OfferPicker({
                 : 'border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 bg-transparent'
             }`}
             style={selected ? { backgroundColor: selected.color } : undefined}
-            title={selected ? `Angebot: ${selected.name}` : 'Angebot wählen'}
+            title={selected ? `Etikett: ${selected.name}` : 'Etikett wählen'}
           >
             <Tag className={size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
             <span className="truncate max-w-[120px]">
-              {selected ? selected.name : 'Angebot'}
+              {selected ? selected.name : 'Etikett'}
             </span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={handleClick}>
           {offers.length === 0 && (
             <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              Keine Angebote vorhanden
+              Noch keine Etiketten angelegt
             </div>
           )}
           {offers.map((offer) => (
@@ -93,7 +93,7 @@ export function OfferPicker({
           <DropdownMenuItem asChild>
             <Link to="/angebote" className="flex items-center text-xs">
               <Plus className="w-3.5 h-3.5 mr-2" />
-              Angebote verwalten
+              Etiketten verwalten
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>
