@@ -14,7 +14,9 @@ export const APPS: AppInfo[] = [
   { key: 'groismaier', label: 'Groismaier', projectRef: 'tdehljzmqwmfgfoyyoee' },
   { key: 'cspowermetall', label: 'CS Powermetall', projectRef: 'jtdkilylwpgwqumzkdne' },
   { key: 'schrettl', label: 'Schrettl', projectRef: 'pwzfplzwmufvfjaubfcp' },
-  { key: 'monti.pro', label: 'Monti.pro', projectRef: 'zbxizeirecoipqvxymdx' },
+  // Ordner heißt monti.pro, die App selbst heißt BKS BauKomplettService.
+  // projectRef = die LAUFZEIT-Ref aus der .env der App (nicht die aus config.toml!).
+  { key: 'monti.pro', label: 'BKS BauKomplettService', projectRef: 'zbxizeirecoipqvxymdx' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau', projectRef: 'fxsjhdsitwtjasxbmksr' },
   { key: 'fasching', label: 'Fasching Gebäudetechnik', projectRef: 'tomvlelicqsfkxzppgrc' },
 ];

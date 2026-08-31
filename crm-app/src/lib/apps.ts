@@ -13,7 +13,7 @@ export const APPS: AppInfo[] = [
   { key: 'groismaier', label: 'Groismaier' },
   { key: 'cspowermetall', label: 'CS Powermetall' },
   { key: 'schrettl', label: 'Schrettl' },
-  { key: 'monti.pro', label: 'Monti.pro' },
+  { key: 'monti.pro', label: 'BKS BauKomplettService' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau' },
   { key: 'fasching', label: 'Fasching Gebäudetechnik' },
 ];
