@@ -28,6 +28,13 @@ export function useCustomers() {
 
   const save = async (c: Partial<Customer>) => {
     if (!user) return null;
+    // Eine App gehört immer nur einem Kunden – sonst scheitert der eindeutige
+    // Index und der Nutzer sähe nur ein nichtssagendes "Speichern fehlgeschlagen".
+    if (c.app_key) {
+      let frei = db.from('customers').update({ app_key: null }).eq('app_key', c.app_key);
+      if (c.id) frei = frei.neq('id', c.id);
+      await frei;
+    }
     if (c.id) {
       const { data, error } = await db.from('customers').update(c).eq('id', c.id).select().single();
       if (error) { toast.error('Speichern fehlgeschlagen'); return null; }

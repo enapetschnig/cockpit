@@ -42,6 +42,8 @@ export interface Customer {
   notes: string | null;
   lead_id: string | null;
   source: string | null;
+  /** Handwerker-App, deren Meldungen diesem Kunden zugeordnet werden. */
+  app_key: string | null;
   created_at: string;
 }
 

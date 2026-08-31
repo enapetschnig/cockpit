@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/hooks/useBilling';
 import { customerLabel, type Customer } from '@/types/billing';
+import { APPS } from '@/lib/apps';
 import { Search, Plus, FileText, Receipt, Mail, Phone } from 'lucide-react';
 
 export default function KundenPage() {
@@ -87,6 +88,21 @@ export default function KundenPage() {
               <Input placeholder="PLZ" value={edit.postal_code || ''} onChange={(e) => setEdit({ ...edit, postal_code: e.target.value })} />
               <Input placeholder="Ort" value={edit.city || ''} onChange={(e) => setEdit({ ...edit, city: e.target.value })} />
               <Input placeholder="UID (ATU…)" value={edit.uid_number || ''} onChange={(e) => setEdit({ ...edit, uid_number: e.target.value })} className="sm:col-span-2" />
+              {/* Legt fest, wessen App-Meldungen unter „Wünsche" diesem Kunden zugeordnet werden. */}
+              <div className="sm:col-span-2">
+                <label className="text-xs text-muted-foreground mb-1 block">Handwerker-App</label>
+                <select
+                  value={edit.app_key || ''}
+                  onChange={(e) => setEdit({ ...edit, app_key: e.target.value || null })}
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">— keine App zugeordnet —</option>
+                  {APPS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Meldungen aus dieser App erscheinen unter „Wünsche" bei diesem Kunden.
+                </p>
+              </div>
               <Button className="sm:col-span-2" onClick={async () => { await save(edit); setEdit(null); }}>Speichern</Button>
             </div>
           )}

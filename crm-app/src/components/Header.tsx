@@ -1,9 +1,10 @@
-import { Zap, Plus, BarChart3, LogOut, Euro, Mail, Tag, Wallet, Receipt, FileText } from 'lucide-react';
+import { Zap, Plus, BarChart3, LogOut, Euro, Mail, Tag, Wallet, Receipt, FileText, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useCurrentYearTotal } from '@/hooks/useOrderVolumes';
 import { useOpenInvoices } from '@/hooks/useOpenInvoices';
+import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 
 interface HeaderProps {
   onAddLead: () => void;
@@ -21,6 +22,7 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
   const { signOut } = useAuth();
   const yearlyOrderVolume = useCurrentYearTotal();
   const { openSum, openCount, overdueCount } = useOpenInvoices();
+  const { anzahl: offeneWuensche } = useOffeneWuensche();
 
   return (
     <header className="bg-card border-b border-border px-6 py-4">
@@ -80,6 +82,15 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
                 Angebote
               </Button>
             </Link>
+            <Link to="/wuensche">
+              <Button variant={location.pathname.startsWith('/wuensche') ? "secondary" : "ghost"} size="sm" className="gap-2">
+                <MessageSquare className="w-4 h-4" />
+                Wünsche
+                {offeneWuensche > 0 && (
+                  <span className="ml-1 text-[10px] font-bold bg-blue-600 text-white rounded-full px-1.5 py-0.5">{offeneWuensche}</span>
+                )}
+              </Button>
+            </Link>
           </nav>
         </div>
 
@@ -119,6 +130,14 @@ export function Header({ onAddLead, leadCount, wonCount, totalRevenue }: HeaderP
               <Wallet className="w-4 h-4" />
               {overdueCount > 0 && (
                 <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-red-500 text-white rounded-full px-1">{overdueCount}</span>
+              )}
+            </Button>
+          </Link>
+          <Link to="/wuensche" className="md:hidden">
+            <Button variant="outline" size="icon" className="relative" title="Wünsche aus den Apps">
+              <MessageSquare className="w-4 h-4" />
+              {offeneWuensche > 0 && (
+                <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-blue-600 text-white rounded-full px-1">{offeneWuensche}</span>
               )}
             </Button>
           </Link>
