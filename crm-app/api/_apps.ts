@@ -7,6 +7,7 @@
 export interface AppInfo { key: string; label: string; projectRef: string }
 
 export const APPS: AppInfo[] = [
+  { key: 'willroider', label: 'Holzbau Willroider', projectRef: 'ylqbxnsxksbtsqrcwtuq' },
   { key: 'groismaier', label: 'Groismaier', projectRef: 'tdehljzmqwmfgfoyyoee' },
   { key: 'cspowermetall', label: 'CS Powermetall', projectRef: 'jtdkilylwpgwqumzkdne' },
   { key: 'schrettl', label: 'Schrettl', projectRef: 'pwzfplzwmufvfjaubfcp' },
