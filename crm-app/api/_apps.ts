@@ -25,6 +25,7 @@ export const APPS: AppInfo[] = [
   // Repo heißt fliesentilger. projectRef aus dem LIVE-Bundle von tilger.app
   // geprüft – die config.toml des Repos zeigt auf ein fremdes Projekt.
   { key: 'fliesentilger', label: 'Fliesen Tilger', projectRef: 'qrmzuxwjcxrmdhvtpryf' },
+  { key: 'holzbaugasser', label: 'Holzbau Gasser', projectRef: 'htmpybiittuagaveqwqi' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

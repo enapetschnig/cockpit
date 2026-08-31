@@ -20,6 +20,7 @@ export const APPS: AppInfo[] = [
   { key: 'ruffmichael', label: 'Ruff Michael' },
   { key: 'holzbaulutz', label: 'Holzbau Lutz' },
   { key: 'fliesentilger', label: 'Fliesen Tilger' },
+  { key: 'holzbaugasser', label: 'Holzbau Gasser' },
 ];
 
 export const APP_LABEL: Record<string, string> =
