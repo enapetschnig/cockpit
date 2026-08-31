@@ -15,6 +15,7 @@ export const APPS: AppInfo[] = [
   { key: 'schrettl', label: 'Schrettl' },
   { key: 'monti.pro', label: 'Monti.pro' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau' },
+  { key: 'fasching', label: 'Fasching Gebäudetechnik' },
 ];
 
 export const APP_LABEL: Record<string, string> =

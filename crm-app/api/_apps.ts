@@ -16,6 +16,7 @@ export const APPS: AppInfo[] = [
   { key: 'schrettl', label: 'Schrettl', projectRef: 'pwzfplzwmufvfjaubfcp' },
   { key: 'monti.pro', label: 'Monti.pro', projectRef: 'zbxizeirecoipqvxymdx' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau', projectRef: 'fxsjhdsitwtjasxbmksr' },
+  { key: 'fasching', label: 'Fasching Gebäudetechnik', projectRef: 'tomvlelicqsfkxzppgrc' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
