@@ -1,5 +1,8 @@
 /**
- * Die angebundenen Handwerker-Apps. Jede App schickt ihre Meldungen selbst
+ * Die angebundenen Handwerker-Apps.
+ *
+ * ACHTUNG: Bei einer neuen App auch `src/lib/apps.ts` ergänzen — das ist die
+ * Liste für die Oberfläche (Auswahlfeld beim Kunden, Namen im Wünsche-Bereich). Jede App schickt ihre Meldungen selbst
  * hierher (Datenbank-Trigger) – wir brauchen daher KEINE Supabase-Schlüssel
  * der Apps, nur die projectRef für den Datei-Abruf und das gemeinsame
  * Geheimnis FEEDBACK_SHARED_SECRET.
@@ -12,6 +15,7 @@ export const APPS: AppInfo[] = [
   { key: 'cspowermetall', label: 'CS Powermetall', projectRef: 'jtdkilylwpgwqumzkdne' },
   { key: 'schrettl', label: 'Schrettl', projectRef: 'pwzfplzwmufvfjaubfcp' },
   { key: 'monti.pro', label: 'Monti.pro', projectRef: 'zbxizeirecoipqvxymdx' },
+  { key: 'schafferhoferbau', label: 'Schafferhofer Bau', projectRef: 'fxsjhdsitwtjasxbmksr' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

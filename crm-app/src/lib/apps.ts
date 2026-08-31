@@ -1,11 +1,20 @@
-/** Die angebundenen Handwerker-Apps (Anzeige-Namen für den Wünsche-Bereich). */
+/**
+ * Die angebundenen Handwerker-Apps (Anzeige-Namen für Oberfläche und
+ * Kunden-Zuordnung).
+ *
+ * ACHTUNG: Muss mit `api/_apps.ts` übereinstimmen — dort stehen zusätzlich die
+ * Supabase-projectRefs, die der Datei-Proxy zum Abrufen der Bildschirmfotos
+ * braucht. Eine App, die nur hier steht, kann keine Bilder anzeigen.
+ */
 export interface AppInfo { key: string; label: string }
 
 export const APPS: AppInfo[] = [
+  { key: 'willroider', label: 'Holzbau Willroider' },
   { key: 'groismaier', label: 'Groismaier' },
   { key: 'cspowermetall', label: 'CS Powermetall' },
   { key: 'schrettl', label: 'Schrettl' },
   { key: 'monti.pro', label: 'Monti.pro' },
+  { key: 'schafferhoferbau', label: 'Schafferhofer Bau' },
 ];
 
 export const APP_LABEL: Record<string, string> =
