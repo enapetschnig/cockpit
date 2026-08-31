@@ -46,6 +46,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   abgelehnt: { label: 'Abgelehnt', cls: 'bg-muted text-muted-foreground border-border' },
 };
 
+/** Offen = in der App noch nicht erledigt oder abgelehnt. */
+const istOffen = (w: { status: string }) => w.status !== 'umgesetzt' && w.status !== 'abgelehnt';
+
 function wann(iso: string): string {
   const d = new Date(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
@@ -104,10 +107,11 @@ export default function WuenschePage() {
 
   const gefiltert = useMemo(() => items.filter((w) =>
     (!fApp || w.app_key === fApp) && (!fArt || w.art === fArt)
-    && (!fStatus || w.status === fStatus) && (!nurOffen || !w.gesehen_am)),
+    && (!fStatus || w.status === fStatus) && (!nurOffen || istOffen(w))),
     [items, fApp, fArt, fStatus, nurOffen]);
 
-  const neu = items.filter((w) => !w.gesehen_am).length;
+  const neu = items.filter(istOffen).length;
+  const ungelesen = items.filter((w) => !w.gesehen_am && istOffen(w)).length;
 
   /** Eine Kachel je angebundenem Kunden – plus Apps, die (noch) keinem zugeordnet sind. */
   const uebersicht = useMemo(() => {
@@ -115,7 +119,7 @@ export default function WuenschePage() {
     for (const w of items) {
       const e = zaehl.get(w.app_key) ?? { offen: 0, gesamt: 0, erledigt: 0 };
       e.gesamt++;
-      if (!w.gesehen_am) e.offen++;
+      if (istOffen(w)) e.offen++;
       if (w.status === 'umgesetzt') e.erledigt++;
       zaehl.set(w.app_key, e);
     }
@@ -146,7 +150,8 @@ export default function WuenschePage() {
       <main className="max-w-4xl mx-auto px-4 py-6">
         <div className="flex items-baseline gap-3 mb-1">
           <h1 className="text-2xl font-bold">Wünsche</h1>
-          {neu > 0 && <Badge className="bg-blue-600">{neu} neu</Badge>}
+          {neu > 0 && <Badge className="bg-blue-600">{neu} offen</Badge>}
+          {ungelesen > 0 && <span className="text-xs text-muted-foreground">davon {ungelesen} noch nicht angesehen</span>}
         </div>
         <p className="text-sm text-muted-foreground mb-5">
           Änderungswünsche, Fehler und Fragen aus allen Handwerker-Apps. Die Apps melden selbstständig hierher.
@@ -205,7 +210,7 @@ export default function WuenschePage() {
           ))}
           <Button size="sm" variant={nurOffen ? 'secondary' : 'outline'} className="ml-auto"
             onClick={() => setNurOffen((v) => !v)}>
-            {nurOffen && <Check className="w-3.5 h-3.5" />} nur ungesehene
+            {nurOffen && <Check className="w-3.5 h-3.5" />} nur offene
           </Button>
         </Card>
 
@@ -224,14 +229,15 @@ export default function WuenschePage() {
         ) : gefiltert.map((w) => {
           const art = ART[w.art] ?? { label: w.art, cls: 'bg-muted text-muted-foreground' };
           const st = STATUS[w.status] ?? { label: w.status, cls: 'bg-muted text-muted-foreground border-border' };
-          const offen = !w.gesehen_am;
+          const offen = istOffen(w);
+          const ungesehen = !w.gesehen_am;
           // Wurde in der App weiterbearbeitet, nicht nur gemeldet?
           const bearbeitet = w.status !== 'neu'
             && new Date(w.aktualisiert).getTime() - new Date(w.erstellt_am).getTime() > 60_000;
           const erledigt = w.status === 'umgesetzt';
           return (
             <Card key={w.id} className={'p-4 mb-3 ' +
-              (offen ? (erledigt ? 'border-l-4 border-l-green-600' : 'border-l-4 border-l-blue-600') : '')}>
+              (erledigt ? 'border-l-4 border-l-green-600' : offen ? 'border-l-4 border-l-blue-600' : '')}>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <strong className="text-[15px]">{w.kunde || (APP_LABEL[w.app_key] ?? w.app_key)}</strong>
                 {w.kunde && <span className="text-xs text-muted-foreground">· {APP_LABEL[w.app_key] ?? w.app_key}</span>}
@@ -286,10 +292,12 @@ export default function WuenschePage() {
               )}
 
               <div className="mt-3 flex items-center gap-3">
-                <Button size="sm" variant={offen ? 'default' : 'outline'} onClick={() => gesehen(w)}>
-                  {offen ? 'Gesehen' : '✓ gesehen – rückgängig'}
+                <Button size="sm" variant={ungesehen ? 'default' : 'outline'} onClick={() => gesehen(w)}>
+                  {ungesehen ? 'Gelesen' : '✓ gelesen – rückgängig'}
                 </Button>
-                <span className="text-xs text-muted-foreground">Erledigt wird in der App selbst gepflegt.</span>
+                <span className="text-xs text-muted-foreground">
+                  Ob ein Wunsch erledigt ist, wird in der App gepflegt – „gelesen" ist nur ein Merker für dich.
+                </span>
               </div>
             </Card>
           );

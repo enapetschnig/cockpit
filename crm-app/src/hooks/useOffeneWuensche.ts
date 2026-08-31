@@ -6,9 +6,12 @@ import { useAuth } from './useAuth';
 const db = supabase as any;
 
 /**
- * Anzahl der noch nicht gesehenen Meldungen aus den Handwerker-Apps.
- * Füttert den Zähler in der Kopfzeile – deshalb bewusst nur ein count,
- * nicht die ganzen Datensätze.
+ * Anzahl der noch OFFENEN Meldungen aus den Handwerker-Apps.
+ *
+ * Offen heißt: in der jeweiligen App noch nicht erledigt oder abgelehnt.
+ * Bewusst NICHT am eigenen „Gesehen"-Häkchen festgemacht – sonst zählte
+ * ein längst umgesetzter Wunsch weiter als offen, nur weil man ihn hier
+ * nie angeklickt hat.
  */
 export function useOffeneWuensche() {
   const { user } = useAuth();
@@ -18,7 +21,7 @@ export function useOffeneWuensche() {
     if (!user) { setAnzahl(0); return; }
     const { count } = await db.from('app_wuensche')
       .select('id', { count: 'exact', head: true })
-      .is('gesehen_am', null);
+      .not('status', 'in', '("umgesetzt","abgelehnt")');
     setAnzahl(count ?? 0);
   }, [user]);
 
