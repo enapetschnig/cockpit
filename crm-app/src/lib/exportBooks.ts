@@ -53,30 +53,50 @@ export async function loadPeriod(p: Period): Promise<{ docs: BillingDocument[]; 
   return { docs: list, items, cash: ((cash as CashBookEntry[]) || []).filter((c) => !c.cancelled) };
 }
 
+/**
+ * Zerlegt einen Beleg in (Steuersatz → Netto)-Anteile.
+ *
+ * Die KOPFSUMMEN (net/vat) sind die Wahrheit – sie stammen aus dem
+ * HelloCash-Import bzw. werden beim Speichern verbindlich berechnet.
+ * Die Positionen dienen nur dazu, das Netto auf Steuersätze aufzuteilen –
+ * und auch das nur, wenn ihre Summe die Kopfsumme trifft. Viele Altbelege
+ * haben Positionen OHNE Preise; wer aus denen rechnet, landet bei 0 und
+ * die USt-Zahllast bricht zusammen (so geschehen für Juli 2026).
+ */
+function steuerAnteile(d: BillingDocument, its: DocumentItem[]): { rate: number; net: number; vat: number }[] {
+  const kopfNet = round2(Number(d.net || 0));
+  const kopfVat = round2(Number(d.vat || 0));
+  const zeilen = its.filter((i) => !i.is_heading);
+  if (zeilen.length) {
+    const per = new Map<number, number>();
+    let summe = 0;
+    for (const it of zeilen) {
+      const n = round2((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)
+        * (1 - (Number(it.discount_percent) || 0) / 100) * (1 - (Number(d.discount_percent) || 0) / 100));
+      summe = round2(summe + n);
+      const r = Number(it.vat_rate) || 0;
+      per.set(r, round2((per.get(r) || 0) + n));
+    }
+    if (Math.abs(summe - kopfNet) < 0.06) {
+      return [...per.entries()].map(([rate, net]) => ({ rate, net, vat: round2(net * rate / 100) }));
+    }
+  }
+  // Positionen fehlen oder passen nicht zur Kopfsumme → ganzer Beleg auf den
+  // abgeleiteten Satz (bei 0-Netto-Belegen schlicht 0 %).
+  const rate = kopfNet ? Math.round((kopfVat / kopfNet) * 100) : 0;
+  return [{ rate, net: kopfNet, vat: kopfVat }];
+}
+
 /** UVA-taugliche Zusammenfassung: Entgelte je Steuersatz + geschuldete USt. */
 export function summarize(docs: BillingDocument[], items: Record<string, DocumentItem[]>, cash: CashBookEntry[]): VatSummary {
   const rates = new Map<number, { net: number; vat: number }>();
   for (const d of docs) {
-    const its = items[d.id] || [];
     const sign = d.kind === 'credit_note' ? -1 : 1;
-    if (its.length) {
-      for (const it of its) {
-        if (it.is_heading) continue;
-        const net = round2((Number(it.quantity) || 0) * (Number(it.unit_price) || 0) * (1 - (Number(it.discount_percent) || 0) / 100)
-          * (1 - (Number(d.discount_percent) || 0) / 100)) * sign;
-        const r = Number(it.vat_rate) || 0;
-        const cur = rates.get(r) || { net: 0, vat: 0 };
-        cur.net = round2(cur.net + net); cur.vat = round2(cur.vat + net * r / 100);
-        rates.set(r, cur);
-      }
-    } else {
-      // Alt-Beleg ohne Positionen: aus Kopfsummen ableiten
-      const net = round2(Number(d.net || 0)) * sign;
-      const vat = round2(Number(d.vat || 0)) * sign;
-      const r = net ? Math.round((vat / net) * 100) : 0;
-      const cur = rates.get(r) || { net: 0, vat: 0 };
-      cur.net = round2(cur.net + net); cur.vat = round2(cur.vat + vat);
-      rates.set(r, cur);
+    for (const teil of steuerAnteile(d, items[d.id] || [])) {
+      const cur = rates.get(teil.rate) || { net: 0, vat: 0 };
+      cur.net = round2(cur.net + sign * teil.net);
+      cur.vat = round2(cur.vat + sign * teil.vat);
+      rates.set(teil.rate, cur);
     }
   }
   const byRate = [...rates.entries()].sort((a, b) => b[0] - a[0]).map(([rate, v]) => ({ rate, net: round2(v.net), vat: round2(v.vat) }));
@@ -96,18 +116,9 @@ export function buildCsv(docs: BillingDocument[], items: Record<string, Document
   const head = ['Nummer', 'Datum', 'Belegart', 'Kunde', 'UID', 'Netto 20%', 'USt 20%', 'Netto 10%', 'USt 10%',
     'Netto 0%', 'Netto gesamt', 'USt gesamt', 'Brutto', 'Status', 'Bezahlt am', 'Zahlungsart'];
   const rows = docs.map((d) => {
-    const its = items[d.id] || [];
     const per: Record<number, number> = {};
-    if (its.length) {
-      for (const it of its) {
-        if (it.is_heading) continue;
-        const n = round2((Number(it.quantity) || 0) * (Number(it.unit_price) || 0) * (1 - (Number(it.discount_percent) || 0) / 100)
-          * (1 - (Number(d.discount_percent) || 0) / 100));
-        per[Number(it.vat_rate) || 0] = round2((per[Number(it.vat_rate) || 0] || 0) + n);
-      }
-    } else {
-      const n = Number(d.net || 0); const v = Number(d.vat || 0);
-      per[n ? Math.round((v / n) * 100) : 0] = n;
+    for (const teil of steuerAnteile(d, items[d.id] || [])) {
+      per[teil.rate] = round2((per[teil.rate] || 0) + teil.net);
     }
     return [
       d.number, dateDe(d.doc_date), DOC_KIND_LABEL[d.kind] || d.kind,

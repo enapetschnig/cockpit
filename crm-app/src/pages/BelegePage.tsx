@@ -80,19 +80,40 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
             <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
             <Input className="pl-9" placeholder="Nummer, Kunde, Titel …" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          {([['offen', 'Offen'], ['overdue', 'Überfällig'], ['alle', 'Alle']] as const).map(([v, label]) => (
-            <Button key={v} size="sm" variant={view === v ? 'secondary' : 'outline'}
-              onClick={() => { setView(v); setStatus('alle'); setSp(v === 'alle' ? {} : { f: v }); }}>
-              {label}
-            </Button>
-          ))}
+          {([['offen', 'Offen'], ['overdue', 'Überfällig'], ['alle', 'Alle']] as const).map(([v, label]) => {
+            const n = v === 'alle' ? documents.length
+              : v === 'offen' ? documents.filter((d) => !['paid', 'cancelled', 'rejected'].includes(d.status)).length
+              : documents.filter(isOverdue).length;
+            return (
+              <Button key={v} size="sm" variant={view === v ? 'secondary' : 'outline'}
+                onClick={() => { setView(v); setStatus('alle'); setSp(v === 'alle' ? {} : { f: v }); }}>
+                {label} <span className="text-muted-foreground">({n})</span>
+              </Button>
+            );
+          })}
         </div>
 
         {isLoading ? (
           <p className="text-muted-foreground">Laden …</p>
         ) : list.length === 0 ? (
           <Card className="p-10 text-center text-muted-foreground">
-            Noch keine {title}. Lege gleich {mode === 'offer' ? 'ein Angebot' : 'eine Rechnung'} an.
+            {documents.length === 0 ? (
+              <>Noch keine {title}. Lege gleich {mode === 'offer' ? 'ein Angebot' : 'eine Rechnung'} an.</>
+            ) : (
+              // Es GIBT Belege – nur passt keiner zum Filter. Das muss die Seite
+              // sagen, sonst wirkt sie kaputt („mir wird keine Rechnung angezeigt").
+              <>
+                <p className="mb-3">
+                  {view === 'offen' ? `Keine offenen ${title} – alles bezahlt. 🎉`
+                    : view === 'overdue' ? `Nichts überfällig.`
+                    : `Keine ${title} passen zu dieser Suche.`}
+                </p>
+                <Button variant="outline" size="sm"
+                  onClick={() => { setView('alle'); setStatus('alle'); setQ(''); setSp({}); }}>
+                  Alle {documents.length} anzeigen
+                </Button>
+              </>
+            )}
           </Card>
         ) : (
           <div className="space-y-2">
