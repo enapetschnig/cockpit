@@ -19,6 +19,7 @@ export const APPS: AppInfo[] = [
   { key: 'monti.pro', label: 'BKS BauKomplettService', projectRef: 'zbxizeirecoipqvxymdx' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau', projectRef: 'fxsjhdsitwtjasxbmksr' },
   { key: 'fasching', label: 'Fasching Gebäudetechnik', projectRef: 'tomvlelicqsfkxzppgrc' },
+  { key: 'trippl', label: 'Mechanische Instandhaltung Trippl', projectRef: 'mnjtoblukckuifceqsds' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

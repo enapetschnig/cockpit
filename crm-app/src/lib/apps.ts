@@ -16,6 +16,7 @@ export const APPS: AppInfo[] = [
   { key: 'monti.pro', label: 'BKS BauKomplettService' },
   { key: 'schafferhoferbau', label: 'Schafferhofer Bau' },
   { key: 'fasching', label: 'Fasching Gebäudetechnik' },
+  { key: 'trippl', label: 'Mechanische Instandhaltung Trippl' },
 ];
 
 export const APP_LABEL: Record<string, string> =
