@@ -31,6 +31,7 @@ interface Wunsch {
   erstellt_am: string;
   aktualisiert: string;
   gesehen_am: string | null;
+  erledigt_am: string | null;
   kunde?: string | null;
 }
 
@@ -46,8 +47,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   abgelehnt: { label: 'Abgelehnt', cls: 'bg-muted text-muted-foreground border-border' },
 };
 
-/** Offen = in der App noch nicht erledigt oder abgelehnt. */
-const istOffen = (w: { status: string }) => w.status !== 'umgesetzt' && w.status !== 'abgelehnt';
+/** Offen = in der App nicht erledigt/abgelehnt UND hier nicht von Hand abgehakt. */
+const istOffen = (w: { status: string; erledigt_am: string | null }) =>
+  w.status !== 'umgesetzt' && w.status !== 'abgelehnt' && !w.erledigt_am;
 
 function wann(iso: string): string {
   const d = new Date(iso);
@@ -133,6 +135,15 @@ export default function WuenschePage() {
       .map((k) => ({ key: k, name: APP_LABEL[k] ?? k, app: 'kein Kunde zugeordnet', ...zaehl.get(k)! }));
     return [...zugeordnet, ...ohne].sort((a, b) => b.offen - a.offen || a.name.localeCompare(b.name, 'de'));
   }, [items, kunden]);
+
+  /** Hier im CRM abhaken – überlebt spätere Updates aus der App. */
+  async function abhaken(w: Wunsch) {
+    const wert = w.erledigt_am ? null : new Date().toISOString();
+    setItems((xs) => xs.map((x) => (x.id === w.id ? { ...x, erledigt_am: wert } : x)));
+    const { error } = await db.from('app_wuensche').update({ erledigt_am: wert }).eq('id', w.id);
+    if (error) { toast.error('Konnte nicht gespeichert werden'); load(); }
+    else toast.success(wert ? 'Als erledigt abgehakt' : 'Wieder offen');
+  }
 
   async function gesehen(w: Wunsch) {
     const wert = w.gesehen_am ? null : new Date().toISOString();
@@ -234,7 +245,8 @@ export default function WuenschePage() {
           // Wurde in der App weiterbearbeitet, nicht nur gemeldet?
           const bearbeitet = w.status !== 'neu'
             && new Date(w.aktualisiert).getTime() - new Date(w.erstellt_am).getTime() > 60_000;
-          const erledigt = w.status === 'umgesetzt';
+          const erledigt = w.status === 'umgesetzt' || !!w.erledigt_am;
+          const vonHand = !!w.erledigt_am && w.status !== 'umgesetzt';
           return (
             <Card key={w.id} className={'p-4 mb-3 ' +
               (erledigt ? 'border-l-4 border-l-green-600' : offen ? 'border-l-4 border-l-blue-600' : '')}>
@@ -243,6 +255,11 @@ export default function WuenschePage() {
                 {w.kunde && <span className="text-xs text-muted-foreground">· {APP_LABEL[w.app_key] ?? w.app_key}</span>}
                 <span className={'text-xs font-semibold px-2 py-0.5 rounded-full border ' + art.cls}>{art.label}</span>
                 <span className={'text-xs font-semibold px-2 py-0.5 rounded-full border ' + st.cls}>{st.label}</span>
+                {vonHand && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-green-100 text-green-800 border-green-300">
+                    ✓ hier abgehakt
+                  </span>
+                )}
                 <span className="text-xs text-muted-foreground ml-auto">{wann(w.erstellt_am)}</span>
               </div>
 
@@ -291,12 +308,21 @@ export default function WuenschePage() {
                 <audio controls preload="none" src={datei(w, 'audio')} className="mt-3 w-full max-w-xs" />
               )}
 
-              <div className="mt-3 flex items-center gap-3">
-                <Button size="sm" variant={ungesehen ? 'default' : 'outline'} onClick={() => gesehen(w)}>
-                  {ungesehen ? 'Gelesen' : '✓ gelesen – rückgängig'}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {w.status !== 'umgesetzt' && (
+                  <Button size="sm" variant={w.erledigt_am ? 'outline' : 'default'}
+                    className={w.erledigt_am ? '' : 'bg-green-600 hover:bg-green-700'}
+                    onClick={() => abhaken(w)}>
+                    {w.erledigt_am ? '↩ wieder offen' : '✓ Erledigt'}
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => gesehen(w)}>
+                  {ungesehen ? 'gelesen' : '✓ gelesen'}
                 </Button>
                 <span className="text-xs text-muted-foreground">
-                  Ob ein Wunsch erledigt ist, wird in der App gepflegt – „gelesen" ist nur ein Merker für dich.
+                  {w.status === 'umgesetzt'
+                    ? 'In der App bereits erledigt.'
+                    : 'Abhaken zählt die Meldung nicht mehr als offen. Meldet die App später einen neuen Stand, wird das wieder aufgehoben.'}
                 </span>
               </div>
             </Card>

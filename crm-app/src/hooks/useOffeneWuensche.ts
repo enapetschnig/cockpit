@@ -8,7 +8,8 @@ const db = supabase as any;
 /**
  * Anzahl der noch OFFENEN Meldungen aus den Handwerker-Apps.
  *
- * Offen heißt: in der jeweiligen App noch nicht erledigt oder abgelehnt.
+ * Offen heißt: in der App noch nicht erledigt/abgelehnt UND hier nicht von
+ * Hand abgehakt.
  * Bewusst NICHT am eigenen „Gesehen"-Häkchen festgemacht – sonst zählte
  * ein längst umgesetzter Wunsch weiter als offen, nur weil man ihn hier
  * nie angeklickt hat.
@@ -21,7 +22,8 @@ export function useOffeneWuensche() {
     if (!user) { setAnzahl(0); return; }
     const { count } = await db.from('app_wuensche')
       .select('id', { count: 'exact', head: true })
-      .not('status', 'in', '("umgesetzt","abgelehnt")');
+      .not('status', 'in', '("umgesetzt","abgelehnt")')
+      .is('erledigt_am', null);
     setAnzahl(count ?? 0);
   }, [user]);
 
