@@ -54,23 +54,43 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
   const sb = await crmClient();
 
   const since = Math.floor(Date.now() / 1000) - sinceDays * 86400;
-  const pagesRes = await fetch(`${G}/me/accounts?fields=id,name,access_token&limit=50&access_token=${token}`).then((r) => r.json());
-  const pages = (pagesRes.data ?? []) as { id: string; access_token: string }[];
+
+  // Fehler dürfen NICHT stillschweigend zu "keine Leads" werden – genau so
+  // sind Anfragen unbemerkt liegengeblieben. Jede Seite wird durchgeblättert,
+  // jeder Fehler gezählt und im Ergebnis ausgewiesen.
+  let fehler = 0;
+  const alleSeiten = async <T,>(startUrl: string): Promise<T[]> => {
+    const out: T[] = [];
+    let url: string | null = startUrl;
+    for (let i = 0; url && i < 30; i++) {
+      try {
+        const r = (await fetch(url).then((x) => x.json())) as { data?: T[]; paging?: { next?: string }; error?: { message?: string } };
+        if (r.error) { fehler++; console.error("[crm-lead-sync] Meta:", r.error.message); break; }
+        out.push(...(r.data ?? []));
+        url = r.paging?.next ?? null;
+      } catch (e) { fehler++; console.error("[crm-lead-sync]", e); break; }
+    }
+    return out;
+  };
+
+  const pages = await alleSeiten<{ id: string; access_token: string }>(
+    `${G}/me/accounts?fields=id,name,access_token&limit=50&access_token=${token}`);
 
   const leads: (MetaLead & { form?: string })[] = [];
   for (const p of pages) {
-    const formsRes = await fetch(`${G}/${p.id}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${p.access_token}`)
-      .then((r) => r.json()).catch(() => ({ data: [] }));
-    for (const f of ((formsRes.data ?? []) as { id: string; name: string; leads_count?: number }[])) {
+    const forms = await alleSeiten<{ id: string; name: string; leads_count?: number }>(
+      `${G}/${p.id}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${p.access_token}`);
+    for (const f of forms) {
       if (!Number(f.leads_count)) continue;
       const filtering = encodeURIComponent(JSON.stringify([{ field: "time_created", operator: "GREATER_THAN", value: since }]));
-      const res = await fetch(
-        `${G}/${f.id}/leads?fields=id,created_time,field_data,ad_name,campaign_name,platform&limit=100&filtering=${filtering}&access_token=${p.access_token}`,
-      ).then((r) => r.json()).catch(() => ({ data: [] }));
-      for (const l of ((res.data ?? []) as MetaLead[])) leads.push({ ...l, form: f.name });
+      const res = await alleSeiten<MetaLead>(
+        `${G}/${f.id}/leads?fields=id,created_time,field_data,ad_name,campaign_name,platform&limit=100&filtering=${filtering}&access_token=${p.access_token}`);
+      for (const l of res) leads.push({ ...l, form: f.name });
     }
   }
-  if (!leads.length) return { account: acc.label, found: 0, created: 0 };
+  if (!leads.length) {
+    return { account: acc.label, found: 0, created: 0, note: fehler ? `${fehler} Meta-Fehler – Lauf unvollständig!` : undefined };
+  }
 
   // Dedup auf ZWEI Wegen:
   //  1) gleiche Meta-ID  → derselbe Lead
@@ -95,23 +115,37 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
   // Anfrage NICHT zurückgesetzt (sonst reißt man laufende Termine aus dem Ablauf).
   const AKTIV = new Set(["contacted", "meeting_scheduled", "meeting_done", "won", "follow_up"]);
 
-  // Sperrliste: bewusst entfernte Leads dürfen NICHT wieder importiert werden
-  const { data: blocked } = await sb.from("lead_blocklist").select("meta_lead_id, phone_norm").eq("user_id", ownerUserId);
+  // Sperrliste: bewusst entfernte Leads bleiben draußen – aber nur deren ALTE
+  // Anfragen. Meldet sich dieselbe Person NACH dem Sperren noch einmal über
+  // die Werbung, ist das neues Interesse und kommt wieder herein (Entscheid
+  // 31.08.2026: „alle Leads holen, auch die, die sich schon mal gemeldet haben").
+  const { data: blocked } = await sb.from("lead_blocklist")
+    .select("meta_lead_id, phone_norm, created_at").eq("user_id", ownerUserId);
   const blockIds = new Set<string>();
-  const blockPhones = new Set<string>();
-  for (const b of ((blocked ?? []) as { meta_lead_id: string | null; phone_norm: string | null }[])) {
+  const blockPhones = new Map<string, number>(); // Telefon → Zeitpunkt der Sperre
+  for (const b of ((blocked ?? []) as { meta_lead_id: string | null; phone_norm: string | null; created_at: string }[])) {
     if (b.meta_lead_id) blockIds.add(b.meta_lead_id);
-    if (b.phone_norm) blockPhones.add(b.phone_norm.slice(-9));
+    if (b.phone_norm) {
+      const ph9 = b.phone_norm.slice(-9);
+      const t = new Date(b.created_at).getTime();
+      blockPhones.set(ph9, Math.max(blockPhones.get(ph9) ?? 0, t));
+    }
   }
 
   let linked = 0;
   let repeats = 0;
   let skippedBlocked = 0;
   const fresh: typeof leads = [];
+  const rueckkehrer = new Set<string>(); // Telefonnummern: gesperrt, aber neu gemeldet
   for (const l of leads) {
     if (seen.has(l.id)) continue;
     const phone = normPhone(pick(l.field_data ?? [], "phone", "telefon"));
-    if (blockIds.has(l.id) || (phone && blockPhones.has(phone))) { skippedBlocked++; continue; }
+    if (blockIds.has(l.id)) { skippedBlocked++; continue; }
+    const sperre = phone ? blockPhones.get(phone) : undefined;
+    if (sperre !== undefined) {
+      if (new Date(l.created_time).getTime() <= sperre) { skippedBlocked++; continue; }
+      rueckkehrer.add(phone); // neue Anfrage NACH der Sperre → darf herein
+    }
     const hit = phone ? byPhone.get(phone) : undefined;
     if (hit) {
       if (!hit.meta_lead_id) {
@@ -155,7 +189,10 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
     const branche = pick(fd, "branche");
     const mitarbeiter = pick(fd, "mitarbeiter");
     const chef = (pick(fd, "chef") || "").toLowerCase().startsWith("ja");
-    const notes = [branche ? `Branche: ${branche}` : "", mitarbeiter ? `${mitarbeiter} Mitarbeiter` : "",
+    const phone9 = normPhone(pick(fd, "phone", "telefon"));
+    const notes = [
+      phone9 && rueckkehrer.has(phone9) ? "ERNEUTE Anfrage – frühere Anfrage war bewusst entfernt worden" : "",
+      branche ? `Branche: ${branche}` : "", mitarbeiter ? `${mitarbeiter} Mitarbeiter` : "",
       `Chef: ${chef ? "ja" : "nein"}`].filter(Boolean).join(" · ");
     const platform = l.platform === "ig" || l.platform === "instagram" ? "instagram" : "facebook";
     return {
@@ -177,11 +214,13 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
       created_at: l.created_time,
     };
   });
-  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked, repeats, blocked: skippedBlocked };
+  if (!rows.length) return { account: acc.label, found: leads.length, created: 0, linked, repeats, blocked: skippedBlocked,
+    note: fehler ? `${fehler} Meta-Fehler – Lauf womöglich unvollständig` : undefined };
 
   // upsert auf meta_lead_id: parallele Läufe können nichts doppelt anlegen
   const { error, count } = await sb.from("leads")
     .upsert(rows, { onConflict: "meta_lead_id", ignoreDuplicates: true, count: "exact" });
   if (error) return { account: acc.label, found: leads.length, created: 0, linked, repeats, blocked: skippedBlocked, note: error.message };
-  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked, repeats, blocked: skippedBlocked };
+  return { account: acc.label, found: leads.length, created: count ?? rows.length, linked, repeats, blocked: skippedBlocked,
+    note: fehler ? `${fehler} Meta-Fehler – Lauf womöglich unvollständig` : undefined };
 }
