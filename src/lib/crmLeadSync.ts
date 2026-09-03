@@ -148,14 +148,19 @@ export async function syncAdLeadsToCrm(metaAccountId: string, ownerUserId: strin
     }
     const hit = phone ? byPhone.get(phone) : undefined;
     if (hit) {
-      if (!hit.meta_lead_id) {
-        // war bisher unverknüpft → Meta-ID nachtragen, Stufe unangetastet lassen
+      // Wiederkehr = eine Anfrage, die deutlich NACH der letzten bekannten liegt.
+      // Die 24-Stunden-Spanne trennt echte Neu-Anfragen vom Nachverknüpfen der
+      // ursprünglichen Einreichung (deren Zeiten weichen um Minuten ab).
+      // WICHTIG: gilt auch für Alt-Leads OHNE Meta-Verknüpfung – genau dort
+      // wurden Hofer und Kloiber am 02./03.09. stillschweigend verschluckt.
+      const basis = new Date(hit.last_inquiry_at || hit.created_at).getTime();
+      const wiederkehr = hit.meta_lead_id !== l.id
+        && new Date(l.created_time).getTime() > basis + 24 * 3600 * 1000;
+      if (!wiederkehr && !hit.meta_lead_id) {
+        // dieselbe alte Anfrage → Meta-ID nachtragen, Stufe unangetastet lassen
         await sb.from("leads").update({ meta_lead_id: l.id, last_inquiry_at: l.created_time }).eq("id", hit.id);
         linked++;
-      } else if (hit.meta_lead_id !== l.id
-                 && new Date(l.created_time) > new Date(hit.last_inquiry_at || hit.created_at)) {
-        // nur ECHTE Neu-Anfragen zählen (neuer als die zuletzt bekannte) –
-        // ältere Zweit-Einreichungen derselben Person lösen nichts aus
+      } else if (wiederkehr) {
         // ERNEUTE Anfrage derselben Person – das ist ein starkes Signal und
         // darf nicht lautlos verschwinden: Notiz ergänzen und (außer bei
         // laufender Bearbeitung) zurück in „Neu" holen.
