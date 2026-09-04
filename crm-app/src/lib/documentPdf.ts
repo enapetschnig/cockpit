@@ -280,7 +280,10 @@ export function buildDocumentPdf(
     if (outro) { flow(outro); ty += 3; }
     // Die Gültigkeit steht am Schluss – mit konkretem Datum statt Fristangabe.
     if (doc.valid_until) {
-      if (ty > H - 34) { pdf.addPage(); ty = 25; }
+      // Nur umbrechen, wenn die Zeile wirklich nicht mehr passt: sie braucht
+      // rund 8 mm und muss über der Fußlinie (H − 18) bleiben. Die frühere
+      // Reserve von 34 mm schob sie regelmäßig allein auf eine neue Seite.
+      if (ty > H - 26) { pdf.addPage(); ty = 25; }
       setF(9.5, 'bold');
       pdf.text(`Dieses Angebot ist gültig bis ${dateTime(doc.valid_until)}.`, ML, ty + 2);
       ty += 8;
