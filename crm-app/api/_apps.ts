@@ -29,6 +29,7 @@ export const APPS: AppInfo[] = [
   // Ordner heißt tischlerei_birgmann. projectRef aus dem Live-Bundle von
   // birgmann.app – die config.toml des Repos enthält nur "DEIN-PROJEKT-ID".
   { key: 'birgmann', label: 'Tischlerei Birgmann', projectRef: 'irfhbetcnxhuvoxgjeym' },
+  { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas', projectRef: 'luxnyybspuvzhjcfohbp' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
