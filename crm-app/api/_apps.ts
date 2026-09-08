@@ -30,6 +30,7 @@ export const APPS: AppInfo[] = [
   // birgmann.app – die config.toml des Repos enthält nur "DEIN-PROJEKT-ID".
   { key: 'birgmann', label: 'Tischlerei Birgmann', projectRef: 'irfhbetcnxhuvoxgjeym' },
   { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas', projectRef: 'luxnyybspuvzhjcfohbp' },
+  { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik', projectRef: 'xsflcdvorwaufiagvilw' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
