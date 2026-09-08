@@ -21,7 +21,7 @@ import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 import {
   Zap, LayoutGrid, Wallet, FileText, Receipt, Users, MessageSquare,
   MoreHorizontal, BarChart3, BookOpen, Archive, Package, Tag, Settings,
-  ExternalLink, LogOut, TrendingUp,
+  ExternalLink, LogOut, TrendingUp, Megaphone,
 } from 'lucide-react';
 
 const HAUPT = [
@@ -106,6 +106,14 @@ export function AppNav({ children }: { children?: ReactNode }) {
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
+              {/* Werbeanzeigen liegen im Cockpit (eigene App), nicht hier –
+                  deshalb als direkter Link auf die Seite statt nur auf die
+                  Startseite des Cockpits. */}
+              <DropdownMenuItem asChild>
+                <a href="https://cockpit-flax-tau.vercel.app/werbung" target="_blank" rel="noreferrer" className="gap-2 cursor-pointer">
+                  <Megaphone className="w-4 h-4 text-muted-foreground" /> Werbeanzeigen
+                </a>
+              </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href="https://cockpit-flax-tau.vercel.app" target="_blank" rel="noreferrer" className="gap-2 cursor-pointer">
                   <ExternalLink className="w-4 h-4 text-muted-foreground" /> Cockpit öffnen
