@@ -9,6 +9,7 @@
 export interface AppInfo { key: string; label: string }
 
 export const APPS: AppInfo[] = [
+  { key: 'steron', label: 'Steron Poolbau' },
   { key: 'willroider', label: 'Holzbau Willroider' },
   { key: 'groismaier', label: 'Groismaier' },
   { key: 'cspowermetall', label: 'CS Powermetall' },
