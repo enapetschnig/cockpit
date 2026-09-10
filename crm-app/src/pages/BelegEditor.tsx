@@ -311,8 +311,13 @@ export default function BelegEditor() {
    * Restrechnung schreiben: nimmt genau das, was vom Auftrag noch offen ist,
    * hängt sie an dieselbe Klammer und räumt die Erinnerung weg.
    */
-  const restrechnungErstellen = async () => {
+  const restrechnungErstellen = async (betrag?: number, neuesRestDatum?: string) => {
     if (!user || !auftrag || auftrag.offen <= 0.01) return;
+    // Ohne Angabe wird der ganze Rest verrechnet; mit Angabe nur ein Stück
+    // davon – so lässt sich ein Auftrag auch auf drei oder mehr Rechnungen
+    // verteilen, ohne den Überblick zu verlieren.
+    const summe = Math.min(betrag && betrag > 0 ? betrag : auftrag.offen, auftrag.offen);
+    const bleibtOffen = round2(auftrag.offen - summe) > 0.01;
     setBusy(true);
     const today = new Date().toISOString().slice(0, 10);
     const vatSatz = items.find((i) => !i.is_heading)?.vat_rate ?? 20;
@@ -321,7 +326,8 @@ export default function BelegEditor() {
       const neuId = await saveDocument({
         kind: 'invoice', number: num, status: 'draft', doc_date: today,
         due_date: addDays(today, settings?.default_payment_days || 7),
-        project_total: auftrag.gesamt, projekt_id: auftrag.projektId, rest_faellig_am: null,
+        project_total: auftrag.gesamt, projekt_id: auftrag.projektId,
+        rest_faellig_am: bleibtOffen ? (neuesRestDatum || null) : null,
         customer_id: doc.customer_id, lead_id: doc.lead_id,
         recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
         recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
@@ -330,16 +336,20 @@ export default function BelegEditor() {
         title: doc.title, intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
         source_document: doc.id, parent_document_id: null, discount_percent: 0, prices_include_vat: false,
       }, [{
-        name: 'Restbetrag',
-        description: `Restbetrag des Auftrags über ${eur(auftrag.gesamt)} netto – bereits verrechnet: ${eur(auftrag.verrechnet)}`,
-        quantity: 1, unit: 'Pauschal', unit_price: auftrag.offen, vat_rate: vatSatz, discount_percent: 0, is_heading: false,
+        name: bleibtOffen ? 'Weitere Teilrechnung' : 'Restbetrag',
+        description: `${bleibtOffen ? 'Teilbetrag' : 'Restbetrag'} des Auftrags über ${eur(auftrag.gesamt)} netto – bereits verrechnet: ${eur(auftrag.verrechnet)}`,
+        quantity: 1, unit: 'Pauschal', unit_price: summe, vat_rate: vatSatz, discount_percent: 0, is_heading: false,
       }], user.id, false);
       if (!neuId) throw new Error('Restrechnung konnte nicht angelegt werden');
-      // Erinnerung ist erledigt – sonst mahnt die Startseite weiter.
+      // Die Erinnerung hängt immer nur an der jüngsten Rechnung der Kette –
+      // sonst mahnt die Startseite doppelt oder zum falschen Termin.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { supabase } = await import('@/integrations/supabase/client') as any;
-      await supabase.from('documents').update({ rest_faellig_am: null }).eq('projekt_id', auftrag.projektId);
-      toast.success(`Restrechnung ${num} über ${eur(auftrag.offen)} netto erstellt`);
+      await supabase.from('documents').update({ rest_faellig_am: null })
+        .eq('projekt_id', auftrag.projektId).neq('id', neuId);
+      toast.success(bleibtOffen
+        ? `Rechnung ${num} über ${eur(summe)} netto – Rest ${eur(round2(auftrag.offen - summe))} bleibt offen`
+        : `Restrechnung ${num} über ${eur(summe)} netto erstellt`);
       navigate(`/beleg/${neuId}`);
     } catch (e) {
       toast.error((e as Error).message);
@@ -651,11 +661,33 @@ export default function BelegEditor() {
                 </p>
               </div>
               {auftrag.offen > 0.01 && (
-                <Button size="sm" className="gap-1" disabled={busy} onClick={restrechnungErstellen}>
+                <Button size="sm" className="gap-1" disabled={busy} onClick={() => restrechnungErstellen()}>
                   <Receipt className="w-4 h-4" /> Restrechnung über {eur(auftrag.offen)}
                 </Button>
               )}
             </div>
+
+            {/* Der Rest muss nicht in einem Stück kommen – hier geht auch die dritte Rate. */}
+            {auftrag.offen > 0.01 && (
+              <div className="mt-2 pt-2 border-t flex flex-wrap items-end gap-2">
+                <span className="text-[11px] text-muted-foreground self-center">oder nur einen Teil davon:</span>
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Betrag netto</Label>
+                  <Input type="number" step="0.01" className="h-8 w-28"
+                    placeholder={String(Math.round(auftrag.offen / 2))}
+                    value={teilBetrag} onChange={(e) => setTeilBetrag(e.target.value === '' ? '' : Number(e.target.value))} />
+                </div>
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">nächster Rest ab</Label>
+                  <Input type="date" className="h-8 w-36" value={restAm} onChange={(e) => setRestAm(e.target.value)} />
+                </div>
+                <Button size="sm" variant="outline" className="gap-1"
+                  disabled={busy || !teilBetrag || !restAm || Number(teilBetrag) >= auftrag.offen}
+                  onClick={() => restrechnungErstellen(Number(teilBetrag), restAm)}>
+                  <Receipt className="w-4 h-4" /> Teilrechnung erstellen
+                </Button>
+              </div>
+            )}
             <div className="mt-2 pt-2 border-t space-y-1">
               {auftrag.rechnungen.map((r) => (
                 <div key={r.id} className={'flex justify-between text-xs ' + (r.id === doc.id ? 'font-semibold' : '')}>
@@ -674,10 +706,11 @@ export default function BelegEditor() {
         {!doc.projekt_id && totals.net > 0 && (kind === 'offer' || kind === 'invoice') && (
           <Card className="p-4 mb-4">
             <div>
-                <div className="text-sm font-semibold mb-1">In zwei Rechnungen aufteilen</div>
+                <div className="text-sm font-semibold mb-1">Auftrag aufteilen</div>
                 <p className="text-[11px] text-muted-foreground mb-2">
-                  Es wird jetzt nur die erste Rechnung geschrieben. Der Rest wird vorgemerkt – du bekommst
-                  ihn auf der Startseite erinnert und erstellst ihn dann mit einem Klick.
+                  Es wird jetzt nur die erste Rechnung geschrieben. Der Rest wird zum gewählten Termin
+                  vorgemerkt – die Startseite erinnert dich daran, und du erstellst ihn dann mit einem Klick
+                  (auf Wunsch wieder nur zum Teil).
                 </p>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>
