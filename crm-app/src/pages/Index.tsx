@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLeads } from '@/hooks/useLeads';
 import { Header } from '@/components/Header';
+import { OffeneAuftraege } from '@/components/OffeneAuftraege';
 import { PipelineColumn } from '@/components/PipelineColumn';
 import { AddLeadDialog } from '@/components/AddLeadDialog';
 import { LeadDetailDialog } from '@/components/LeadDetailDialog';
@@ -53,6 +54,7 @@ const Index = () => {
 
       <div className="flex-1 p-6 overflow-hidden flex flex-col gap-4">
         <OpenInvoicesStrip />
+        <OffeneAuftraege kompakt />
         <WeeklyActivityOverview leads={leads} />
         {hasCallbackLeads && (
           <CallbackList 

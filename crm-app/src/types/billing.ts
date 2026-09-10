@@ -123,6 +123,10 @@ export interface BillingDocument {
   /** Preisbasis dieses Belegs: true = Positionspreise brutto, false = netto.
    *  null → Firmeneinstellung (company_settings.prices_include_vat) gilt. */
   prices_include_vat: boolean | null;
+  /** Klammer über alle Rechnungen eines Auftrags (erste Rechnung trägt ihre eigene id). */
+  projekt_id: string | null;
+  /** Wann die nächste Restrechnung geschrieben werden soll. */
+  rest_faellig_am: string | null;
   number_locked?: boolean;
   notes: string | null;
   created_at: string;

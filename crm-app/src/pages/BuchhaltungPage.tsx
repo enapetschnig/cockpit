@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BillingNav } from '@/components/billing/BillingNav';
+import { OffeneAuftraege } from '@/components/OffeneAuftraege';
 import { MonthlyRevenue } from '@/components/billing/MonthlyRevenue';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -120,6 +121,8 @@ export default function BuchhaltungPage() {
             </Button>
           </div>
         </div>
+
+        <div className="mb-6"><OffeneAuftraege /></div>
 
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
           <Kpi label="Offene Rechnungen" value={eur(s.openSum)} sub={`${s.open.length} Belege`} icon={Wallet} to="/rechnungen" />

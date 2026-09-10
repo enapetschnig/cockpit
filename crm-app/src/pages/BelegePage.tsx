@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useDocuments } from '@/hooks/useBilling';
 import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, type DocKind, type DocStatus } from '@/types/billing';
-import { FileText, Plus, Search, Receipt } from 'lucide-react';
+import { FileText, Plus, Search, Receipt, Link2 } from 'lucide-react';
 
 const STATUS_STYLE: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -127,6 +127,17 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
                         <Badge variant="outline" className="text-[10px]">{DOC_KIND_LABEL[d.kind]}</Badge>
                       )}
                       {d.legacy_source && <Badge variant="outline" className="text-[10px]">Archiv</Badge>}
+                      {/* Rechnungen desselben Auftrags gehören zusammen – hier sieht man das. */}
+                      {d.projekt_id && (
+                        <Badge variant="outline" className="text-[10px] gap-1">
+                          <Link2 className="w-3 h-3" /> Auftrag
+                        </Badge>
+                      )}
+                      {d.rest_faellig_am && (
+                        <Badge className="text-[10px] bg-amber-100 text-amber-800 hover:bg-amber-100">
+                          Rest ab {fmtDate(d.rest_faellig_am)}
+                        </Badge>
+                      )}
                     </div>
                     <div className="text-sm text-muted-foreground truncate">
                       {d.recipient_company || d.recipient_name || '—'}{d.title ? ` · ${d.title}` : ''}

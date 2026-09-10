@@ -13,13 +13,15 @@ import {
   useArticles, useCompanySettings, useCustomers, useDocument, naechsteRechnungsnummer, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
-  DOC_KIND_LABEL, computeTotals, docInclVat, eur, lineAmount, customerLabel, round2,
+  DOC_KIND_LABEL, computeTotals, docInclVat, eur, fmtDate, lineAmount, customerLabel, round2,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
 import { LivePreview } from '@/components/billing/LivePreview';
 import { sendDocumentMail } from '@/lib/sendMail';
+import { useAuftragVon } from '@/hooks/useAuftraege';
 import {
+  Link2,
   ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -55,7 +57,8 @@ export default function BelegEditor() {
   const [inlineIdx, setInlineIdx] = useState<string | null>(null); // Positions-Autocomplete
   const [numberEdited, setNumberEdited] = useState(false);         // Nummer selbst eingetippt?
   const [anzProzent, setAnzProzent] = useState(50);                // Anzahlungshöhe in %
-  const [planRaten, setPlanRaten] = useState(2);                   // Zahlungsplan: Anzahl Rechnungen
+  const [teilBetrag, setTeilBetrag] = useState<number | ''>('');   // was jetzt verrechnet wird (netto)
+  const [restAm, setRestAm] = useState('');                        // wann der Rest fällig wird
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -93,6 +96,9 @@ export default function BelegEditor() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, settings, doc.kind]);
+
+  // Gehört dieser Beleg zu einem Auftrag, der in Teilen verrechnet wird?
+  const { auftrag, reload: reloadAuftrag } = useAuftragVon(doc.projekt_id);
 
   // Preisbasis: was am Beleg steht, schlägt die Firmeneinstellung
   const inclVat = docInclVat(doc, settings);
@@ -294,64 +300,120 @@ export default function BelegEditor() {
     if (newId) { toast.success(`${DOC_KIND_LABEL[kind]} erstellt`); navigate(`/beleg/${newId}`); }
   };
 
+  /** Klammer setzen – ohne sie gehören die Rechnungen nicht sichtbar zusammen. */
+  const setzeProjekt = async (docId: string, projektId: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { supabase } = await import('@/integrations/supabase/client') as any;
+    await supabase.from('documents').update({ projekt_id: projektId }).eq('id', docId);
+  };
+
   /**
-   * Ein Klick, N Rechnungen: (n−1) gleiche Anzahlungsrechnungen plus eine
-   * Schlussrechnung, die genau diese Anzahlungen (netto + USt) abzieht.
-   * Fälligkeiten monatlich gestaffelt, alle als Entwurf zum Prüfen.
+   * Restrechnung schreiben: nimmt genau das, was vom Auftrag noch offen ist,
+   * hängt sie an dieselbe Klammer und räumt die Erinnerung weg.
    */
-  const zahlungsplanErstellen = async (n: number) => {
-    if (!user || n < 2) return;
-    const srcId = doc.id || (await persist());
-    if (!srcId) return;
+  const restrechnungErstellen = async () => {
+    if (!user || !auftrag || auftrag.offen <= 0.01) return;
     setBusy(true);
     const today = new Date().toISOString().slice(0, 10);
-    const zahlTage = settings?.default_payment_days || 7;
-    const prozent = Math.floor(100 / n);
     const vatSatz = items.find((i) => !i.is_heading)?.vat_rate ?? 20;
-    const empfaenger = {
-      customer_id: doc.customer_id, lead_id: doc.lead_id,
-      recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
-      recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
-      recipient_city: doc.recipient_city, recipient_country: doc.recipient_country,
-      recipient_email: doc.recipient_email, recipient_uid: doc.recipient_uid,
-      title: doc.title, intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
-      source_document: srcId, parent_document_id: srcId, discount_percent: 0,
-    };
-    const faellig = (monate: number) => {
-      const x = new Date(today); x.setMonth(x.getMonth() + monate); x.setDate(x.getDate() + zahlTage);
-      return x.toISOString().slice(0, 10);
-    };
-    let dNet = 0; let dVat = 0; const nummern: string[] = [];
     try {
-      for (let k = 1; k < n; k++) {
-        const num = await naechsteRechnungsnummer(settings);
-        const teilNet = Math.round(totals.net * prozent) / 100;
-        const ok = await saveDocument({
-          kind: 'partial_invoice', number: num, status: 'draft', doc_date: today,
-          due_date: faellig(k - 1), project_total: totals.net, part_percent: prozent, ...empfaenger,
-        }, [{
-          name: `${prozent} % Anzahlung (Rate ${k} von ${n})`,
-          description: `Anzahlung laut ${DOC_KIND_LABEL[(doc.kind as DocKind) || 'offer']} ${doc.number || ''}`.trim(),
-          quantity: 1, unit: 'Pauschal', unit_price: teilNet, vat_rate: vatSatz, discount_percent: 0, is_heading: false,
-        }], user.id);
-        if (!ok) throw new Error(`Rate ${k} von ${n}`);
-        nummern.push(num);
-        dNet = round2(dNet + teilNet); dVat = round2(dVat + teilNet * vatSatz / 100);
-      }
       const num = await naechsteRechnungsnummer(settings);
-      const ok = await saveDocument({
-        kind: 'final_invoice', number: num, status: 'draft', doc_date: today,
-        due_date: faellig(n - 1), deducted_net: dNet, deducted_vat: dVat, ...empfaenger,
-      }, items.filter((i) => i.name || i.is_heading).map((i) => ({ ...i })), user.id);
-      if (!ok) throw new Error('Schlussrechnung');
-      nummern.push(num);
-      toast.success(`${n} Rechnungen erstellt: ${nummern.join(', ')}`);
-      navigate('/rechnungen?f=alle');
+      const neuId = await saveDocument({
+        kind: 'invoice', number: num, status: 'draft', doc_date: today,
+        due_date: addDays(today, settings?.default_payment_days || 7),
+        project_total: auftrag.gesamt, projekt_id: auftrag.projektId, rest_faellig_am: null,
+        customer_id: doc.customer_id, lead_id: doc.lead_id,
+        recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
+        recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
+        recipient_city: doc.recipient_city, recipient_country: doc.recipient_country,
+        recipient_email: doc.recipient_email, recipient_uid: doc.recipient_uid,
+        title: doc.title, intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
+        source_document: doc.id, parent_document_id: null, discount_percent: 0, prices_include_vat: false,
+      }, [{
+        name: 'Restbetrag',
+        description: `Restbetrag des Auftrags über ${eur(auftrag.gesamt)} netto – bereits verrechnet: ${eur(auftrag.verrechnet)}`,
+        quantity: 1, unit: 'Pauschal', unit_price: auftrag.offen, vat_rate: vatSatz, discount_percent: 0, is_heading: false,
+      }], user.id, false);
+      if (!neuId) throw new Error('Restrechnung konnte nicht angelegt werden');
+      // Erinnerung ist erledigt – sonst mahnt die Startseite weiter.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { supabase } = await import('@/integrations/supabase/client') as any;
+      await supabase.from('documents').update({ rest_faellig_am: null }).eq('projekt_id', auftrag.projektId);
+      toast.success(`Restrechnung ${num} über ${eur(auftrag.offen)} netto erstellt`);
+      navigate(`/beleg/${neuId}`);
     } catch (e) {
-      toast.error(`Zahlungsplan unvollständig (${(e as Error).message}) – bitte unter Rechnungen nachsehen.`);
+      toast.error((e as Error).message);
     }
     setBusy(false);
   };
+
+  /**
+   * Auftrag anteilig verrechnen: erzeugt JETZT eine Rechnung über den
+   * gewünschten Teil und merkt sich, wann der Rest fällig wird. Es entsteht
+   * keine Rechnung auf Vorrat – die Restrechnung schreibt man später mit
+   * einem Klick, wenn der Zeitpunkt da ist.
+   */
+  const teilrechnungErstellen = async (anteilNetto: number, restAm: string) => {
+    if (!user || anteilNetto <= 0) return;
+    const gesamtNetto = totals.net;
+    if (anteilNetto > gesamtNetto) { toast.error('Der Teilbetrag ist größer als der Auftragswert.'); return; }
+    const anteil = Math.round((anteilNetto / gesamtNetto) * 100);
+    const vatSatz = items.find((i) => !i.is_heading)?.vat_rate ?? 20;
+    const leistung = items.filter((i) => !i.is_heading && i.name).map((i) => i.name).slice(0, 6).join(', ');
+    const teilPos = [{
+      name: `${anteil} % Teilbetrag`,
+      description: leistung
+        ? `Teilbetrag für: ${leistung}`
+        : `Teilbetrag laut ${DOC_KIND_LABEL[(doc.kind as DocKind) || 'offer']} ${doc.number || ''}`.trim(),
+      quantity: 1, unit: 'Pauschal', unit_price: anteilNetto, vat_rate: vatSatz,
+      discount_percent: 0, is_heading: false,
+    }];
+    const today = new Date().toISOString().slice(0, 10);
+    setBusy(true);
+    try {
+      let zielId: string | null;
+      if (isOffer) {
+        // Das Angebot bleibt bestehen – die Teilrechnung ist ein neuer Beleg.
+        const srcId = doc.id || (await persist());
+        if (!srcId) { setBusy(false); return; }
+        const num = await naechsteRechnungsnummer(settings);
+        zielId = await saveDocument({
+          kind: 'invoice', number: num, status: 'draft', doc_date: today,
+          due_date: addDays(today, settings?.default_payment_days || 7),
+          project_total: gesamtNetto, part_percent: anteil, rest_faellig_am: restAm || null,
+          customer_id: doc.customer_id, lead_id: doc.lead_id,
+          recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
+          recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
+          recipient_city: doc.recipient_city, recipient_country: doc.recipient_country,
+          recipient_email: doc.recipient_email, recipient_uid: doc.recipient_uid,
+          title: doc.title, intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
+          source_document: srcId, parent_document_id: srcId, discount_percent: 0,
+          prices_include_vat: false,
+        }, teilPos, user.id, false);
+      } else {
+        // Rechnung ohne Angebot: dieser Beleg SELBST wird die erste Teilrechnung.
+        // So entsteht keine zweite Nummer für einen Beleg, der nie hinausgeht.
+        let nummer = (doc.number || '').trim();
+        if (isNew) nummer = nummer && !(await numberTaken(nummer)) ? nummer : await naechsteRechnungsnummer(settings);
+        zielId = await saveDocument({
+          ...doc, kind: 'invoice', number: nummer || null,
+          project_total: gesamtNetto, part_percent: anteil, rest_faellig_am: restAm || null,
+          discount_percent: 0, deducted_net: 0, deducted_vat: 0, prices_include_vat: false,
+        }, teilPos, user.id, false);
+      }
+      if (!zielId) throw new Error('Rechnung konnte nicht angelegt werden');
+      // Die erste Rechnung der Kette ist zugleich deren Klammer.
+      await setzeProjekt(zielId, zielId);
+      toast.success(`Rechnung über ${eur(anteilNetto)} netto – Rest ab ${fmtDate(restAm)} vorgemerkt`);
+      setTeilBetrag(''); setRestAm('');
+      if (zielId === doc.id) { setDoc((d) => ({ ...d, projekt_id: zielId, project_total: gesamtNetto, rest_faellig_am: restAm || null })); reload(); }
+      else navigate(`/beleg/${zielId}`, { replace: isNew });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    setBusy(false);
+  };
+
 
   const kind = (doc.kind as DocKind) || 'offer';
   const isOffer = kind === 'offer';
@@ -572,6 +634,91 @@ export default function BelegEditor() {
           <Textarea rows={2} value={doc.outro_text || ''} onChange={(e) => set({ outro_text: e.target.value })} />
         </Card>
 
+        {/* Diese Rechnung ist Teil eines Auftrags – was offen ist, steht hier */}
+        {auftrag && (
+          <Card className="p-4 mb-4 border-l-4 border-l-primary">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                  <Link2 className="w-4 h-4 text-primary" /> Teil eines Auftrags über {eur(auftrag.gesamt)} netto
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Verrechnet {eur(auftrag.verrechnet)} ·{' '}
+                  {auftrag.offen > 0.01
+                    ? <span className="text-amber-700 font-medium">offen {eur(auftrag.offen)}</span>
+                    : <span className="text-green-700 font-medium">vollständig verrechnet</span>}
+                  {auftrag.offen > 0.01 && auftrag.restFaelligAm && ` · Rest vorgemerkt ab ${fmtDate(auftrag.restFaelligAm)}`}
+                </p>
+              </div>
+              {auftrag.offen > 0.01 && (
+                <Button size="sm" className="gap-1" disabled={busy} onClick={restrechnungErstellen}>
+                  <Receipt className="w-4 h-4" /> Restrechnung über {eur(auftrag.offen)}
+                </Button>
+              )}
+            </div>
+            <div className="mt-2 pt-2 border-t space-y-1">
+              {auftrag.rechnungen.map((r) => (
+                <div key={r.id} className={'flex justify-between text-xs ' + (r.id === doc.id ? 'font-semibold' : '')}>
+                  <button className="hover:underline text-left" onClick={() => r.id !== doc.id && navigate(`/beleg/${r.id}`)}>
+                    {r.number || 'ohne Nummer'} · {fmtDate(r.doc_date)}
+                    {r.id === doc.id && ' (dieser Beleg)'}
+                  </button>
+                  <span>{eur(r.net)} netto</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Auftrag in Teilen verrechnen – auch ohne Angebot */}
+        {!doc.projekt_id && totals.net > 0 && (kind === 'offer' || kind === 'invoice') && (
+          <Card className="p-4 mb-4">
+            <div>
+                <div className="text-sm font-semibold mb-1">In zwei Rechnungen aufteilen</div>
+                <p className="text-[11px] text-muted-foreground mb-2">
+                  Es wird jetzt nur die erste Rechnung geschrieben. Der Rest wird vorgemerkt – du bekommst
+                  ihn auf der Startseite erinnert und erstellst ihn dann mit einem Klick.
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Jetzt verrechnen (netto)</Label>
+                    <Input type="number" step="0.01" className="h-8 w-32"
+                      placeholder={String(Math.round(totals.net / 2))}
+                      value={teilBetrag} onChange={(e) => setTeilBetrag(e.target.value === '' ? '' : Number(e.target.value))} />
+                  </div>
+                  <div className="flex gap-1">
+                    {[50, 30, 70].map((p) => (
+                      <Button key={p} size="sm" variant="ghost" className="h-8 px-2 text-xs"
+                        onClick={() => setTeilBetrag(Math.round(totals.net * p) / 100)}>{p} %</Button>
+                    ))}
+                  </div>
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Rest verrechnen ab</Label>
+                    <Input type="date" className="h-8 w-40" value={restAm} onChange={(e) => setRestAm(e.target.value)} />
+                  </div>
+                  <div className="flex gap-1">
+                    {[1, 2, 3].map((m) => (
+                      <Button key={m} size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => {
+                        const d = new Date(); d.setMonth(d.getMonth() + m);
+                        setRestAm(d.toISOString().slice(0, 10));
+                      }}>+{m} Mon.</Button>
+                    ))}
+                  </div>
+                  <Button size="sm" className="gap-1" disabled={busy || !teilBetrag || !restAm}
+                    onClick={() => teilrechnungErstellen(Number(teilBetrag), restAm)}>
+                    <Receipt className="w-4 h-4" /> Erste Rechnung erstellen
+                  </Button>
+                </div>
+                {!!teilBetrag && Number(teilBetrag) < totals.net && (
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Jetzt {eur(Number(teilBetrag))} · Rest {eur(round2(totals.net - Number(teilBetrag)))}
+                    {restAm ? ` ab ${fmtDate(restAm)}` : ''} — beides netto.
+                  </p>
+                )}
+            </div>
+          </Card>
+        )}
+
         {/* Folgebelege */}
         {!isNew && (
           <Card className="p-4 mb-4">
@@ -594,16 +741,7 @@ export default function BelegEditor() {
                   <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('final_invoice')}>
                     <FileText className="w-4 h-4" /> Schlussrechnung (mit Abzug)
                   </Button>
-                  <span className="flex items-center gap-1">
-                    <span className="text-xs text-muted-foreground">Aufteilen auf</span>
-                    <Input type="number" min={2} max={12} value={planRaten}
-                      onChange={(e) => setPlanRaten(Math.min(12, Math.max(2, Number(e.target.value) || 2)))}
-                      className="h-8 w-14 text-center" aria-label="Anzahl Rechnungen im Zahlungsplan" />
-                    <Button size="sm" variant="outline" className="gap-1" disabled={busy}
-                      onClick={() => zahlungsplanErstellen(planRaten)}>
-                      <Receipt className="w-4 h-4" /> Rechnungen erzeugen
-                    </Button>
-                  </span>
+
                 </>
               )}
               <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp(kind)}>
@@ -619,7 +757,7 @@ export default function BelegEditor() {
             {isOffer && (
               <p className="text-[11px] text-muted-foreground mt-2">
                 Anzahlung + Schlussrechnung: Die Schlussrechnung zieht bereits verrechnete Anzahlungen inkl. USt ab (§ 11 UStG).
-                „Aufteilen" erzeugt alle Rechnungen auf einmal – gleiche Raten, monatlich fällig, als Entwürfe zum Prüfen.
+
               </p>
             )}
           </Card>
