@@ -127,6 +127,8 @@ export interface BillingDocument {
   projekt_id: string | null;
   /** Wann die nächste Restrechnung geschrieben werden soll. */
   rest_faellig_am: string | null;
+  /** Was vom Auftrag nach dieser Rechnung noch offen ist (netto) – steht so am PDF. */
+  rest_offen: number | null;
   number_locked?: boolean;
   notes: string | null;
   created_at: string;

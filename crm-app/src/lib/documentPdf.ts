@@ -275,6 +275,19 @@ export function buildDocumentPdf(
       || `Bitte überweisen Sie den Rechnungsbetrag innerhalb von ${tage} Tagen an das Bankkonto rechts oben. `
        + `Beachten Sie bitte, dass der Empfängername auf "${s?.company_name || 'ePower GmbH'}" lautet und in der Zahlungsreferenz die Rechnungsnummer steht.`;
     for (const l of pdf.splitTextToSize(zahl, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
+    // Teilrechnung: der Kunde soll sehen, was der Auftrag insgesamt kostet
+    // und wann der Rest kommt – sonst wirkt die zweite Rechnung wie aus dem Nichts.
+    if (Number(doc.project_total) > 0 && Number(doc.rest_offen) > 0) {
+      const rest = Number(doc.rest_offen);
+      const restUst = round2(t.byRate.reduce((a, g) => a + rest * (g.net / (t.net || 1)) * g.rate / 100, 0));
+      const wann = doc.rest_faellig_am ? ` und wird ab ${dateTime(doc.rest_faellig_am)} in Rechnung gestellt` : '';
+      const txt = `Teilrechnung: Der Gesamtauftrag beträgt € ${money(Number(doc.project_total))} netto. `
+        + `Der Restbetrag von € ${money(rest)} netto (€ ${money(round2(rest + restUst))} inkl. USt) ist noch offen${wann}.`;
+      ty += 2;
+      setF(9, 'bold');
+      for (const l of pdf.splitTextToSize(txt, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
+      setF(9);
+    }
   } else {
     const outro = doc.outro_text?.trim();
     if (outro) { flow(outro); ty += 3; }

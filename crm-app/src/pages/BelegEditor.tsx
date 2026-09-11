@@ -328,6 +328,7 @@ export default function BelegEditor() {
         due_date: addDays(today, settings?.default_payment_days || 7),
         project_total: auftrag.gesamt, projekt_id: auftrag.projektId,
         rest_faellig_am: bleibtOffen ? (neuesRestDatum || null) : null,
+        rest_offen: bleibtOffen ? round2(auftrag.offen - summe) : null,
         customer_id: doc.customer_id, lead_id: doc.lead_id,
         recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
         recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
@@ -391,6 +392,7 @@ export default function BelegEditor() {
           kind: 'invoice', number: num, status: 'draft', doc_date: today,
           due_date: addDays(today, settings?.default_payment_days || 7),
           project_total: gesamtNetto, part_percent: anteil, rest_faellig_am: restAm || null,
+          rest_offen: round2(gesamtNetto - anteilNetto),
           customer_id: doc.customer_id, lead_id: doc.lead_id,
           recipient_name: doc.recipient_name, recipient_company: doc.recipient_company,
           recipient_street: doc.recipient_street, recipient_zip: doc.recipient_zip,
@@ -408,6 +410,7 @@ export default function BelegEditor() {
         zielId = await saveDocument({
           ...doc, kind: 'invoice', number: nummer || null,
           project_total: gesamtNetto, part_percent: anteil, rest_faellig_am: restAm || null,
+          rest_offen: round2(gesamtNetto - anteilNetto),
           discount_percent: 0, deducted_net: 0, deducted_vat: 0, prices_include_vat: false,
         }, teilPos, user.id, false);
       }
