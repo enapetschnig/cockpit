@@ -13,16 +13,17 @@ import {
   useArticles, useCompanySettings, useCustomers, useDocument, naechsteRechnungsnummer, nextNumber, numberTaken, reserveNumber, saveDocument,
 } from '@/hooks/useBilling';
 import {
-  DOC_KIND_LABEL, computeTotals, docInclVat, eur, fmtDate, lineAmount, customerLabel, round2,
+  DOC_KIND_LABEL, computeTotals, docInclVat, eur, fmtDate, lineAmount, customerLabel, openAmount, round2,
   type BillingDocument, type DocKind, type DocumentItem,
 } from '@/types/billing';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
 import { LivePreview } from '@/components/billing/LivePreview';
 import { sendDocumentMail } from '@/lib/sendMail';
 import { useAuftragVon } from '@/hooks/useAuftraege';
+import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
 import {
   Link2,
-  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye,
+  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye, Wallet,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -59,6 +60,7 @@ export default function BelegEditor() {
   const [anzProzent, setAnzProzent] = useState(50);                // Anzahlungshöhe in %
   const [teilBetrag, setTeilBetrag] = useState<number | ''>('');   // was jetzt verrechnet wird (netto)
   const [restAm, setRestAm] = useState('');                        // wann der Rest fällig wird
+  const [zahlungOffen, setZahlungOffen] = useState(false);          // Zahlungs-Dialog
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
   // Vorhandenen Beleg laden
@@ -783,13 +785,21 @@ export default function BelegEditor() {
               <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp(kind)}>
                 <Copy className="w-4 h-4" /> Duplizieren
               </Button>
-              {!isOffer && doc.status !== 'paid' && (
-                <Button size="sm" variant="outline" disabled={busy}
-                  onClick={() => persist({ status: 'paid', paid_at: new Date().toISOString().slice(0, 10), paid_amount: totals.gross })}>
-                  ✓ Als bezahlt markieren
+              {!isOffer && doc.status !== 'cancelled' && (
+                <Button size="sm" variant={doc.status === 'paid' ? 'outline' : 'default'} className="gap-1" disabled={busy}
+                  onClick={() => setZahlungOffen(true)}>
+                  <Wallet className="w-4 h-4" />
+                  {doc.status === 'paid' ? 'Zahlungen ansehen' : Number(doc.paid_amount) > 0 ? 'Weitere Zahlung erfassen' : 'Zahlung erfassen'}
                 </Button>
               )}
             </div>
+            {!isOffer && Number(doc.paid_amount) > 0 && (
+              <p className="text-xs mt-2">
+                <span className="text-green-700 font-medium">bezahlt {eur(Number(doc.paid_amount))}</span>
+                {doc.status !== 'paid' && <> · <span className="text-amber-700 font-medium">offen {eur(openAmount(doc as BillingDocument))}</span></>}
+                {doc.paid_at && <span className="text-muted-foreground"> · vollständig am {fmtDate(doc.paid_at)}</span>}
+              </p>
+            )}
             {isOffer && (
               <p className="text-[11px] text-muted-foreground mt-2">
                 Anzahlung + Schlussrechnung: Die Schlussrechnung zieht bereits verrechnete Anzahlungen inkl. USt ab (§ 11 UStG).
@@ -812,6 +822,9 @@ export default function BelegEditor() {
           />
         </aside>
       </main>
+
+      <ZahlungDialog doc={doc.id ? (doc as BillingDocument) : null} open={zahlungOffen}
+        onOpenChange={setZahlungOffen} onChanged={reload} />
 
       <Dialog open={mobilePreview} onOpenChange={setMobilePreview}>
         <DialogContent className="max-w-4xl h-[85vh] flex flex-col">

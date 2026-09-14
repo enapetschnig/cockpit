@@ -1,13 +1,16 @@
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useState } from 'react';
 import { useOpenInvoices } from '@/hooks/useOpenInvoices';
-import { eur, fmtDate } from '@/types/billing';
+import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
+import { eur, fmtDate, type BillingDocument } from '@/types/billing';
 import { AlertTriangle, ArrowRight, CheckCircle2, Plus, Wallet } from 'lucide-react';
 
 /** Kompakter Streifen mit offenen/überfälligen Rechnungen – direkt auf der Startseite. */
 export function OpenInvoicesStrip() {
-  const { open, overdue, openSum, overdueSum, isLoading } = useOpenInvoices();
+  const { open, overdue, openSum, overdueSum, isLoading, reload } = useOpenInvoices();
+  const [zahlung, setZahlung] = useState<BillingDocument | null>(null);
   if (isLoading) return null;
 
   const top = [...overdue, ...open.filter((o) => !overdue.includes(o))].slice(0, 4);
@@ -46,21 +49,31 @@ export function OpenInvoicesStrip() {
           {top.map((r) => {
             const late = daysLate(r.due_date) > 0;
             return (
-              <Link key={r.id} to={`/beleg/${r.id}`}>
-                <div className={`p-2.5 rounded-lg border text-sm hover:border-primary transition-colors ${late ? 'border-red-300 bg-white' : 'bg-card'}`}>
-                  <div className="font-medium truncate">{r.recipient_company || r.recipient_name || '—'}</div>
+              <div key={r.id} className={`group relative p-2.5 rounded-lg border text-sm hover:border-primary transition-colors ${late ? 'border-red-300 bg-white' : 'bg-card'}`}>
+                <Link to={`/beleg/${r.id}`} className="block">
+                  <div className="font-medium truncate pr-7">{r.recipient_company || r.recipient_name || '—'}</div>
                   <div className="flex items-center justify-between mt-0.5">
                     <span className="text-xs text-muted-foreground">
                       {r.number} · {late ? <span className="text-red-600 font-semibold">{daysLate(r.due_date)} T. überfällig</span> : `fällig ${fmtDate(r.due_date)}`}
                     </span>
-                    <span className="font-semibold">{eur(Number(r.gross))}</span>
+                    <span className="font-semibold">
+                      {eur(Math.max(0, Number(r.gross) - Number(r.paid_amount || 0)))}
+                      {Number(r.paid_amount) > 0 && <span className="text-[10px] text-muted-foreground font-normal"> von {eur(Number(r.gross))}</span>}
+                    </span>
                   </div>
-                </div>
-              </Link>
+                </Link>
+                {/* Zahlung direkt von hier erfassen – ohne erst den Beleg zu öffnen */}
+                <button type="button" title="Zahlung erfassen" aria-label="Zahlung erfassen"
+                  className="absolute top-2 right-2 p-1 rounded text-muted-foreground opacity-60 group-hover:opacity-100 hover:bg-muted hover:text-foreground"
+                  onClick={() => setZahlung(r as unknown as BillingDocument)}>
+                  <Wallet className="w-3.5 h-3.5" />
+                </button>
+              </div>
             );
           })}
         </div>
       )}
+      <ZahlungDialog doc={zahlung} open={!!zahlung} onOpenChange={(o) => !o && setZahlung(null)} onChanged={reload} />
     </Card>
   );
 }

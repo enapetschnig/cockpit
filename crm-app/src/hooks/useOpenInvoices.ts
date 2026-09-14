@@ -5,10 +5,12 @@ import { useAuth } from './useAuth';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
 
-interface OpenRow { id: string; number: string | null; gross: number; due_date: string | null; status: string;
+interface OpenRow { id: string; user_id: string; number: string | null; gross: number; net: number; vat: number; paid_amount: number; due_date: string | null; status: string;
   recipient_company: string | null; recipient_name: string | null; doc_date: string; kind: string }
 
-/** Offene Rechnungen (unbezahlt) – für Kopfzeile & Startseiten-Übersicht. */
+const offen = (r: OpenRow) => Math.max(0, Number(r.gross || 0) - Number(r.paid_amount || 0));
+
+/** Offene Rechnungen (unbezahlt oder teilweise bezahlt) – für Kopfzeile & Startseiten-Übersicht. */
 export function useOpenInvoices() {
   const { user } = useAuth();
   const [rows, setRows] = useState<OpenRow[]>([]);
@@ -17,7 +19,7 @@ export function useOpenInvoices() {
   const load = useCallback(async () => {
     if (!user) { setRows([]); setLoading(false); return; }
     const { data } = await db.from('documents')
-      .select('id,number,gross,due_date,status,recipient_company,recipient_name,doc_date,kind')
+      .select('id,user_id,number,gross,net,vat,paid_amount,due_date,status,recipient_company,recipient_name,doc_date,kind')
       .in('kind', ['invoice', 'partial_invoice', 'final_invoice'])
       .not('status', 'in', '("paid","cancelled")')
       .order('due_date', { ascending: true })
@@ -36,8 +38,9 @@ export function useOpenInvoices() {
     overdue,
     openCount: rows.length,
     overdueCount: overdue.length,
-    openSum: rows.reduce((a, r) => a + Number(r.gross || 0), 0),
-    overdueSum: overdue.reduce((a, r) => a + Number(r.gross || 0), 0),
+    // Offen ist, was noch fehlt – nicht der volle Rechnungsbetrag.
+    openSum: rows.reduce((a, r) => a + offen(r), 0),
+    overdueSum: overdue.reduce((a, r) => a + offen(r), 0),
     isLoading,
     reload: load,
   };

@@ -2,8 +2,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { buildDocumentPdf, documentFileName, epcQr } from '@/lib/documentPdf';
 import { sendDocumentMail } from '@/lib/sendMail';
-import type { BillingDocument, CompanySettings, DocumentItem } from '@/types/billing';
-import { eur, fmtDate } from '@/types/billing';
+import type { BillingDocument, CompanySettings, DocumentItem, Payment } from '@/types/billing';
+import { eur, fmtDate, openAmount } from '@/types/billing';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -13,31 +13,90 @@ const addMonths = (d: string, n: number) => { const x = new Date(d); x.setMonth(
 
 /**
  * Zahlung erfassen – auch Teilzahlungen. Status wird automatisch gesetzt:
- * voll bezahlt → 'paid', teilweise → 'partly_paid'.
+ * voll bezahlt → 'paid', teilweise → 'partly_paid'. Barzahlungen landen
+ * zusätzlich im Kassabuch, weil sie dort ohnehin hingehören.
  */
 export async function addPayment(
   doc: BillingDocument,
   amount: number,
   on = new Date().toISOString().slice(0, 10),
   method = 'Überweisung',
+  note: string | null = null,
 ): Promise<boolean> {
   const amt = Math.round((Number(amount) || 0) * 100) / 100;
   if (amt <= 0) { toast.error('Betrag fehlt'); return false; }
+  // Listen-Zeilen tragen nicht immer user_id – dann vom eingeloggten Nutzer nehmen.
+  const userId = doc.user_id || (await supabase.auth.getUser()).data.user?.id;
   const { error: pErr } = await db.from('payments')
-    .insert({ user_id: doc.user_id, document_id: doc.id, amount: amt, paid_on: on, method });
+    .insert({ user_id: userId, document_id: doc.id, amount: amt, paid_on: on, method, note: note || null });
   if (pErr) { toast.error('Zahlung konnte nicht gespeichert werden: ' + pErr.message); return false; }
 
+  if (method === 'Bar') {
+    // Bareingang gehört ins Kassabuch – gleich mit Beleg-Bezug, damit der
+    // Steuerberater die Zahlung der Rechnung zuordnen kann.
+    const rate = Number(doc.net) > 0 && Number(doc.vat) >= 0 ? Math.round((Number(doc.vat) / Number(doc.net)) * 100) : 20;
+    const net = Math.round((amt / (1 + rate / 100)) * 100) / 100;
+    await db.from('cash_book').insert({
+      user_id: userId, entry_date: on, direction: 'in', gross: amt, net,
+      vat: Math.round((amt - net) * 100) / 100, vat_rate: rate,
+      description: `Zahlung zu Rechnung ${doc.number || ''}`.trim() + (doc.recipient_company || doc.recipient_name ? ` – ${doc.recipient_company || doc.recipient_name}` : ''),
+      receipt_no: doc.number, document_id: doc.id, payment_method: 'Bar',
+    });
+  }
+
+  const ok = await recomputePaid(doc.id, on, method);
+  if (!ok) return false;
   const paid = Math.round(((Number(doc.paid_amount) || 0) + amt) * 100) / 100;
   const full = paid >= Math.round(Number(doc.gross) * 100) / 100 - 0.01;
-  const { error } = await db.from('documents').update({
-    paid_amount: paid,
-    status: full ? 'paid' : 'partly_paid',
-    paid_at: full ? on : null,
-    payment_method: method,
-  }).eq('id', doc.id);
-  if (error) { toast.error('Status konnte nicht gesetzt werden'); return false; }
-  toast.success(full ? `${doc.number} vollständig bezahlt` : `Teilzahlung ${amt.toFixed(2)} € erfasst – offen: ${(Number(doc.gross) - paid).toFixed(2)} €`);
+  toast.success(full ? `${doc.number} vollständig bezahlt` : `Teilzahlung ${eur(amt)} erfasst – offen: ${eur(Number(doc.gross) - paid)}`);
   return true;
+}
+
+/**
+ * Bezahlt-Stand aus den Zahlungen neu ableiten. Die Zahlungen sind die
+ * Wahrheit; paid_amount und Status am Beleg sind nur deren Abbild.
+ */
+async function recomputePaid(docId: string, lastOn?: string, lastMethod?: string): Promise<boolean> {
+  const [{ data: pays }, { data: d }] = await Promise.all([
+    db.from('payments').select('amount,paid_on,method').eq('document_id', docId).order('paid_on', { ascending: true }),
+    db.from('documents').select('gross,status').eq('id', docId).single(),
+  ]);
+  if (!d) return false;
+  const paid = Math.round(((pays || []) as Payment[]).reduce((a, p) => a + Number(p.amount || 0), 0) * 100) / 100;
+  const full = paid >= Math.round(Number(d.gross) * 100) / 100 - 0.01;
+  const last = ((pays || []) as Payment[]).at(-1);
+  // Storniert bleibt storniert – auch wenn irgendwann Geld dazu gebucht wurde.
+  const status = d.status === 'cancelled' ? 'cancelled'
+    : full ? 'paid'
+    : paid > 0 ? 'partly_paid'
+    : ['paid', 'partly_paid'].includes(d.status) ? 'sent' : d.status; // ohne Zahlung: Zustand vor dem Geldeingang
+  const { error } = await db.from('documents').update({
+    paid_amount: paid, status,
+    paid_at: full ? (lastOn || last?.paid_on || null) : null,
+    payment_method: lastMethod || last?.method || null,
+  }).eq('id', docId);
+  if (error) { toast.error('Status konnte nicht gesetzt werden'); return false; }
+  return true;
+}
+
+/** Zahlungen zu einem Beleg – älteste zuerst. */
+export async function loadPayments(docId: string): Promise<Payment[]> {
+  const { data } = await db.from('payments').select('*').eq('document_id', docId).order('paid_on', { ascending: true });
+  return (data as Payment[]) || [];
+}
+
+/** Falsch erfasste Zahlung wieder entfernen – der Beleg wird danach neu berechnet. */
+export async function removePayment(payment: Payment): Promise<boolean> {
+  const { error } = await db.from('payments').delete().eq('id', payment.id);
+  if (error) { toast.error('Zahlung konnte nicht entfernt werden'); return false; }
+  // Der zugehörige Kassabuch-Eintrag geht mit – sonst stünde Geld in der Kassa, das nie kam.
+  if (payment.method === 'Bar') {
+    await db.from('cash_book').delete().eq('document_id', payment.document_id)
+      .eq('entry_date', payment.paid_on).eq('gross', payment.amount).eq('payment_method', 'Bar');
+  }
+  const ok = await recomputePaid(payment.document_id);
+  if (ok) toast.success('Zahlung entfernt');
+  return ok;
 }
 
 /** Schnellaktion: komplette offene Restsumme als bezahlt buchen. */
@@ -108,8 +167,8 @@ export async function sendReminder(
 
   const anrede = doc.recipient_company || doc.recipient_name || 'Damen und Herren';
   const text = level === 1
-    ? `Guten Tag ${anrede},\n\nunsere Rechnung ${doc.number} vom ${fmtDate(doc.doc_date)} über ${eur(Number(doc.gross))} ist seit ${fmtDate(doc.due_date)} fällig und bei uns noch nicht eingelangt.\n\nVermutlich ist das nur übersehen worden – wir ersuchen höflich um Überweisung. Die Rechnung liegt nochmals bei.\n\nSollte die Zahlung bereits erfolgt sein, betrachten Sie dieses Schreiben bitte als gegenstandslos.\n\nBeste Grüße\n${settings?.company_name || 'ePower GmbH'}`
-    : `Guten Tag ${anrede},\n\ntrotz unserer Zahlungserinnerung ist die Rechnung ${doc.number} vom ${fmtDate(doc.doc_date)} über ${eur(Number(doc.gross))} weiterhin offen.\n\nWir ersuchen um Überweisung binnen 7 Tagen. Die Rechnung liegt nochmals bei.\n\nBeste Grüße\n${settings?.company_name || 'ePower GmbH'}`;
+    ? `Guten Tag ${anrede},\n\nunsere Rechnung ${doc.number} vom ${fmtDate(doc.doc_date)} über ${eur(Number(doc.gross))} ist seit ${fmtDate(doc.due_date)} fällig${Number(doc.paid_amount) > 0 ? ` – davon sind noch ${eur(openAmount(doc))} offen` : ' und bei uns noch nicht eingelangt'}.\n\nVermutlich ist das nur übersehen worden – wir ersuchen höflich um Überweisung. Die Rechnung liegt nochmals bei.\n\nSollte die Zahlung bereits erfolgt sein, betrachten Sie dieses Schreiben bitte als gegenstandslos.\n\nBeste Grüße\n${settings?.company_name || 'ePower GmbH'}`
+    : `Guten Tag ${anrede},\n\ntrotz unserer Zahlungserinnerung ist die Rechnung ${doc.number} vom ${fmtDate(doc.doc_date)} ${Number(doc.paid_amount) > 0 ? `mit einem Restbetrag von ${eur(openAmount(doc))}` : `über ${eur(Number(doc.gross))}`} weiterhin offen.\n\nWir ersuchen um Überweisung binnen 7 Tagen. Die Rechnung liegt nochmals bei.\n\nBeste Grüße\n${settings?.company_name || 'ePower GmbH'}`;
 
   const ok = await sendDocumentMail({
     to,

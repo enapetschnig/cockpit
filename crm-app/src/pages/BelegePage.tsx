@@ -6,8 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useDocuments } from '@/hooks/useBilling';
-import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, type DocKind, type DocStatus } from '@/types/billing';
-import { FileText, Plus, Search, Receipt, Link2 } from 'lucide-react';
+import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
+import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, openAmount, type BillingDocument, type DocKind, type DocStatus } from '@/types/billing';
+import { FileText, Plus, Search, Receipt, Link2, Wallet } from 'lucide-react';
 
 const STATUS_STYLE: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -22,7 +23,8 @@ const STATUS_STYLE: Record<string, string> = {
 
 export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   const kinds: DocKind[] = mode === 'offer' ? ['offer'] : ['invoice', 'partial_invoice', 'final_invoice', 'credit_note'];
-  const { documents, isLoading } = useDocuments(kinds);
+  const { documents, isLoading, reload } = useDocuments(kinds);
+  const [zahlung, setZahlung] = useState<BillingDocument | null>(null);
   const [sp, setSp] = useSearchParams();
   const [q, setQ] = useState('');
   // Rechnungen starten mit den OFFENEN Posten – genau das will man zuerst sehen.
@@ -50,7 +52,7 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
     const open = list.filter((d) => !['paid', 'cancelled', 'rejected'].includes(d.status));
     return {
       total: list.reduce((a, d) => a + Number(d.gross || 0), 0),
-      open: open.reduce((a, d) => a + Number(d.gross || 0), 0),
+      open: open.reduce((a, d) => a + openAmount(d), 0),
       openCount: open.length,
     };
   }, [list]);
@@ -144,7 +146,11 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="font-semibold">{eur(Number(d.gross))}</div>
+                    <div className="font-semibold">
+                      {d.status === 'partly_paid'
+                        ? <>{eur(openAmount(d))} <span className="text-[10px] text-muted-foreground font-normal">offen von {eur(Number(d.gross))}</span></>
+                        : eur(Number(d.gross))}
+                    </div>
                     <div className="text-xs text-muted-foreground">
                       {isOverdue(d)
                         ? <span className="text-red-600 font-semibold">{daysLate(d.due_date)} Tage überfällig</span>
@@ -156,12 +162,19 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
                   <span className={`text-[11px] font-semibold px-2 py-1 rounded-md shrink-0 ${STATUS_STYLE[d.status] || ''}`}>
                     {DOC_STATUS_LABEL[d.status] || d.status}
                   </span>
+                  {mode === 'invoice' && !['paid', 'cancelled', 'rejected'].includes(d.status) && d.kind !== 'credit_note' && (
+                    <Button size="sm" variant="outline" className="h-7 gap-1 text-xs shrink-0" title="Zahlung erfassen"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZahlung(d); }}>
+                      <Wallet className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Zahlung</span>
+                    </Button>
+                  )}
                 </Card>
               </Link>
             ))}
           </div>
         )}
       </main>
+      <ZahlungDialog doc={zahlung} open={!!zahlung} onOpenChange={(o) => !o && setZahlung(null)} onChanged={reload} />
     </div>
   );
 }

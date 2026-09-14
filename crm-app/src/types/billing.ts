@@ -260,6 +260,25 @@ export function computeTotals(
   return { net, vat, gross: round2(net + vat), byRate };
 }
 
+/** Was von einer Rechnung noch zu zahlen ist – brutto minus bereits eingegangener Zahlungen. */
+export const openAmount = (d: Pick<BillingDocument, 'gross' | 'paid_amount' | 'status'>): number => {
+  if (['paid', 'cancelled', 'rejected'].includes(d.status)) return 0;
+  return Math.max(0, round2(Number(d.gross || 0) - Number(d.paid_amount || 0)));
+};
+
+export interface Payment {
+  id: string;
+  user_id: string;
+  document_id: string;
+  amount: number;
+  paid_on: string;
+  method: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export const PAYMENT_METHODS = ['Überweisung', 'Bar', 'Karte', 'PayPal', 'Sonstiges'] as const;
+
 export const eur = (n: number) =>
   (Number(n) || 0).toLocaleString('de-AT', { style: 'currency', currency: 'EUR' });
 

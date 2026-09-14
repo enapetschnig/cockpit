@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BillingNav } from '@/components/billing/BillingNav';
 import { OffeneAuftraege } from '@/components/OffeneAuftraege';
@@ -8,7 +8,8 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useDocuments, useCompanySettings } from '@/hooks/useBilling';
 import { markPaid, repeatForNextMonth, sendReminder } from '@/hooks/useDocumentActions';
-import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, type BillingDocument } from '@/types/billing';
+import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
+import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, openAmount, type BillingDocument } from '@/types/billing';
 import {
   AlertTriangle, ArrowRight, Clock, FileText, Plus, Receipt, TrendingUp, Wallet, CheckCircle2, Check, BellRing, RefreshCw,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ export default function BuchhaltungPage() {
   const { settings } = useCompanySettings();
   const { documents: offers } = useDocuments(['offer']);
   const navigate = useNavigate();
+  const [zahlung, setZahlung] = useState<BillingDocument | null>(null);
 
   const s = useMemo(() => {
     const year = new Date().getFullYear();
@@ -52,8 +54,9 @@ export default function BuchhaltungPage() {
     return {
       yearSum: thisYear.reduce((a, d) => a + Number(d.gross || 0), 0),
       monthSum: thisYear.filter((d) => d.doc_date?.startsWith(month)).reduce((a, d) => a + Number(d.gross || 0), 0),
-      open, openSum: open.reduce((a, d) => a + Number(d.gross || 0), 0),
-      late, lateSum: late.reduce((a, d) => a + Number(d.gross || 0), 0),
+      // Offen = was noch fehlt; Teilzahlungen sind schon abgezogen.
+      open, openSum: open.reduce((a, d) => a + openAmount(d), 0),
+      late, lateSum: late.reduce((a, d) => a + openAmount(d), 0),
       openOffers, offerSum: openOffers.reduce((a, d) => a + Number(d.gross || 0), 0),
       recent: [...invoices].slice(0, 6),
       year,
@@ -79,7 +82,11 @@ export default function BuchhaltungPage() {
           </Badge>
         )}
         <div className="text-right shrink-0">
-          <div className="font-semibold text-sm">{eur(Number(d.gross))}</div>
+          <div className="font-semibold text-sm">
+            {isOpen(d) && Number(d.paid_amount) > 0
+              ? <>{eur(openAmount(d))} <span className="text-[10px] text-muted-foreground font-normal">von {eur(Number(d.gross))}</span></>
+              : eur(Number(d.gross))}
+          </div>
           <div className="text-[11px] text-muted-foreground">{DOC_STATUS_LABEL[d.status]}</div>
         </div>
       </div>
@@ -89,6 +96,10 @@ export default function BuchhaltungPage() {
         <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
           onClick={async (e) => { e.preventDefault(); if (await markPaid(d)) reload(); }}>
           <Check className="w-3 h-3" /> bezahlt
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
+          onClick={(e) => { e.preventDefault(); setZahlung(d); }}>
+          <Wallet className="w-3 h-3" /> Teilzahlung
         </Button>
         <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
           onClick={async (e) => { e.preventDefault(); await sendReminder(d, settings, 1); reload(); }}>
@@ -181,6 +192,7 @@ export default function BuchhaltungPage() {
           </div>
         )}
       </main>
+      <ZahlungDialog doc={zahlung} open={!!zahlung} onOpenChange={(o) => !o && setZahlung(null)} onChanged={reload} />
     </div>
   );
 }
