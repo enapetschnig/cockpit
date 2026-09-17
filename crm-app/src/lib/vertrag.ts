@@ -40,6 +40,8 @@ export interface Contract {
   first_net: number;
   rest_terms: string | null;
   support_months: number;
+  /** Wartungsvertrag ab dem 2. Jahr, netto je Monat. */
+  maintenance_monthly: number;
   extra_terms: string | null;
   text_frozen: VertragsText | null;
   text_hash: string | null;
@@ -98,6 +100,7 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
   const erste = round2(Math.min(Number(v.first_net) || 0, gesamt));
   const rest = round2(gesamt - erste);
   const monate = Number(v.support_months) || 12;
+  const wartung = round2(Number(v.maintenance_monthly ?? 50) || 0);
   const partner = (v.party_company || v.party_name || 'dem Auftraggeber').trim();
   const angebot = v.offer_number
     ? `laut Angebot ${v.offer_number}${v.offer_date ? ` vom ${datum(v.offer_date)}` : ''}`
@@ -132,7 +135,10 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
     body:
       `Ab Übergabe der Zugänge sind Weiterentwicklung und Support für ${monate === 12 ? 'ein Jahr' : `${monate} Monate`} im Preis enthalten: ` +
       `neue Funktionen und Anpassungen, wenn sich die Abläufe im Betrieb ändern, sowie persönliche Hilfe bei Fragen – ohne Zusatzkosten. ` +
-      `Danach kann die Betreuung auf Wunsch verlängert werden; die Software bleibt auch ohne Verlängerung uneingeschränkt nutzbar.`,
+      (wartung > 0
+        ? `Danach bieten wir einen Wartungsvertrag an: Für ${eurLang(wartung)} netto im Monat (Abrechnung jährlich) werden Änderungen und Wünsche ` +
+          `weiterhin umgesetzt und das Hosting übernommen. Ohne Wartungsvertrag bleibt die Software nutzbar; Hosting und Anpassungen sind dann gesondert zu vereinbaren.`
+        : `Danach kann die Betreuung auf Wunsch verlängert werden; die Software bleibt auch ohne Verlängerung uneingeschränkt nutzbar.`),
   });
 
   abschnitte.push({

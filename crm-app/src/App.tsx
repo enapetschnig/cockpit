@@ -24,6 +24,7 @@ import WuenschePage from './pages/WuenschePage';
 import VertraegePage from './pages/VertraegePage';
 import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
+import WartungPage from './pages/WartungPage';
 
 const queryClient = new QueryClient();
 
@@ -131,6 +132,7 @@ const App = () => (
           <Route path="/wuensche" element={<ProtectedRoute><WuenschePage /></ProtectedRoute>} />
           <Route path="/vertraege" element={<ProtectedRoute><VertraegePage /></ProtectedRoute>} />
           <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
+          <Route path="/wartung" element={<ProtectedRoute><WartungPage /></ProtectedRoute>} />
           {/* Öffentlich: der Kunde kommt nur mit seinem Link hierher, ohne Login. */}
           <Route path="/unterschreiben/:token" element={<Unterschreiben />} />
           <Route path="*" element={<NotFound />} />

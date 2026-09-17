@@ -45,7 +45,7 @@ export default function VertragEditor() {
   const { contract: loaded, isLoading, reload } = useContract(isNew ? undefined : id);
 
   const [v, setV] = useState<Partial<Contract>>({
-    status: 'draft', support_months: 12, rest_terms: DEFAULT_REST_TERMS, party_country: 'Österreich', total_net: 0, first_net: 0,
+    status: 'draft', support_months: 12, maintenance_monthly: 50, rest_terms: DEFAULT_REST_TERMS, party_country: 'Österreich', total_net: 0, first_net: 0,
   });
   const [vertreter, setVertreter] = useState(() => {
     try { return localStorage.getItem(VERTRETER_KEY) || 'Christoph Napetschnig'; } catch { return 'Christoph Napetschnig'; }
@@ -304,7 +304,11 @@ export default function VertragEditor() {
             )}
             <div className="grid grid-cols-2 gap-2">
               {feld('Betreuung inklusive (Monate)', 'support_months', 'number')}
+              {feld('Wartung ab 2. Jahr (€/Monat netto)', 'maintenance_monthly', 'number')}
             </div>
+            <p className="text-[11px] text-muted-foreground -mt-1">
+              Der Wartungsvertrag steht in Punkt 3: Änderungen und Wünsche werden weiter umgesetzt, Hosting übernommen, jährlich abgerechnet. 0 = Absatz weglassen.
+            </p>
             <div>
               <Label className="text-[11px] text-muted-foreground">Besondere Vereinbarungen (optional)</Label>
               <Textarea rows={2} value={v.extra_terms || ''} disabled={!editierbar} onChange={(e) => set({ extra_terms: e.target.value })}
