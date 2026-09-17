@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useLeads } from '@/hooks/useLeads';
 import { Header } from '@/components/Header';
 import { OffeneAuftraege } from '@/components/OffeneAuftraege';
@@ -19,6 +20,12 @@ const Index = () => {
   const { leads, addLead, updateLead, deleteLead, addContactLog, deleteContactLog } = useLeads();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  // Link aus dem Telegram-Ping (?lead=…): den Lead direkt aufmachen, sobald er geladen ist.
+  const [sp, setSp] = useSearchParams();
+  useEffect(() => {
+    const id = sp.get('lead');
+    if (id && leads.some((l) => l.id === id)) { setSelectedLeadId(id); setSp({}, { replace: true }); }
+  }, [sp, leads, setSp]);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [showUnqualified, setShowUnqualified] = useState(false);
 
