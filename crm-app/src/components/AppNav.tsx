@@ -1,9 +1,8 @@
 /**
  * DIE Navigation der App – eine einzige, überall gleiche Kopfzeile.
  *
- * Vorher hatte die App zwei Gesichter: die CRM-Seiten einen Kopf, die
- * Buchhaltung einen anderen, mit anderen Punkten in anderer Reihenfolge.
- * Jetzt: sechs Hauptbereiche, alles Seltenere unter „Mehr", Abmelden auch.
+ * Oben nur das Tägliche: CRM, Buchhaltung, Angebote, Rechnungen, Wünsche.
+ * Alles andere unter „Mehr", in Gruppen sortiert, damit man es findet.
  *
  * Zähler zeigen, wo Arbeit wartet: überfällige Rechnungen (rot) an der
  * Buchhaltung, offene Wünsche (blau) an den Wünschen.
@@ -12,7 +11,7 @@ import { ReactNode, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
@@ -25,24 +24,31 @@ import {
 } from 'lucide-react';
 
 const HAUPT = [
-  { to: '/', label: 'Pipeline', icon: LayoutGrid },
+  { to: '/', label: 'CRM', icon: LayoutGrid },
   { to: '/buchhaltung', label: 'Buchhaltung', icon: Wallet },
   { to: '/angebote-rechnung', label: 'Angebote', icon: FileText },
   { to: '/rechnungen', label: 'Rechnungen', icon: Receipt },
-  { to: '/kunden', label: 'Kunden', icon: Users },
   { to: '/wuensche', label: 'Wünsche', icon: MessageSquare },
 ];
 
-const MEHR = [
-  { to: '/vertraege', label: 'Verträge', icon: FileSignature },
-  { to: '/wartung', label: 'Wartungsverträge', icon: Wrench },
-  { to: '/kennzahlen', label: 'Kennzahlen', icon: BarChart3 },
-  { to: '/kassabuch', label: 'Kassabuch', icon: BookOpen },
-  { to: '/archiv', label: 'Archiv', icon: Archive },
-  { to: '/export', label: 'Export für den Steuerberater', icon: Package },
-  { to: '/auftragsvolumen', label: 'Auftragsvolumen', icon: TrendingUp },
-  { to: '/angebote', label: 'Etiketten', icon: Tag },
-  { to: '/firma', label: 'Firmendaten', icon: Settings },
+/** „Mehr" – in Gruppen, damit man nicht sucht. */
+const MEHR: { titel: string; eintraege: { to: string; label: string; icon: typeof Users }[] }[] = [
+  { titel: 'Verkauf', eintraege: [
+    { to: '/vertraege', label: 'Verträge', icon: FileSignature },
+    { to: '/wartung', label: 'Wartungsverträge', icon: Wrench },
+    { to: '/kunden', label: 'Kunden', icon: Users },
+    { to: '/kennzahlen', label: 'Kennzahlen', icon: BarChart3 },
+    { to: '/auftragsvolumen', label: 'Auftragsvolumen', icon: TrendingUp },
+  ] },
+  { titel: 'Buchhaltung', eintraege: [
+    { to: '/kassabuch', label: 'Kassabuch', icon: BookOpen },
+    { to: '/archiv', label: 'Archiv', icon: Archive },
+    { to: '/export', label: 'Export für den Steuerberater', icon: Package },
+  ] },
+  { titel: 'Einstellungen', eintraege: [
+    { to: '/firma', label: 'Firmendaten', icon: Settings },
+    { to: '/angebote', label: 'Etiketten', icon: Tag },
+  ] },
 ];
 
 /** Aktiv = genau diese Seite oder eine Unterseite davon. */
@@ -66,12 +72,12 @@ export function AppNav({ children }: { children?: ReactNode }) {
   const { overdueCount } = useOpenInvoices();
   const { anzahl: offeneWuensche } = useOffeneWuensche();
   const [mehrOffen, setMehrOffen] = useState(false);
-  const mehrAktiv = MEHR.some((m) => aktiv(pathname, m.to));
+  const mehrAktiv = MEHR.some((g) => g.eintraege.some((m) => aktiv(pathname, m.to)));
 
   return (
     <header className="bg-card border-b border-border sticky top-0 z-30">
       <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center gap-3">
-        <Link to="/" className="flex items-center gap-2 shrink-0" aria-label="Zur Pipeline">
+        <Link to="/" className="flex items-center gap-2 shrink-0" aria-label="Zum CRM">
           <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary text-primary-foreground">
             <Zap className="w-4 h-4" />
           </div>
@@ -100,17 +106,22 @@ export function AppNav({ children }: { children?: ReactNode }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64">
-              {MEHR.map(({ to, label, icon: Icon }) => (
-                <DropdownMenuItem key={to} asChild className={aktiv(pathname, to) ? 'bg-secondary' : ''}>
-                  <Link to={to} className="gap-2 cursor-pointer">
-                    <Icon className="w-4 h-4 text-muted-foreground" /> {label}
-                  </Link>
-                </DropdownMenuItem>
+              {MEHR.map((g, gi) => (
+                <div key={g.titel}>
+                  {gi > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">{g.titel}</DropdownMenuLabel>
+                  {g.eintraege.map(({ to, label, icon: Icon }) => (
+                    <DropdownMenuItem key={to} asChild className={aktiv(pathname, to) ? 'bg-secondary' : ''}>
+                      <Link to={to} className="gap-2 cursor-pointer">
+                        <Icon className="w-4 h-4 text-muted-foreground" /> {label}
+                      </Link>
+                    </DropdownMenuItem>
+                  ))}
+                </div>
               ))}
               <DropdownMenuSeparator />
-              {/* Werbeanzeigen liegen im Cockpit (eigene App), nicht hier –
-                  deshalb als direkter Link auf die Seite statt nur auf die
-                  Startseite des Cockpits. */}
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">Cockpit</DropdownMenuLabel>
+              {/* Werbeanzeigen liegen im Cockpit (eigene App), nicht hier. */}
               <DropdownMenuItem asChild>
                 <a href="https://cockpit-flax-tau.vercel.app/werbung" target="_blank" rel="noreferrer" className="gap-2 cursor-pointer">
                   <Megaphone className="w-4 h-4 text-muted-foreground" /> Werbeanzeigen

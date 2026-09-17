@@ -167,6 +167,8 @@ export interface CompanySettings {
   invoice_outro: string | null;
   small_business: boolean;
   prices_include_vat: boolean; // true = Preise sind Bruttopreise (wie in den bisherigen Belegen)
+  /** Vorlage für die Position der Wartungs-Jahresrechnung. */
+  wartung_text?: string | null;
 }
 
 export interface CashBookEntry {

@@ -27,8 +27,8 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   const [zahlung, setZahlung] = useState<BillingDocument | null>(null);
   const [sp, setSp] = useSearchParams();
   const [q, setQ] = useState('');
-  // Rechnungen starten mit den OFFENEN Posten – genau das will man zuerst sehen.
-  const initial = (sp.get('f') as 'offen' | 'overdue' | 'alle') || (mode === 'invoice' ? 'offen' : 'alle');
+  // Alle Belege zuerst – auf „offen" kommt man über die Kacheln in der Buchhaltung (?f=offen).
+  const initial = (sp.get('f') as 'offen' | 'overdue' | 'alle') || 'alle';
   const [view, setView] = useState<'offen' | 'overdue' | 'alle'>(initial);
   const [status, setStatus] = useState<DocStatus | 'alle'>('alle');
   const navigate = useNavigate();

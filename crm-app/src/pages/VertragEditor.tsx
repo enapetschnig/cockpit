@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SignaturePad } from '@/components/SignaturePad';
-import { VertragAnsicht } from '@/components/VertragAnsicht';
+import { VertragAnsicht, signerZuUnterschrift } from '@/components/VertragAnsicht';
 import { useAuth } from '@/hooks/useAuth';
 import { useCompanySettings } from '@/hooks/useBilling';
 import { deleteContract, reserveContractNumber, saveContract, useContract } from '@/hooks/useContracts';
@@ -24,11 +24,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { sendDocumentMail } from '@/lib/sendMail';
 import { buildContractPdf, contractFileName } from '@/lib/contractPdf';
 import {
-  CONTRACT_STATUS_LABEL, DEFAULT_REST_TERMS, neuerToken, signLink, textHash, vertragsText,
-  type Contract, type VertragsText,
+  CONTRACT_STATUS_LABEL, DEFAULT_REST_TERMS, neuerToken, signLink, signerAusName, textHash, vertragsText,
+  type Contract, type Signer, type VertragsText,
 } from '@/lib/vertrag';
 import { eur, round2 } from '@/types/billing';
-import { ArrowLeft, Check, Copy, Download, FileSignature, Link2, Mail, MessageCircle, RefreshCw, Save, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Download, FileSignature, Link2, Mail, MessageCircle, RefreshCw, Save, Trash2, Undo2, Plus, X, RotateCcw } from 'lucide-react';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -68,9 +68,10 @@ export default function VertragEditor() {
       const { data: d } = await db.from('documents').select('*').eq('id', angebot).maybeSingle();
       if (!d) return;
       const { data: items } = await db.from('document_items').select('name,description,is_heading').eq('document_id', angebot).order('position');
+      // Nur die Beschreibungen – die Positionsnamen sind meist „Entwicklung Ihrer …" und sagen nichts über Funktionen.
       const umfang = ((items || []) as { name: string; description: string | null; is_heading: boolean }[])
-        .filter((i) => !i.is_heading)
-        .map((i) => [i.name, i.description].filter(Boolean).join(' – '))
+        .filter((i) => !i.is_heading && i.description)
+        .map((i) => i.description!.replace(/^alle gewünschten funktionen:\s*/i, '').trim())
         .join('; ');
       const net = round2(Number(d.net) || 0);
       set({
@@ -79,6 +80,7 @@ export default function VertragEditor() {
         party_zip: d.recipient_zip, party_city: d.recipient_city, party_country: d.recipient_country || 'Österreich',
         party_uid: d.recipient_uid, party_email: d.recipient_email,
         title: d.title, scope: umfang, total_net: net, first_net: round2(net / 2),
+        signers: signerAusName(d.recipient_name),
       });
       setMailTo(d.recipient_email || '');
     })();
@@ -88,6 +90,10 @@ export default function VertragEditor() {
     company_name: settings?.company_name || 'ePower GmbH', street: settings?.street, postal_code: settings?.postal_code,
     city: settings?.city, uid_number: settings?.uid_number, firmenbuch: settings?.firmenbuch, vertreter,
   }), [settings, vertreter]);
+
+  // Unterzeichner auf Kundenseite – ohne Angabe aus dem Ansprechpartner abgeleitet.
+  const signers: Signer[] = (v.signers && v.signers.length) ? v.signers : signerAusName(v.party_name);
+  const setSigners = (s: Signer[]) => set({ signers: s });
 
   const status = (v.status || 'draft') as Contract['status'];
   const editierbar = status === 'draft';
@@ -121,6 +127,7 @@ export default function VertragEditor() {
     const id = await speichern({
       status: 'signed_by_us', text_frozen: frozen, text_hash: hash,
       our_signature: sigPng, our_signed_name: vertreter, our_signed_at: jetzt,
+      signers: signers.map((x) => ({ name: x.name.trim(), rolle: x.rolle || null, signature: null, signed_at: null })),
       token: neuerToken(), token_expires_at: ablauf.toISOString(),
     });
     if (id) { setSignDialog(false); setSigPng(null); toast.success('Unterschrieben – der Link für den Kunden ist bereit'); }
@@ -131,6 +138,17 @@ export default function VertragEditor() {
     if (status !== 'signed_by_us') return;
     await speichern({ status: 'draft', text_frozen: null, text_hash: null, our_signature: null, our_signed_at: null, token: null, token_expires_at: null });
     toast.success('Wieder Entwurf – der alte Link ist ungültig');
+  };
+
+  /** Unterschriebenen Vertrag wieder öffnen: alle Unterschriften weg, Text wieder änderbar. */
+  const wiederOeffnen = async () => {
+    if (!confirm('Vertrag wieder öffnen? Alle Unterschriften (auch die des Kunden) werden entfernt, der Link wird ungültig.')) return;
+    await speichern({
+      status: 'draft', text_frozen: null, text_hash: null, our_signature: null, our_signed_at: null, token: null, token_expires_at: null,
+      customer_signature: null, customer_signed_name: null, customer_signed_at: null, signed_seen_at: null,
+      signers: signers.map((x) => ({ name: x.name, rolle: x.rolle || null, signature: null, signed_at: null })),
+    });
+    toast.success('Vertrag ist wieder ein Entwurf');
   };
 
   const linkErneuern = async () => {
@@ -148,7 +166,7 @@ export default function VertragEditor() {
     catch { toast.error('Kopieren nicht möglich – Link bitte markieren'); }
   };
   const whatsapp = () => {
-    const txt = `Guten Tag ${v.party_name || ''},\nhier der Vertrag zur Unterschrift – geht direkt am Handy:\n${link}`;
+    const txt = `Guten Tag ${signers.map((x) => x.name).filter(Boolean).join(' und ') || v.party_name || ''},\nhier der Vertrag zur Unterschrift – geht direkt am Handy:\n${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, '_blank');
   };
   const mailSenden = async () => {
@@ -160,8 +178,8 @@ export default function VertragEditor() {
       to: mailTo.trim(),
       subject: fertig ? `Unterschriebener Vertrag ${v.number || ''} – ${anbieter.company_name}` : `Vertrag ${v.number || ''} zur Unterschrift – ${anbieter.company_name}`,
       text: fertig
-        ? `Guten Tag ${v.party_name || ''},\n\nanbei der von beiden Seiten unterschriebene Vertrag ${v.number || ''} als PDF.\n\nWir freuen uns auf die Zusammenarbeit!\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`
-        : `Guten Tag ${v.party_name || ''},\n\nanbei unser Vertrag ${v.number || ''} als PDF – ich habe bereits unterschrieben.\n\nSie können ihn hier direkt am Handy oder PC unterschreiben:\n${link}\n\nDer Link ist 30 Tage gültig.\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`,
+        ? `Guten Tag ${signers.map((x) => x.name).filter(Boolean).join(' und ') || v.party_name || ''},\n\nanbei der von allen Seiten unterschriebene Vertrag ${v.number || ''} als PDF.\n\nWir freuen uns auf die Zusammenarbeit!\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`
+        : `Guten Tag ${signers.map((x) => x.name).filter(Boolean).join(' und ') || v.party_name || ''},\n\nanbei unser Vertrag ${v.number || ''} als PDF – ich habe bereits unterschrieben.\n\nSie können ihn hier direkt am Handy oder PC unterschreiben${signers.length > 1 ? ' – jeder Unterzeichner für sich, auch zu verschiedenen Zeiten' : ''}:\n${link}\n\nDer Link ist 30 Tage gültig.\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`,
       fileName: contractFileName(v as Contract),
       pdfBase64: base64,
     });
@@ -200,7 +218,7 @@ export default function VertragEditor() {
           <Download className="w-4 h-4" /> PDF
         </Button>
         {editierbar && (
-          <Button size="sm" className="gap-1" disabled={busy || !(Number(v.total_net) > 0) || !(v.party_company || v.party_name)}
+          <Button size="sm" className="gap-1" disabled={busy || !(Number(v.total_net) > 0) || !(v.party_company || v.party_name) || signers.some((x) => !x.name.trim())}
             onClick={() => setSignDialog(true)}>
             <FileSignature className="w-4 h-4" /> Jetzt unterschreiben
           </Button>
@@ -221,7 +239,10 @@ export default function VertragEditor() {
           {status === 'signed_by_us' && link && (
             <Card className="p-4 border-amber-300 bg-amber-50/60">
               <div className="font-semibold text-sm flex items-center gap-1.5 mb-1"><Link2 className="w-4 h-4" /> Link für den Kunden</div>
-              <p className="text-xs text-muted-foreground mb-2">Damit öffnet der Kunde den Vertrag und unterschreibt mit dem Finger – direkt am Handy. Gültig bis {new Date(v.token_expires_at || '').toLocaleDateString('de-AT')}.</p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Damit öffnet der Kunde den Vertrag und unterschreibt mit dem Finger – direkt am Handy. Gültig bis {new Date(v.token_expires_at || '').toLocaleDateString('de-AT')}.
+                {signers.length > 1 && <> Unterzeichner: {signers.map((x) => `${x.name}${x.signature ? ' ✓' : ''}`).join(', ')} – jeder für sich über denselben Link.</>}
+              </p>
               <div className="flex gap-1.5 mb-2">
                 <Input readOnly value={link} className="text-xs h-8" onFocus={(e) => e.currentTarget.select()} />
                 <Button size="sm" variant="outline" className="h-8 gap-1 shrink-0" onClick={kopieren}>
@@ -241,11 +262,12 @@ export default function VertragEditor() {
             <Card className="p-4 border-green-300 bg-green-50/60">
               <div className="font-semibold text-sm flex items-center gap-1.5 mb-1"><Check className="w-4 h-4 text-green-600" /> Von beiden Seiten unterschrieben</div>
               <p className="text-xs text-muted-foreground mb-2">
-                {v.customer_signed_name} am {new Date(v.customer_signed_at || '').toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })}.
+                {signers.map((x) => x.name).filter(Boolean).join(' und ')} – zuletzt am {new Date(v.customer_signed_at || '').toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })}.
               </p>
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" className="h-8 gap-1" onClick={download}><Download className="w-3.5 h-3.5" /> PDF herunterladen</Button>
                 <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setMailDialog(true)}><Mail className="w-3.5 h-3.5" /> Dem Kunden senden</Button>
+                <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={wiederOeffnen} disabled={busy}><RotateCcw className="w-3.5 h-3.5" /> Vertrag wieder öffnen</Button>
               </div>
             </Card>
           )}
@@ -263,6 +285,28 @@ export default function VertragEditor() {
               {feld('PLZ', 'party_zip')}{feld('Ort', 'party_city')}
             </div>
             {feld('UID', 'party_uid')}
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Wer unterschreibt für den Auftraggeber?</Label>
+              <div className="space-y-1.5 mt-1">
+                {signers.map((sg, i) => (
+                  <div key={i} className="flex gap-1.5">
+                    <Input className="h-8" placeholder="Vor- und Nachname" value={sg.name} disabled={!editierbar}
+                      onChange={(e) => setSigners(signers.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
+                    <Input className="h-8 w-40" placeholder="z. B. Geschäftsführer" value={sg.rolle || ''} disabled={!editierbar}
+                      onChange={(e) => setSigners(signers.map((x, k) => (k === i ? { ...x, rolle: e.target.value } : x)))} />
+                    {editierbar && signers.length > 1 && (
+                      <Button type="button" size="sm" variant="ghost" className="h-8 px-2" onClick={() => setSigners(signers.filter((_, k) => k !== i))} aria-label="Unterzeichner entfernen"><X className="w-3.5 h-3.5" /></Button>
+                    )}
+                  </div>
+                ))}
+                {editierbar && (
+                  <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setSigners([...signers, { name: '', rolle: null, signature: null, signed_at: null }])}>
+                    <Plus className="w-3.5 h-3.5" /> weiteren Unterzeichner
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">Bei zwei Geschäftsführern unterschreibt jeder für sich – auch zu verschiedenen Zeiten über denselben Link.</p>
+            </div>
           </Card>
 
           <Card className="p-4 space-y-3">
@@ -324,7 +368,7 @@ export default function VertragEditor() {
         <Card className="p-6 lg:p-8 bg-white">
           <VertragAnsicht text={text}
             links={{ png: v.our_signature || null, name: v.our_signed_name || null, wann: v.our_signed_at || null }}
-            rechts={{ png: v.customer_signature || null, name: v.customer_signed_name || null, wann: v.customer_signed_at || null }} />
+            rechts={signers.map(signerZuUnterschrift)} />
         </Card>
       </main>
 

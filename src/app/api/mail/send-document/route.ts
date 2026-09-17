@@ -24,6 +24,14 @@ function cors(origin: string | null): Record<string, string> {
   };
 }
 
+/** Zeitkonstanter Vergleich – ein Angreifer soll aus der Antwortzeit nichts lernen. */
+function secretGleich(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export async function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: cors(req.headers.get("origin")) });
 }
@@ -32,15 +40,21 @@ export async function OPTIONS(req: Request) {
 export async function POST(req: Request) {
   const h = cors(req.headers.get("origin"));
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  if (!token) return NextResponse.json({ ok: false, error: "Nicht angemeldet" }, { status: 401, headers: h });
+  // Server-zu-Server (z. B. das CRM schickt einen unterschriebenen Vertrag):
+  // statt einer Nutzersitzung reicht das gemeinsame Geheimnis im Header.
+  const secret = process.env.MAIL_SHARED_SECRET;
+  const viaSecret = !!secret && secretGleich(req.headers.get("x-mail-secret") || "", secret);
+  if (!token && !viaSecret) return NextResponse.json({ ok: false, error: "Nicht angemeldet" }, { status: 401, headers: h });
 
-  // Token gegen dasselbe Supabase-Projekt prüfen
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) return NextResponse.json({ ok: false, error: "Supabase nicht konfiguriert" }, { status: 500, headers: h });
-  const sb = createClient(url, anon, { auth: { persistSession: false } });
-  const { data: { user }, error } = await sb.auth.getUser(token);
-  if (error || !user) return NextResponse.json({ ok: false, error: "Ungültige Sitzung" }, { status: 401, headers: h });
+  if (!viaSecret) {
+    // Token gegen dasselbe Supabase-Projekt prüfen
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anon) return NextResponse.json({ ok: false, error: "Supabase nicht konfiguriert" }, { status: 500, headers: h });
+    const sb = createClient(url, anon, { auth: { persistSession: false } });
+    const { data: { user }, error } = await sb.auth.getUser(token);
+    if (error || !user) return NextResponse.json({ ok: false, error: "Ungültige Sitzung" }, { status: 401, headers: h });
+  }
 
   const b = (await req.json().catch(() => ({}))) as {
     to?: string; subject?: string; text?: string; fileName?: string; pdfBase64?: string;

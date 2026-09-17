@@ -2,7 +2,7 @@
  * Der Vertrag, wie er gelesen wird – im Editor rechts als Vorschau und auf der
  * Unterschriftsseite des Kunden. Gleiche Absätze, gleiche Reihenfolge wie im PDF.
  */
-import type { VertragsText } from '@/lib/vertrag';
+import type { Signer, VertragsText } from '@/lib/vertrag';
 
 const zeit = (iso?: string | null) => {
   if (!iso) return '';
@@ -11,22 +11,29 @@ const zeit = (iso?: string | null) => {
   return `${p(x.getDate())}.${p(x.getMonth() + 1)}.${x.getFullYear()}, ${p(x.getHours())}:${p(x.getMinutes())} Uhr`;
 };
 
-interface Unterschrift { png: string | null; name: string | null; wann: string | null }
+export interface Unterschrift { png: string | null; name: string | null; wann: string | null; rolle?: string | null }
 
-export function VertragAnsicht({ text, links, rechts, kompakt = false }: {
-  text: VertragsText; links?: Unterschrift; rechts?: Unterschrift; kompakt?: boolean;
-}) {
-  const Sig = ({ s, label }: { s?: Unterschrift; label: string }) => (
+export function Sig({ s, label }: { s?: Unterschrift; label: string }) {
+  return (
     <div>
       <div className="text-[10px] font-semibold tracking-wide text-muted-foreground mb-1">{label}</div>
       <div className="h-20 border-b border-foreground/60 flex items-end">
         {s?.png ? <img src={s.png} alt="Unterschrift" className="max-h-20 max-w-full object-contain" /> : null}
       </div>
-      <div className="text-sm mt-1">{s?.name || (s?.png ? '' : <span className="text-muted-foreground">noch nicht unterschrieben</span>)}</div>
+      <div className="text-sm mt-1">
+        {s?.name || (s?.png ? '' : <span className="text-muted-foreground">noch nicht unterschrieben</span>)}
+        {s?.rolle && <span className="text-muted-foreground"> · {s.rolle}</span>}
+      </div>
       {s?.wann && <div className="text-[10px] text-muted-foreground">elektronisch unterschrieben am {zeit(s.wann)}</div>}
     </div>
   );
+}
 
+export const signerZuUnterschrift = (s: Signer): Unterschrift => ({ png: s.signature, name: s.name, wann: s.signed_at, rolle: s.rolle ?? null });
+
+export function VertragAnsicht({ text, links, rechts, kompakt = false }: {
+  text: VertragsText; links?: Unterschrift; rechts: Unterschrift[]; kompakt?: boolean;
+}) {
   return (
     <article className={'bg-white text-[#111] ' + (kompakt ? 'text-[13px] leading-relaxed' : 'text-[15px] leading-relaxed')}>
       <h1 className={(kompakt ? 'text-lg' : 'text-2xl') + ' font-bold'}>{text.titel}</h1>
@@ -52,7 +59,7 @@ export function VertragAnsicht({ text, links, rechts, kompakt = false }: {
       <hr className="my-5" />
       <div className="grid grid-cols-2 gap-6">
         <Sig s={links} label="AUFTRAGNEHMER" />
-        <Sig s={rechts} label="AUFTRAGGEBER" />
+        {rechts.map((r, i) => <Sig key={i} s={r} label={rechts.length > 1 ? `AUFTRAGGEBER (${i + 1})` : 'AUFTRAGGEBER'} />)}
       </div>
     </article>
   );

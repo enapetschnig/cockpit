@@ -17,6 +17,26 @@ export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
   cancelled: 'Storniert',
 };
 
+export interface Signer {
+  name: string;
+  /** z. B. „Geschäftsführer" oder eine zweite Firma, die mit unterschreibt. */
+  rolle?: string | null;
+  signature: string | null;
+  signed_at: string | null;
+  ip?: string | null;
+  ua?: string | null;
+}
+
+/** Aus „Herren Thomas Wilfinger und Roman Kancz" werden zwei Unterzeichner. */
+export function signerAusName(partyName?: string | null): Signer[] {
+  const roh = (partyName || '').replace(/^(Herrn|Herr|Frau|Herren|Damen|Firma)\s+/i, '').trim();
+  const teile = roh.split(/\s+(?:und|&|\/)\s+|,\s*/).map((t) => t.trim()).filter(Boolean);
+  return (teile.length ? teile : ['']).map((name) => ({ name, signature: null, signed_at: null }));
+}
+
+export const alleUnterschrieben = (s: Signer[] | null | undefined) =>
+  !!s && s.length > 0 && s.every((x) => !!x.signature);
+
 export interface Contract {
   id: string;
   user_id: string;
@@ -51,8 +71,12 @@ export interface Contract {
   customer_signature: string | null;
   customer_signed_name: string | null;
   customer_signed_at: string | null;
+  /** Unterzeichner auf Kundenseite – jeder unterschreibt für sich, auch zu verschiedenen Zeiten. */
+  signers: Signer[];
   token: string | null;
   token_expires_at: string | null;
+  /** Wann die „unterschrieben"-Meldung am Dashboard weggeklickt wurde. */
+  signed_seen_at: string | null;
   created_at: string;
 }
 
@@ -102,9 +126,6 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
   const monate = Number(v.support_months) || 12;
   const wartung = round2(Number(v.maintenance_monthly ?? 50) || 0);
   const partner = (v.party_company || v.party_name || 'dem Auftraggeber').trim();
-  const angebot = v.offer_number
-    ? `laut Angebot ${v.offer_number}${v.offer_date ? ` vom ${datum(v.offer_date)}` : ''}`
-    : 'wie besprochen';
   const umfang = (v.scope || '').trim();
 
   const abschnitte: Abschnitt[] = [];
@@ -114,9 +135,10 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
     body:
       `${a.company_name} entwickelt für ${partner} eine eigene, individuelle Software${v.title ? ` („${v.title.trim()}")` : ''} – ` +
       `kein Baukasten-Produkt, sondern von Grund auf für den Betrieb des Auftraggebers gebaut. ` +
-      `Alle ${angebot} gewünschten Funktionen werden umgesetzt` +
-      (umfang ? `, insbesondere: ${umfang.replace(/\.\s*$/, '')}.` : '.') +
-      ` Die Software läuft auf Handy, Tablet und PC. Jeder Mitarbeiter des Auftraggebers erhält einen eigenen Zugang, ohne Lizenzgebühr je Zugang.`,
+      `Umgesetzt wird alles, was der Auftraggeber sich für seinen Betrieb wünscht – auch Funktionen, die erst während der Entwicklung dazukommen. ` +
+      (umfang ? `Dazu gehören jedenfalls: ${umfang.replace(/\.\s*$/, '')}. ` : '') +
+      (v.offer_number ? `Das Angebot ${v.offer_number}${v.offer_date ? ` vom ${datum(v.offer_date)}` : ''} ist die Grundlage für den Preis, nicht die Grenze des Umfangs. ` : '') +
+      `Die Software läuft auf Handy, Tablet und PC. Jeder Mitarbeiter des Auftraggebers erhält einen eigenen Zugang, ohne Lizenzgebühr je Zugang.`,
   });
 
   const zahlung = rest > 0.009
@@ -136,8 +158,9 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
       `Ab Übergabe der Zugänge sind Weiterentwicklung und Support für ${monate === 12 ? 'ein Jahr' : `${monate} Monate`} im Preis enthalten: ` +
       `neue Funktionen und Anpassungen, wenn sich die Abläufe im Betrieb ändern, sowie persönliche Hilfe bei Fragen – ohne Zusatzkosten. ` +
       (wartung > 0
-        ? `Danach bieten wir einen Wartungsvertrag an: Für ${eurLang(wartung)} netto im Monat (Abrechnung jährlich) werden Änderungen und Wünsche ` +
-          `weiterhin umgesetzt und das Hosting übernommen. Ohne Wartungsvertrag bleibt die Software nutzbar; Hosting und Anpassungen sind dann gesondert zu vereinbaren.`
+        ? `\n\nAb dem zweiten Jahr läuft ein Wartungsvertrag um ${eurLang(wartung)} netto im Monat, das sind ${eurLang(round2(wartung * 12))} netto im Jahr, jährlich im Voraus verrechnet. ` +
+          `Darin enthalten sind das Hosting und der Betrieb der Software sowie die laufende Umsetzung von Änderungen und neuen Wünschen – die Betreuung geht also einfach weiter. ` +
+          `Der Wartungsvertrag verlängert sich jeweils um ein Jahr und kann bis einen Monat vor Ablauf gekündigt werden; die Software bleibt auch danach nutzbar.`
         : `Danach kann die Betreuung auf Wunsch verlängert werden; die Software bleibt auch ohne Verlängerung uneingeschränkt nutzbar.`),
   });
 
@@ -166,7 +189,7 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
     heading: `${abschnitte.length + 1}. Schluss`,
     body:
       `Es gilt österreichisches Recht. Änderungen dieses Vertrags brauchen die Zustimmung beider Seiten in Textform. ` +
-      `Die elektronische Unterschrift auf dieser Seite gilt als Unterschrift beider Vertragsparteien; jede Seite erhält den unterschriebenen Vertrag als PDF.`,
+      `Die elektronische Unterschrift gilt als Unterschrift aller Vertragsparteien; jede Seite erhält den unterschriebenen Vertrag als PDF per E-Mail.`,
   });
 
   return {

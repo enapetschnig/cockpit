@@ -13,13 +13,14 @@ import { AppNav } from '@/components/AppNav';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { naechsteRechnungsnummer, saveDocument, useCompanySettings } from '@/hooks/useBilling';
 import { plusMonate, speichereWartung, useWartung, type WartungZeile, type WartungStatus } from '@/hooks/useWartung';
 import { supabase } from '@/integrations/supabase/client';
 import { eur, fmtDate, round2 } from '@/types/billing';
-import { Wrench, Receipt, AlarmClock, EyeOff, Eye, Check } from 'lucide-react';
+import { Wrench, Receipt, AlarmClock, EyeOff, Eye, Check, FileText } from 'lucide-react';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -27,9 +28,20 @@ const db = supabase as any;
 const addDays = (d: string, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
 const fmtLang = (d: string) => new Date(d).toLocaleDateString('de-AT', { month: 'long', year: 'numeric' });
 
+/** Vorlage für die Position der Jahresrechnung. Platzhalter: {software} {von} {bis} {monatlich} {jahr} */
+export const WARTUNG_TEXT_STANDARD =
+  'Wartungsvertrag Software – {von} bis {bis}\n' +
+  'Laufende Umsetzung von Änderungen und Wünschen, Support und Hosting Ihrer Software. 12 Monate à {monatlich} netto, jährlich im Voraus.';
+
+const fuelle = (vorlage: string, w: Record<string, string>) => vorlage.replace(/\{(\w+)\}/g, (_, k) => w[k] ?? '');
+
 export default function WartungPage() {
   const { user } = useAuth();
-  const { settings } = useCompanySettings();
+  const { settings, save: saveSettings } = useCompanySettings();
+  const [vorlage, setVorlage] = useState<string | null>(null);   // null = noch nicht angefasst
+  const [vorlageOffen, setVorlageOffen] = useState(false);
+  const [textEdit, setTextEdit] = useState<Record<string, string>>({});  // eigener Text je Zeile
+  const vorlageAktuell = vorlage ?? settings?.wartung_text ?? WARTUNG_TEXT_STANDARD;
   const { zeilen, faellig, isLoading, reload, heute } = useWartung();
   const navigate = useNavigate();
   const [zeigeKeine, setZeigeKeine] = useState(false);
@@ -93,12 +105,18 @@ export default function WartungPage() {
         intro_text: settings?.invoice_intro || '', outro_text: settings?.invoice_outro || '',
         service_date: von, discount_percent: 0, prices_include_vat: false,
       }, [{
-        name: `Wartungsvertrag Software – ${fmtDate(von)} bis ${fmtDate(bisAnzeige)}`,
-        description: `Laufende Umsetzung von Änderungen und Wünschen, Support und Hosting Ihrer Software. 12 Monate à ${eur(monatlich)} netto, jährlich im Voraus.`,
+        // Erste Zeile der Vorlage = Positionsname, der Rest = Beschreibung.
+        ...(() => {
+          const text = fuelle(textEdit[z.key] ?? z.vertrag?.rechnungstext ?? vorlageAktuell, {
+            software: z.software || 'Software', von: fmtDate(von), bis: fmtDate(bisAnzeige), monatlich: eur(monatlich), jahr: eur(round2(monatlich * 12)),
+          });
+          const [name, ...rest] = text.split('\n');
+          return { name: name.trim(), description: rest.join('\n').trim() || null };
+        })(),
         quantity: 12, unit: 'Monat', unit_price: monatlich, vat_rate: settings?.default_vat ?? 20, discount_percent: 0, is_heading: false,
       }], user.id, false);
       if (!docId) return;
-      await db.from('wartungsvertraege').update({ abgerechnet_bis: bis, letzte_jahresrechnung_id: docId, updated_at: new Date().toISOString() }).eq('id', wid);
+      await db.from('wartungsvertraege').update({ abgerechnet_bis: bis, letzte_jahresrechnung_id: docId, updated_at: new Date().toISOString(), ...(textEdit[z.key] !== undefined ? { rechnungstext: textEdit[z.key] || null } : {}) }).eq('id', wid);
       toast.success(`Jahresrechnung ${num} über ${eur(round2(monatlich * 12))} netto erstellt`);
       navigate(`/beleg/${docId}`);
     } finally { setBusy(null); }
@@ -124,6 +142,26 @@ export default function WartungPage() {
             {zeigeKeine ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />} {zeigeKeine ? 'Ausgeblendete verstecken' : 'Ausgeblendete zeigen'}
           </Button>
         </div>
+
+        <Card className="p-3 mb-4">
+          <button type="button" className="text-sm font-semibold flex items-center gap-1.5 w-full text-left" onClick={() => setVorlageOffen((o) => !o)}>
+            <FileText className="w-4 h-4" /> Rechnungstext für die Jahresrechnung {vorlageOffen ? '▾' : '▸'}
+          </button>
+          {vorlageOffen && (
+            <div className="mt-2">
+              <Textarea rows={3} value={vorlageAktuell} onChange={(e) => setVorlage(e.target.value)} />
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <p className="text-[11px] text-muted-foreground flex-1">
+                  Erste Zeile = Positionsname, Rest = Beschreibung. Platzhalter: {'{software} {von} {bis} {monatlich} {jahr}'}. Gilt für alle – je Kunde lässt sich der Text unten überschreiben.
+                  Die Rechnung öffnet sich danach als Entwurf mit PDF-Vorschau, dort kannst du alles noch ändern.
+                </p>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setVorlage(WARTUNG_TEXT_STANDARD)}>Standard</Button>
+                <Button size="sm" className="h-7 text-xs" disabled={vorlage === null}
+                  onClick={async () => { await saveSettings({ wartung_text: vorlageAktuell }); setVorlage(null); toast.success('Vorlage gespeichert'); }}>Vorlage speichern</Button>
+              </div>
+            </div>
+          )}
+        </Card>
 
         {isLoading ? <p className="text-muted-foreground">Rechnungen werden durchsucht …</p> : (
           <div className="space-y-2">
@@ -168,6 +206,12 @@ export default function WartungPage() {
                           <Check className="w-3.5 h-3.5" /> Speichern
                         </Button>
                       )}
+                      {z.status !== 'kein' && (
+                        <Button size="sm" variant="ghost" className="h-8 text-xs" title="Eigener Rechnungstext für diesen Kunden"
+                          onClick={() => setTextEdit((t) => (t[z.key] === undefined ? { ...t, [z.key]: z.vertrag?.rechnungstext ?? vorlageAktuell } : (() => { const c = { ...t }; delete c[z.key]; return c; })()))}>
+                          <FileText className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                       {z.status !== 'kein' ? (
                         <>
                           <Button size="sm" className="h-8 gap-1" disabled={busy === z.key} onClick={() => jahresrechnung(z)}
@@ -185,6 +229,12 @@ export default function WartungPage() {
                       )}
                     </div>
                   </div>
+                  {textEdit[z.key] !== undefined && (
+                    <div className="mt-2">
+                      <Textarea rows={3} value={textEdit[z.key]} onChange={(e) => setTextEdit((t) => ({ ...t, [z.key]: e.target.value }))} />
+                      <p className="text-[11px] text-muted-foreground mt-1">Eigener Text nur für {z.kunde} – wird mit der nächsten Jahresrechnung gespeichert. Leer = Vorlage.</p>
+                    </div>
+                  )}
                 </Card>
               );
             })}

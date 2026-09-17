@@ -45,6 +45,8 @@ export interface Wartungsvertrag {
   notizen: string | null;
   letzte_jahresrechnung_id: string | null;
   abgerechnet_bis: string | null;
+  /** Eigener Rechnungstext nur für diesen Kunden (sonst gilt die Vorlage). */
+  rechnungstext: string | null;
   created_at: string;
 }
 

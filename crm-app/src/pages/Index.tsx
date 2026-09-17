@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useLeads } from '@/hooks/useLeads';
 import { Header } from '@/components/Header';
 import { OffeneAuftraege } from '@/components/OffeneAuftraege';
+import { VertragMeldung } from '@/components/VertragMeldung';
 import { PipelineColumn } from '@/components/PipelineColumn';
 import { AddLeadDialog } from '@/components/AddLeadDialog';
 import { LeadDetailDialog } from '@/components/LeadDetailDialog';
@@ -60,6 +61,7 @@ const Index = () => {
       />
 
       <div className="flex-1 p-6 overflow-hidden flex flex-col gap-4">
+        <VertragMeldung />
         <OpenInvoicesStrip />
         <OffeneAuftraege kompakt />
         <WeeklyActivityOverview leads={leads} />

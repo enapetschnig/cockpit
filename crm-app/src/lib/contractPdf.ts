@@ -5,7 +5,7 @@
  */
 import { jsPDF } from 'jspdf';
 import { EPOWER_LOGO } from './logoData';
-import type { Contract, VertragsText } from './vertrag';
+import type { Contract, Signer, VertragsText } from './vertrag';
 
 const zeit = (iso?: string | null) => {
   if (!iso) return '';
@@ -67,23 +67,33 @@ export function buildContractPdf(v: Contract, t: VertragsText): jsPDF {
     y += 4.5;
   }
 
-  // ── Unterschriften
-  brauche(58);
+  // ── Unterschriften: links wir, rechts alle Unterzeichner des Auftraggebers
+  const signers: Signer[] = (v.signers && v.signers.length)
+    ? v.signers
+    : [{ name: v.customer_signed_name || t.partner[0] || '', signature: v.customer_signature, signed_at: v.customer_signed_at }];
+  const sigH = 24, sigW = colW - 4, blockH = sigH + 16;
+  brauche(8 + blockH * Math.max(1, Math.ceil((signers.length + 1) / 2)));
   y += 2; hr(y); y += 8;
-  setF(8, 'bold'); pdf.setTextColor(90, 90, 90);
-  pdf.text('AUFTRAGNEHMER', ML, y); pdf.text('AUFTRAGGEBER', ML + colW + 8, y); y += 3;
-  const sigH = 24, sigW = colW - 4;
-  const box = (x: number, png: string | null, name: string | null, wann: string | null) => {
-    if (png) { try { pdf.addImage(png, 'PNG', x, y, sigW, sigH); } catch { /* optional */ } }
-    pdf.setDrawColor(60, 60, 60); pdf.setLineWidth(0.3); pdf.line(x, y + sigH + 1, x + sigW, y + sigH + 1);
+  const box = (x: number, yy: number, label: string, png: string | null, name: string | null, rolle: string | null | undefined, wann: string | null) => {
+    setF(8, 'bold'); pdf.setTextColor(90, 90, 90);
+    pdf.text(label, x, yy); yy += 3;
+    if (png) { try { pdf.addImage(png, 'PNG', x, yy, sigW, sigH); } catch { /* optional */ } }
+    pdf.setDrawColor(60, 60, 60); pdf.setLineWidth(0.3); pdf.line(x, yy + sigH + 1, x + sigW, yy + sigH + 1);
     setF(9); pdf.setTextColor(0, 0, 0);
-    pdf.text(name || (png ? '' : 'noch nicht unterschrieben'), x, y + sigH + 5.5);
+    pdf.text((name || (png ? '' : 'noch nicht unterschrieben')) + (rolle ? ` · ${rolle}` : ''), x, yy + sigH + 5.5);
     setF(7.5); pdf.setTextColor(110, 110, 110);
-    if (wann) pdf.text(`elektronisch unterschrieben am ${zeit(wann)}`, x, y + sigH + 9.5);
+    if (wann) pdf.text(`elektronisch unterschrieben am ${zeit(wann)}`, x, yy + sigH + 9.5);
   };
-  box(ML, v.our_signature, v.our_signed_name || t.anbieter[0], v.our_signed_at);
-  box(ML + colW + 8, v.customer_signature, v.customer_signed_name || t.partner[0], v.customer_signed_at);
-  y += sigH + 14;
+  // Zwei Kästen je Zeile: wir zuerst, dann die Unterzeichner der Reihe nach.
+  const kaesten = [
+    { label: 'AUFTRAGNEHMER', png: v.our_signature, name: v.our_signed_name || t.anbieter[0], rolle: null as string | null, wann: v.our_signed_at },
+    ...signers.map((s, i) => ({ label: signers.length > 1 ? `AUFTRAGGEBER (${i + 1})` : 'AUFTRAGGEBER', png: s.signature, name: s.name, rolle: s.rolle, wann: s.signed_at })),
+  ];
+  kaesten.forEach((k, i) => {
+    if (i > 0 && i % 2 === 0) { y += blockH; brauche(blockH); }
+    box(i % 2 === 0 ? ML : ML + colW + 8, y, k.label, k.png, k.name, k.rolle, k.wann);
+  });
+  y += blockH;
 
   if (v.text_hash) {
     setF(6.5); pdf.setTextColor(140, 140, 140);
