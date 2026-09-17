@@ -50,7 +50,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const sig = (b.signature ?? '').toString();
     if (!TOKEN_RE.test(token)) return res.status(400).json({ error: 'Ungültiger Link' });
     if (!name) return res.status(400).json({ error: 'Bitte Namen angeben' });
-    if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig) || sig.length < 500) return res.status(400).json({ error: 'Unterschrift fehlt' });
+    // Ein leeres PNG ist ~90 Zeichen; alles Kleinere als 150 ist sicher keine Unterschrift.
+    if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig) || sig.length < 150) return res.status(400).json({ error: 'Unterschrift fehlt' });
     if (sig.length > 400_000) return res.status(413).json({ error: 'Unterschrift zu groß' });
 
     const { data: v } = await db.from('contracts').select('id,number,status,party_company,party_name,token_expires_at').eq('token', token).maybeSingle();
