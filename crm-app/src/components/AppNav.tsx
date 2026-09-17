@@ -21,7 +21,7 @@ import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 import {
   Zap, LayoutGrid, Wallet, FileText, Receipt, Users, MessageSquare,
   MoreHorizontal, BarChart3, BookOpen, Archive, Package, Tag, Settings,
-  ExternalLink, LogOut, TrendingUp, Megaphone,
+  ExternalLink, LogOut, TrendingUp, Megaphone, FileSignature,
 } from 'lucide-react';
 
 const HAUPT = [
@@ -34,6 +34,7 @@ const HAUPT = [
 ];
 
 const MEHR = [
+  { to: '/vertraege', label: 'Verträge', icon: FileSignature },
   { to: '/kennzahlen', label: 'Kennzahlen', icon: BarChart3 },
   { to: '/kassabuch', label: 'Kassabuch', icon: BookOpen },
   { to: '/archiv', label: 'Archiv', icon: Archive },

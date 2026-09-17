@@ -1,0 +1,364 @@
+/**
+ * Ein Vertrag: links die wenigen Felder, rechts der fertige Text.
+ *
+ * Ablauf: Entwurf → ich unterschreibe (Text wird eingefroren, Link entsteht)
+ * → Kunde unterschreibt über den Link → beide Unterschriften am PDF.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
+import { AppNav } from '@/components/AppNav';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { SignaturePad } from '@/components/SignaturePad';
+import { VertragAnsicht } from '@/components/VertragAnsicht';
+import { useAuth } from '@/hooks/useAuth';
+import { useCompanySettings } from '@/hooks/useBilling';
+import { deleteContract, reserveContractNumber, saveContract, useContract } from '@/hooks/useContracts';
+import { supabase } from '@/integrations/supabase/client';
+import { sendDocumentMail } from '@/lib/sendMail';
+import { buildContractPdf, contractFileName } from '@/lib/contractPdf';
+import {
+  CONTRACT_STATUS_LABEL, DEFAULT_REST_TERMS, neuerToken, signLink, textHash, vertragsText,
+  type Contract, type VertragsText,
+} from '@/lib/vertrag';
+import { eur, round2 } from '@/types/billing';
+import { ArrowLeft, Check, Copy, Download, FileSignature, Link2, Mail, MessageCircle, RefreshCw, Save, Trash2, Undo2 } from 'lucide-react';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = supabase as any;
+
+const VERTRETER_KEY = 'vertrag-vertreter';
+
+export default function VertragEditor() {
+  const { id } = useParams<{ id: string }>();
+  const isNew = !id || id === 'neu';
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { settings } = useCompanySettings();
+  const { contract: loaded, isLoading, reload } = useContract(isNew ? undefined : id);
+
+  const [v, setV] = useState<Partial<Contract>>({
+    status: 'draft', support_months: 12, rest_terms: DEFAULT_REST_TERMS, party_country: 'Österreich', total_net: 0, first_net: 0,
+  });
+  const [vertreter, setVertreter] = useState(() => {
+    try { return localStorage.getItem(VERTRETER_KEY) || 'Christoph Napetschnig'; } catch { return 'Christoph Napetschnig'; }
+  });
+  const [busy, setBusy] = useState(false);
+  const [signDialog, setSignDialog] = useState(false);
+  const [sigPng, setSigPng] = useState<string | null>(null);
+  const [mailDialog, setMailDialog] = useState(false);
+  const [mailTo, setMailTo] = useState('');
+  const [kopiert, setKopiert] = useState(false);
+  const set = (p: Partial<Contract>) => setV((x) => ({ ...x, ...p }));
+
+  useEffect(() => { if (loaded) { setV(loaded); setMailTo(loaded.party_email || ''); } }, [loaded]);
+
+  // Neu aus einem Angebot: Partner, Betrag und Umfang übernehmen.
+  useEffect(() => {
+    const angebot = sp.get('angebot');
+    if (!isNew || !angebot || !user) return;
+    (async () => {
+      const { data: d } = await db.from('documents').select('*').eq('id', angebot).maybeSingle();
+      if (!d) return;
+      const { data: items } = await db.from('document_items').select('name,description,is_heading').eq('document_id', angebot).order('position');
+      const umfang = ((items || []) as { name: string; description: string | null; is_heading: boolean }[])
+        .filter((i) => !i.is_heading)
+        .map((i) => [i.name, i.description].filter(Boolean).join(' – '))
+        .join('; ');
+      const net = round2(Number(d.net) || 0);
+      set({
+        document_id: d.id, offer_number: d.number, offer_date: d.doc_date, customer_id: d.customer_id,
+        party_company: d.recipient_company, party_name: d.recipient_name, party_street: d.recipient_street,
+        party_zip: d.recipient_zip, party_city: d.recipient_city, party_country: d.recipient_country || 'Österreich',
+        party_uid: d.recipient_uid, party_email: d.recipient_email,
+        title: d.title, scope: umfang, total_net: net, first_net: round2(net / 2),
+      });
+      setMailTo(d.recipient_email || '');
+    })();
+  }, [isNew, sp, user]);
+
+  const anbieter = useMemo(() => ({
+    company_name: settings?.company_name || 'ePower GmbH', street: settings?.street, postal_code: settings?.postal_code,
+    city: settings?.city, uid_number: settings?.uid_number, firmenbuch: settings?.firmenbuch, vertreter,
+  }), [settings, vertreter]);
+
+  const status = (v.status || 'draft') as Contract['status'];
+  const editierbar = status === 'draft';
+  // Ab unserer Unterschrift gilt nur noch der eingefrorene Text.
+  const text: VertragsText = useMemo(
+    () => (!editierbar && v.text_frozen) ? v.text_frozen : vertragsText(v, anbieter),
+    [v, anbieter, editierbar],
+  );
+
+  const speichern = async (extra: Partial<Contract> = {}): Promise<string | null> => {
+    if (!user) return null;
+    setBusy(true);
+    let nummer = v.number;
+    if (!nummer) { nummer = await reserveContractNumber(); if (!nummer) { setBusy(false); return null; } }
+    const gespeichert = await saveContract({ ...v, ...extra, number: nummer }, user.id);
+    setBusy(false);
+    if (!gespeichert) return null;
+    if (isNew) navigate(`/vertrag/${gespeichert}`, { replace: true });
+    else { set({ ...extra, number: nummer }); reload(); }
+    return gespeichert;
+  };
+
+  /** Ich unterschreibe: Text einfrieren, Unterschrift ablegen, Link erzeugen. */
+  const unterschreiben = async () => {
+    if (!sigPng || !user) return;
+    try { localStorage.setItem(VERTRETER_KEY, vertreter); } catch { /* egal */ }
+    const jetzt = new Date().toISOString();
+    const frozen = vertragsText({ ...v, our_signed_at: jetzt }, anbieter);
+    const hash = await textHash(frozen);
+    const ablauf = new Date(); ablauf.setDate(ablauf.getDate() + 30);
+    const id = await speichern({
+      status: 'signed_by_us', text_frozen: frozen, text_hash: hash,
+      our_signature: sigPng, our_signed_name: vertreter, our_signed_at: jetzt,
+      token: neuerToken(), token_expires_at: ablauf.toISOString(),
+    });
+    if (id) { setSignDialog(false); setSigPng(null); toast.success('Unterschrieben – der Link für den Kunden ist bereit'); }
+  };
+
+  /** Unsere Unterschrift zurücknehmen, solange der Kunde noch nicht unterschrieben hat. */
+  const zurueck = async () => {
+    if (status !== 'signed_by_us') return;
+    await speichern({ status: 'draft', text_frozen: null, text_hash: null, our_signature: null, our_signed_at: null, token: null, token_expires_at: null });
+    toast.success('Wieder Entwurf – der alte Link ist ungültig');
+  };
+
+  const linkErneuern = async () => {
+    const ablauf = new Date(); ablauf.setDate(ablauf.getDate() + 30);
+    await speichern({ token: neuerToken(), token_expires_at: ablauf.toISOString() });
+    toast.success('Neuer Link erzeugt – der alte gilt nicht mehr');
+  };
+
+  const pdf = () => buildContractPdf({ ...(v as Contract), our_signed_name: v.our_signed_name || vertreter }, text);
+  const download = () => pdf().save(contractFileName(v as Contract));
+
+  const link = v.token ? signLink(v.token) : '';
+  const kopieren = async () => {
+    try { await navigator.clipboard.writeText(link); setKopiert(true); setTimeout(() => setKopiert(false), 2000); }
+    catch { toast.error('Kopieren nicht möglich – Link bitte markieren'); }
+  };
+  const whatsapp = () => {
+    const txt = `Guten Tag ${v.party_name || ''},\nhier der Vertrag zur Unterschrift – geht direkt am Handy:\n${link}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, '_blank');
+  };
+  const mailSenden = async () => {
+    if (!mailTo.trim()) return toast.error('E-Mail-Adresse fehlt');
+    setBusy(true);
+    const base64 = pdf().output('datauristring').split(',')[1];
+    const fertig = status === 'signed';
+    const ok = await sendDocumentMail({
+      to: mailTo.trim(),
+      subject: fertig ? `Unterschriebener Vertrag ${v.number || ''} – ${anbieter.company_name}` : `Vertrag ${v.number || ''} zur Unterschrift – ${anbieter.company_name}`,
+      text: fertig
+        ? `Guten Tag ${v.party_name || ''},\n\nanbei der von beiden Seiten unterschriebene Vertrag ${v.number || ''} als PDF.\n\nWir freuen uns auf die Zusammenarbeit!\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`
+        : `Guten Tag ${v.party_name || ''},\n\nanbei unser Vertrag ${v.number || ''} als PDF – ich habe bereits unterschrieben.\n\nSie können ihn hier direkt am Handy oder PC unterschreiben:\n${link}\n\nDer Link ist 30 Tage gültig.\n\nBeste Grüße\n${vertreter}\n${anbieter.company_name}`,
+      fileName: contractFileName(v as Contract),
+      pdfBase64: base64,
+    });
+    setBusy(false);
+    if (ok) { setMailDialog(false); toast.success('Gesendet an ' + mailTo); await saveContract({ id: v.id, party_email: mailTo.trim() }, user!.id); }
+  };
+
+  const loeschen = async () => {
+    if (!v.id || status === 'signed') return;
+    if (!confirm('Vertrag wirklich löschen?')) return;
+    if (await deleteContract(v.id)) navigate('/vertraege');
+  };
+
+  if (!isNew && isLoading) return (<div className="min-h-screen bg-background"><AppNav /><p className="p-8 text-muted-foreground">Laden …</p></div>);
+
+  const rest = round2((Number(v.total_net) || 0) - (Number(v.first_net) || 0));
+  // Bewusst eine Funktion, keine Komponente: eine in der Render-Funktion definierte
+  // Komponente würde bei jedem Tastendruck neu montiert und den Fokus verlieren.
+  const feld = (label: string, k: keyof Contract, type = 'text', placeholder?: string) => (
+    <div key={k}>
+      <Label className="text-[11px] text-muted-foreground">{label}</Label>
+      <Input type={type} value={(v[k] as string | number | null) ?? ''} placeholder={placeholder} disabled={!editierbar}
+        onChange={(e) => set({ [k]: type === 'number' ? Number(e.target.value) : e.target.value } as Partial<Contract>)} />
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-background">
+      <AppNav>
+        {editierbar && (
+          <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => speichern()}>
+            <Save className="w-4 h-4" /> Speichern
+          </Button>
+        )}
+        <Button size="sm" variant="outline" className="gap-1" onClick={download}>
+          <Download className="w-4 h-4" /> PDF
+        </Button>
+        {editierbar && (
+          <Button size="sm" className="gap-1" disabled={busy || !(Number(v.total_net) > 0) || !(v.party_company || v.party_name)}
+            onClick={() => setSignDialog(true)}>
+            <FileSignature className="w-4 h-4" /> Jetzt unterschreiben
+          </Button>
+        )}
+      </AppNav>
+
+      <main className="max-w-[1400px] mx-auto px-4 py-5 grid lg:grid-cols-[440px_1fr] gap-5">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Link to="/vertraege"><Button variant="ghost" size="sm" className="gap-1"><ArrowLeft className="w-4 h-4" /> Verträge</Button></Link>
+            <span className="font-semibold">{v.number || 'Neuer Vertrag'}</span>
+            <Badge variant={status === 'signed' ? 'default' : 'outline'} className={status === 'signed' ? 'bg-green-600' : status === 'signed_by_us' ? 'border-amber-400 text-amber-700' : ''}>
+              {CONTRACT_STATUS_LABEL[status]}
+            </Badge>
+          </div>
+
+          {/* Link-Kasten: das Herzstück, sobald ich unterschrieben habe */}
+          {status === 'signed_by_us' && link && (
+            <Card className="p-4 border-amber-300 bg-amber-50/60">
+              <div className="font-semibold text-sm flex items-center gap-1.5 mb-1"><Link2 className="w-4 h-4" /> Link für den Kunden</div>
+              <p className="text-xs text-muted-foreground mb-2">Damit öffnet der Kunde den Vertrag und unterschreibt mit dem Finger – direkt am Handy. Gültig bis {new Date(v.token_expires_at || '').toLocaleDateString('de-AT')}.</p>
+              <div className="flex gap-1.5 mb-2">
+                <Input readOnly value={link} className="text-xs h-8" onFocus={(e) => e.currentTarget.select()} />
+                <Button size="sm" variant="outline" className="h-8 gap-1 shrink-0" onClick={kopieren}>
+                  {kopiert ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />} {kopiert ? 'kopiert' : 'kopieren'}
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" className="h-8 gap-1" onClick={() => setMailDialog(true)}><Mail className="w-3.5 h-3.5" /> Per E-Mail senden</Button>
+                <Button size="sm" variant="outline" className="h-8 gap-1" onClick={whatsapp}><MessageCircle className="w-3.5 h-3.5" /> WhatsApp</Button>
+                <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={linkErneuern} disabled={busy}><RefreshCw className="w-3.5 h-3.5" /> Link erneuern</Button>
+                <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={zurueck} disabled={busy}><Undo2 className="w-3.5 h-3.5" /> Zurück zum Entwurf</Button>
+              </div>
+            </Card>
+          )}
+
+          {status === 'signed' && (
+            <Card className="p-4 border-green-300 bg-green-50/60">
+              <div className="font-semibold text-sm flex items-center gap-1.5 mb-1"><Check className="w-4 h-4 text-green-600" /> Von beiden Seiten unterschrieben</div>
+              <p className="text-xs text-muted-foreground mb-2">
+                {v.customer_signed_name} am {new Date(v.customer_signed_at || '').toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })}.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" className="h-8 gap-1" onClick={download}><Download className="w-3.5 h-3.5" /> PDF herunterladen</Button>
+                <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setMailDialog(true)}><Mail className="w-3.5 h-3.5" /> Dem Kunden senden</Button>
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-4 space-y-3">
+            <div className="text-sm font-semibold">Vertragspartner</div>
+            {v.offer_number && <p className="text-[11px] text-muted-foreground">aus Angebot {v.offer_number}{v.document_id && <> · <Link className="underline" to={`/beleg/${v.document_id}`}>öffnen</Link></>}</p>}
+            {feld('Firma', 'party_company')}
+            <div className="grid grid-cols-2 gap-2">
+              {feld('Ansprechpartner', 'party_name', 'text', 'Herrn Max Muster')}
+              {feld('E-Mail', 'party_email', 'email')}
+            </div>
+            {feld('Straße', 'party_street')}
+            <div className="grid grid-cols-[100px_1fr] gap-2">
+              {feld('PLZ', 'party_zip')}{feld('Ort', 'party_city')}
+            </div>
+            {feld('UID', 'party_uid')}
+          </Card>
+
+          <Card className="p-4 space-y-3">
+            <div className="text-sm font-semibold">Leistung und Preis</div>
+            {feld('Bezeichnung der Software', 'title', 'text', 'Handwerkersoftware')}
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Gewünschte Funktionen (kommt in Punkt 1)</Label>
+              <Textarea rows={3} value={v.scope || ''} disabled={!editierbar} onChange={(e) => set({ scope: e.target.value })}
+                placeholder="Kalkulation, Angebote, Rechnungen, Zeiterfassung, …" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {feld('Gesamt netto', 'total_net', 'number')}
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Sofort fällig (netto)</Label>
+                <Input type="number" value={v.first_net ?? ''} disabled={!editierbar} onChange={(e) => set({ first_net: Number(e.target.value) })} />
+                {editierbar && (
+                  <div className="flex gap-1 mt-1">
+                    {[50, 100].map((p) => (
+                      <Button key={p} type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                        onClick={() => set({ first_net: round2((Number(v.total_net) || 0) * p / 100) })}>{p} %</Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            {rest > 0 && (
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Rest {eur(rest)} netto ist fällig …</Label>
+                <Input value={v.rest_terms || ''} disabled={!editierbar} onChange={(e) => set({ rest_terms: e.target.value })}
+                  placeholder={DEFAULT_REST_TERMS} />
+                {editierbar && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {[DEFAULT_REST_TERMS, 'nach Übergabe der Zugänge', 'zwei Monate nach Vertragsabschluss'].map((t) => (
+                      <Button key={t} type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={() => set({ rest_terms: t })}>{t}</Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {feld('Betreuung inklusive (Monate)', 'support_months', 'number')}
+            </div>
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Besondere Vereinbarungen (optional)</Label>
+              <Textarea rows={2} value={v.extra_terms || ''} disabled={!editierbar} onChange={(e) => set({ extra_terms: e.target.value })}
+                placeholder="z. B. Umzug der Daten aus der bisherigen Software, ein Vor-Ort-Termin …" />
+            </div>
+          </Card>
+
+          {v.id && status !== 'signed' && (
+            <Button variant="ghost" size="sm" className="text-red-600 gap-1" onClick={loeschen}><Trash2 className="w-4 h-4" /> Vertrag löschen</Button>
+          )}
+        </div>
+
+        <Card className="p-6 lg:p-8 bg-white">
+          <VertragAnsicht text={text}
+            links={{ png: v.our_signature || null, name: v.our_signed_name || null, wann: v.our_signed_at || null }}
+            rechts={{ png: v.customer_signature || null, name: v.customer_signed_name || null, wann: v.customer_signed_at || null }} />
+        </Card>
+      </main>
+
+      {/* Meine Unterschrift */}
+      <Dialog open={signDialog} onOpenChange={setSignDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Vertrag unterschreiben</DialogTitle>
+            <DialogDescription>Danach ist der Text festgeschrieben und der Link für den Kunden entsteht.</DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label className="text-[11px] text-muted-foreground">Unterschrieben von</Label>
+            <Input value={vertreter} onChange={(e) => setVertreter(e.target.value)} />
+          </div>
+          <SignaturePad onChange={setSigPng} />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setSignDialog(false)}>Abbrechen</Button>
+            <Button onClick={unterschreiben} disabled={!sigPng || !vertreter.trim() || busy} className="gap-1">
+              <FileSignature className="w-4 h-4" /> Unterschreiben und Link erzeugen
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Per Mail */}
+      <Dialog open={mailDialog} onOpenChange={setMailDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{status === 'signed' ? 'Unterschriebenen Vertrag senden' : 'Zur Unterschrift senden'}</DialogTitle>
+            <DialogDescription>PDF im Anhang{status !== 'signed' && ', Unterschriftslink im Text'} – über deine Gmail-Verbindung.</DialogDescription>
+          </DialogHeader>
+          <Input type="email" value={mailTo} onChange={(e) => setMailTo(e.target.value)} placeholder="kunde@firma.at" />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setMailDialog(false)}>Abbrechen</Button>
+            <Button onClick={mailSenden} disabled={busy} className="gap-1"><Mail className="w-4 h-4" /> Senden</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

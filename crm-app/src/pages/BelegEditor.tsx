@@ -23,7 +23,7 @@ import { useAuftragVon } from '@/hooks/useAuftraege';
 import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
 import {
   Link2,
-  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye, Wallet,
+  ArrowLeft, Plus, Trash2, Download, Send, Star, Copy, FileText, Percent, Save, Receipt, Eye, Wallet, FileSignature,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -778,6 +778,10 @@ export default function BelegEditor() {
                   </span>
                   <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => createFollowUp('final_invoice')}>
                     <FileText className="w-4 h-4" /> Schlussrechnung (mit Abzug)
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1" disabled={busy}
+                    onClick={async () => { const sid = doc.id || (await persist()); if (sid) navigate(`/vertrag/neu?angebot=${sid}`); }}>
+                    <FileSignature className="w-4 h-4" /> Vertrag erstellen
                   </Button>
 
                 </>

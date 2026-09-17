@@ -21,6 +21,9 @@ import KassabuchPage from "./pages/KassabuchPage";
 import ArchivPage from "./pages/ArchivPage";
 import FirmaPage from "./pages/FirmaPage";
 import WuenschePage from './pages/WuenschePage';
+import VertraegePage from './pages/VertraegePage';
+import VertragEditor from './pages/VertragEditor';
+import Unterschreiben from './pages/Unterschreiben';
 
 const queryClient = new QueryClient();
 
@@ -126,6 +129,10 @@ const App = () => (
           <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
           <Route path="/wuensche" element={<ProtectedRoute><WuenschePage /></ProtectedRoute>} />
+          <Route path="/vertraege" element={<ProtectedRoute><VertraegePage /></ProtectedRoute>} />
+          <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
+          {/* Öffentlich: der Kunde kommt nur mit seinem Link hierher, ohne Login. */}
+          <Route path="/unterschreiben/:token" element={<Unterschreiben />} />
           <Route path="*" element={<NotFound />} />
 
         </Routes>
