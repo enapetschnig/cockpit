@@ -160,30 +160,12 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── KI nur dort, wo die Website nichts weiß
-    let isEntrepreneur = geliefertUnternehmer;
-    let hasMoreThan5 = geliefertMehrAls5;
-    let stage = "new";
-    let kiNotiz = "";
-    if (geliefertUnternehmer === null || geliefertMehrAls5 === null) {
-      const ki = await qualifiziere(
-        `Name: ${fullName}\nFirma: ${companyName || "-"}\nTelefon: ${phone || "-"}\nE-Mail: ${email || "-"}\nPlattform: ${platform}\n` +
-        `Kampagne/Formular: ${campaignName || "-"}\nAnzeige: ${adName || "-"}\n` +
-        `Unternehmer (laut Formular): ${geliefertUnternehmer === null ? "unbekannt" : geliefertUnternehmer}\n` +
-        `Mehr als 5 Mitarbeiter (laut Formular): ${geliefertMehrAls5 === null ? "unbekannt" : geliefertMehrAls5}\n` +
-        `Zusätzliche Infos: ${additionalInfo || "keine"}`,
-      );
-      if (ki) {
-        // Geliefertes true/false hat Vorrang – die KI füllt nur die Lücken.
-        if (isEntrepreneur === null) isEntrepreneur = ki.is_entrepreneur;
-        if (hasMoreThan5 === null) hasMoreThan5 = ki.has_more_than_5_employees;
-        stage = ki.stage || "new";
-        kiNotiz = ki.notes || "";
-      }
-    } else if (istWebsite) {
-      // Website weiß alles: Chef mit Betrieb ist qualifiziert, sonst schauen wir selbst.
-      stage = geliefertUnternehmer ? "qualified" : "new";
-    }
+    // ── Keine automatische Einstufung: jeder Lead landet als "new" in der Pipeline.
+    // Chef entscheidet selbst. Die Felder werden so übernommen, wie das Formular sie liefert.
+    const isEntrepreneur = geliefertUnternehmer;
+    const hasMoreThan5 = geliefertMehrAls5;
+    const stage = "new";
+    const kiNotiz = "";
 
     const notizen = [
       istWebsite ? `Anfrage über die Website${campaignName ? ` (${campaignName})` : ""}` : "",
