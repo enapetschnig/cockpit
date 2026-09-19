@@ -10,6 +10,7 @@
 export interface AppInfo { key: string; label: string; projectRef: string }
 
 export const APPS: AppInfo[] = [
+  { key: 'lengauer-stockner', label: 'Holzbau Lengauer-Stockner', projectRef: 'icmxtnqjtflmrpwztxmn' },
   { key: 'steron', label: 'Steron Poolbau', projectRef: 'keqnrzispxnvdzephcfv' },
   { key: 'willroider', label: 'Holzbau Willroider', projectRef: 'ylqbxnsxksbtsqrcwtuq' },
   { key: 'groismaier', label: 'Groismaier', projectRef: 'tdehljzmqwmfgfoyyoee' },
