@@ -32,3 +32,6 @@ npm-debug.log*
 
 # TypeScript-Build-Cache (Artefakt, gehoert nicht ins Repo)
 tsconfig.tsbuildinfo
+
+# Supabase-CLI-Zustand (Verknüpfung, Version) – lokal
+crm-app/supabase/.temp/
