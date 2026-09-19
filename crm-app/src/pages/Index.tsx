@@ -9,7 +9,7 @@ import { AddLeadDialog } from '@/components/AddLeadDialog';
 import { LeadDetailDialog } from '@/components/LeadDetailDialog';
 import { CallbackList } from '@/components/CallbackList';
 import { OpenInvoicesStrip } from '@/components/billing/OpenInvoicesStrip';
-import { Lead, LeadStage } from '@/types/lead';
+import { Lead, LeadSource, LeadStage, SOURCE_LABELS, SOURCE_STYLE } from '@/types/lead';
 import { WeeklyActivityOverview } from '@/components/WeeklyActivityOverview';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -21,6 +21,10 @@ const Index = () => {
   const { leads, addLead, updateLead, deleteLead, addContactLog, deleteContactLog } = useLeads();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  // Quellen-Filter: nur Quellen anbieten, die es in den Leads auch gibt.
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | 'alle'>('alle');
+  const vorhandeneQuellen = (Object.keys(SOURCE_LABELS) as LeadSource[]).filter((q) => leads.some((l) => l.source === q));
+  const gefilterteLeads = sourceFilter === 'alle' ? leads : leads.filter((l) => l.source === sourceFilter);
   // Link aus dem Telegram-Ping (?lead=…): den Lead direkt aufmachen, sobald er geladen ist.
   const [sp, setSp] = useSearchParams();
   useEffect(() => {
@@ -85,6 +89,21 @@ const Index = () => {
           {unqualifiedCount > 0 && (
             <Badge variant="secondary" className="text-xs">{unqualifiedCount}</Badge>
           )}
+          {vorhandeneQuellen.length > 1 && (
+            <div className="ml-auto flex items-center gap-1 flex-wrap">
+              <span className="text-xs text-muted-foreground mr-1">Quelle:</span>
+              <button type="button" onClick={() => setSourceFilter('alle')}
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${sourceFilter === 'alle' ? 'bg-foreground text-background border-foreground' : 'bg-card text-muted-foreground'}`}>
+                alle
+              </button>
+              {vorhandeneQuellen.map((q) => (
+                <button key={q} type="button" onClick={() => setSourceFilter(sourceFilter === q ? 'alle' : q)}
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${SOURCE_STYLE[q]} ${sourceFilter === q ? 'ring-2 ring-offset-1 ring-foreground/60' : 'opacity-80 hover:opacity-100'}`}>
+                  {SOURCE_LABELS[q]} <span className="font-normal">{leads.filter((l) => l.source === q).length}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <ScrollArea className="w-full whitespace-nowrap flex-1">
@@ -93,7 +112,7 @@ const Index = () => {
               <PipelineColumn
                 key={stage}
                 stage={stage}
-                leads={leads}
+                leads={gefilterteLeads}
                 onLeadClick={handleLeadClick}
                 onLeadUpdate={updateLead}
               />

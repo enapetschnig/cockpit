@@ -131,7 +131,7 @@ var add_contact_log_default = defineTool4({
 });
 
 // src/lib/mcp/index.ts
-var projectRef = "wlalcftxyqozrmzcywus";
+var projectRef = "xyhgckqxowqnzjtoblfs";
 var mcp_default = defineMcp({
   name: "epower-crm-mcp",
   title: "epower CRM",

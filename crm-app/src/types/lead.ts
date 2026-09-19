@@ -22,7 +22,8 @@ export type LeadSource =
 export interface ContactLog {
   id: string;
   date: string;
-  type: 'call' | 'email' | 'meeting' | 'note';
+  /** website = erneute Anfrage über die Website (kommt automatisch, kein eigener Kontakt) */
+  type: 'call' | 'email' | 'meeting' | 'note' | 'website';
   comment: string;
   reachedCustomer: boolean;
 }
@@ -65,6 +66,17 @@ export const STAGE_LABELS: Record<LeadStage, string> = {
   no_show: 'Nicht erschienen',
   won: 'Verkauft',
   lost: 'Verloren',
+};
+
+/** Farbe je Quelle – Website hebt sich klar von den Anzeigen ab. */
+export const SOURCE_STYLE: Record<LeadSource, string> = {
+  facebook: 'bg-blue-100 text-blue-800',
+  instagram: 'bg-pink-100 text-pink-800',
+  google: 'bg-amber-100 text-amber-800',
+  website: 'bg-emerald-100 text-emerald-800',
+  referral: 'bg-violet-100 text-violet-800',
+  phone: 'bg-slate-200 text-slate-800',
+  other: 'bg-muted text-muted-foreground',
 };
 
 export const SOURCE_LABELS: Record<LeadSource, string> = {

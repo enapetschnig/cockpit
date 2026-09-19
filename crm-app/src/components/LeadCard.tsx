@@ -1,5 +1,5 @@
-import { Lead, SOURCE_LABELS } from '@/types/lead';
-import { Phone, Building2, Calendar, MessageSquare, Clock } from 'lucide-react';
+import { Lead, SOURCE_LABELS, SOURCE_STYLE } from '@/types/lead';
+import { Phone, Building2, Calendar, MessageSquare, Clock, Globe } from 'lucide-react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useOffers } from '@/hooks/useOffers';
@@ -27,8 +27,9 @@ export function LeadCard({ lead, onClick, onUpdate }: LeadCardProps) {
             </div>
           )}
         </div>
-        <span className={`stage-badge ${lead.source === 'facebook' ? 'stage-new' : 'stage-qualified'}`}>
-          {SOURCE_LABELS[lead.source]}
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${SOURCE_STYLE[lead.source] || SOURCE_STYLE.other}`}>
+          {lead.source === 'website' && <Globe className="w-3 h-3" />}
+          {SOURCE_LABELS[lead.source] || lead.source}
         </span>
       </div>
 

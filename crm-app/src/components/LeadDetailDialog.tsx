@@ -514,8 +514,10 @@ export function LeadDetailDialog({
                     <div key={log.id} className="p-3 bg-card border rounded-lg">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <span className={`stage-badge ${log.type === 'call' ? 'stage-new' : log.type === 'email' ? 'stage-contact' : log.type === 'meeting' ? 'stage-qualified' : 'stage-meeting'}`}>
-                            {log.type === 'call' ? 'Anruf' : log.type === 'email' ? 'E-Mail' : log.type === 'meeting' ? 'Meeting' : 'Notiz'}
+                          <span className={log.type === 'website'
+                            ? 'text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800'
+                            : `stage-badge ${log.type === 'call' ? 'stage-new' : log.type === 'email' ? 'stage-contact' : log.type === 'meeting' ? 'stage-qualified' : 'stage-meeting'}`}>
+                            {log.type === 'call' ? 'Anruf' : log.type === 'email' ? 'E-Mail' : log.type === 'meeting' ? 'Meeting' : log.type === 'website' ? 'Website-Anfrage' : 'Notiz'}
                           </span>
                           {log.reachedCustomer ? (
                             <span className="text-xs text-success flex items-center gap-1">

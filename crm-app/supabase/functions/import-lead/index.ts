@@ -1,4 +1,19 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+/**
+ * Lead-Eingang für das CRM (Schema `crm`, Projekt epowergmbh).
+ *
+ * Nimmt Leads von Make.com (Meta-Formulare) und von der Website epowergmbh.at
+ * entgegen. Abgesichert über den Header `x-webhook-key` = Secret WEBHOOK_API_KEY.
+ *
+ * Website-Fall: source/platform "website", campaign_name = Formular
+ * (quiz | termin-ki-assistent | website), additional_info = Freitext wie
+ * "Mitarbeiter: 10-20 | Chef: ja | Gewerk: Holzbau".
+ *
+ * Regeln:
+ * - is_entrepreneur / has_more_than_5_employees: geliefertes true/false hat
+ *   Vorrang, bei null entscheidet die KI-Qualifizierung.
+ * - Dedup: gleiche Telefonnummer innerhalb von 24 Stunden → kein zweiter Lead,
+ *   sondern ein contact_log (type "website"/"facebook"…) am bestehenden.
+ */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -6,179 +21,208 @@ const corsHeaders = {
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-webhook-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+// Wem die Pipeline gehört – Make und Website haben keinen eigenen Login.
+const OWNER_DEFAULT = "83edc9c7-26a7-4f56-8806-cdfe253b9751";
+const DEDUP_STUNDEN = 24;
 
-  try {
-    // API Key check
-    const webhookKey = req.headers.get("x-webhook-key");
-    const expectedKey = Deno.env.get("WEBHOOK_API_KEY");
-    if (!expectedKey || webhookKey !== expectedKey) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+const cut = (v: unknown, n: number): string => (v ?? "").toString().trim().slice(0, n);
+const normPhone = (v: string) => v.replace(/\D/g, "").slice(-9);
+/** true/false bleibt, alles andere (null, "", undefined) heißt „unbekannt". */
+const tri = (v: unknown): boolean | null =>
+  v === true || v === "true" ? true : v === false || v === "false" ? false : null;
 
-    const body = await req.json();
+interface KiErgebnis { is_entrepreneur: boolean; has_more_than_5_employees: boolean; stage: string; notes: string }
 
-    // Extract fields from Make.com payload
-    const fullName = body.full_name || body.name || "";
-    const phone = body.phone || body.p || "";
-    const companyName = body.company_name || body.company || "";
-    const source = body.source || (body.platform === "ig" ? "instagram" : "facebook");
-    const platform = body.platform === "ig" ? "instagram" : (body.platform || "facebook");
-    const campaignName = body.campaign_name || body.campaign || "";
-    const adName = body.ad_name || body.ad || "";
-    const isEntrepreneur = body.is_entrepreneur ?? null;
-    const hasMoreThan5 = body.has_more_than_5_employees ?? null;
-    const createdAt = body.created_at || new Date().toISOString();
-    const userId = body.user_id || "cc3bb025-6463-40dd-8615-bf9eaab01783";
-
-    if (!fullName) {
-      return new Response(JSON.stringify({ error: "full_name is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // AI Qualification
-    let aiStage = "new";
-    let aiIsEntrepreneur = isEntrepreneur;
-    let aiHasMore5 = hasMoreThan5;
-    let qualificationNotes = "";
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (LOVABLE_API_KEY) {
-      try {
-        const aiResponse = await fetch(
-          "https://ai.gateway.lovable.dev/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "google/gemini-3-flash-preview",
-              messages: [
-                {
-                  role: "system",
-                  content: `Du bist ein Lead-Qualifizierungs-Assistent für ein CRM das Handwerksbetriebe als Kunden gewinnen will. 
+/**
+ * KI-Qualifizierung – OpenAI, falls konfiguriert, sonst Lovable-Gateway.
+ * Fällt still auf null zurück; ein Lead darf daran nie scheitern.
+ */
+async function qualifiziere(daten: string): Promise<KiErgebnis | null> {
+  const system =
+    `Du bist ein Lead-Qualifizierungs-Assistent für ein CRM, das Handwerksbetriebe als Kunden gewinnt.
 Analysiere die Lead-Daten und bestimme:
-1. is_entrepreneur: Ist die Person wahrscheinlich ein Unternehmer/Selbstständiger? (true/false)
-2. has_more_than_5_employees: Hat der Betrieb wahrscheinlich mehr als 5 Mitarbeiter? (true/false) 
-3. stage: Welche Pipeline-Stufe passt? Optionen: "new", "qualified", "unqualified"
-4. notes: Kurze Begründung (1-2 Sätze)
+1. is_entrepreneur: Ist die Person wahrscheinlich Unternehmer/Selbstständiger? (true/false)
+2. has_more_than_5_employees: Hat der Betrieb wahrscheinlich mehr als 5 Mitarbeiter? (true/false)
+3. stage: "new", "qualified" oder "unqualified"
+4. notes: kurze Begründung (1-2 Sätze, Deutsch)
 
 Hinweise:
-- Wenn der Firmenname auf GmbH, e.U., OG etc. endet, ist es wahrscheinlich ein Unternehmer
-- Begriffe wie "Selbstständig" deuten auf Einzelunternehmer hin
-- Wenn Mitarbeiterzahl explizit angegeben ist (z.B. "50+_mitarbeiter", "10-20_mitarbeiter"), nutze diese Info
-- Handwerksbetriebe (Elektro, Bau, KFZ, Tischlerei etc.) sind qualifizierte Leads`,
-                },
-                {
-                  role: "user",
-                  content: `Lead-Daten:
-Name: ${fullName}
-Firma: ${companyName}
-Telefon: ${phone}
-Plattform: ${platform}
-Kampagne: ${campaignName}
-Anzeige: ${adName}
-Unternehmer: ${isEntrepreneur !== null ? isEntrepreneur : "unbekannt"}
-Mitarbeiter >5: ${hasMoreThan5 !== null ? hasMoreThan5 : "unbekannt"}
-Zusätzliche Infos: ${body.employees_info || body.additional_info || "keine"}`,
-                },
-              ],
-              tools: [
-                {
-                  type: "function",
-                  function: {
-                    name: "qualify_lead",
-                    description: "Qualifiziere den Lead basierend auf den Daten",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        is_entrepreneur: { type: "boolean" },
-                        has_more_than_5_employees: { type: "boolean" },
-                        stage: { type: "string", enum: ["new", "qualified", "unqualified"] },
-                        notes: { type: "string" },
-                      },
-                      required: ["is_entrepreneur", "has_more_than_5_employees", "stage", "notes"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-              ],
-              tool_choice: { type: "function", function: { name: "qualify_lead" } },
-            }),
-          }
-        );
+- Firmenname mit GmbH, e.U., OG usw. → wahrscheinlich Unternehmer
+- „Chef: ja" oder „Selbstständig" → Unternehmer
+- Mitarbeiterangaben wie "10-20", "50+" nutzen
+- Handwerksbetriebe (Holzbau, Elektro, Bau, KFZ, Tischlerei …) sind qualifizierte Leads`;
+  const tool = {
+    type: "function",
+    function: {
+      name: "qualify_lead",
+      description: "Qualifiziere den Lead basierend auf den Daten",
+      parameters: {
+        type: "object",
+        properties: {
+          is_entrepreneur: { type: "boolean" },
+          has_more_than_5_employees: { type: "boolean" },
+          stage: { type: "string", enum: ["new", "qualified", "unqualified"] },
+          notes: { type: "string" },
+        },
+        required: ["is_entrepreneur", "has_more_than_5_employees", "stage", "notes"],
+        additionalProperties: false,
+      },
+    },
+  };
+  const openai = Deno.env.get("OPENAI_API_KEY");
+  const lovable = Deno.env.get("LOVABLE_API_KEY");
+  const ziel = openai
+    ? { url: "https://api.openai.com/v1/chat/completions", key: openai, model: "gpt-4o-mini" }
+    : lovable
+    ? { url: "https://ai.gateway.lovable.dev/v1/chat/completions", key: lovable, model: "google/gemini-3-flash-preview" }
+    : null;
+  if (!ziel) return null;
+  try {
+    const r = await fetch(ziel.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ziel.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: ziel.model,
+        messages: [{ role: "system", content: system }, { role: "user", content: daten }],
+        tools: [tool],
+        tool_choice: { type: "function", function: { name: "qualify_lead" } },
+      }),
+    });
+    if (!r.ok) { console.error("KI-Qualifizierung fehlgeschlagen:", r.status, await r.text()); return null; }
+    const d = await r.json();
+    const args = d.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    return args ? (JSON.parse(args) as KiErgebnis) : null;
+  } catch (e) {
+    console.error("KI-Qualifizierung Fehler:", e);
+    return null;
+  }
+}
 
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-          if (toolCall?.function?.arguments) {
-            const args = JSON.parse(toolCall.function.arguments);
-            aiStage = args.stage || "new";
-            aiIsEntrepreneur = args.is_entrepreneur ?? aiIsEntrepreneur;
-            aiHasMore5 = args.has_more_than_5_employees ?? aiHasMore5;
-            qualificationNotes = args.notes || "";
-          }
-        } else {
-          console.error("AI qualification failed:", aiResponse.status, await aiResponse.text());
-        }
-      } catch (aiErr) {
-        console.error("AI qualification error:", aiErr);
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "nur POST" }, 405);
+
+  try {
+    const expected = Deno.env.get("WEBHOOK_API_KEY");
+    if (!expected || req.headers.get("x-webhook-key") !== expected) return json({ error: "Unauthorized" }, 401);
+
+    let body: Record<string, unknown>;
+    try { body = await req.json(); } catch { return json({ error: "Body ist kein gültiges JSON" }, 400); }
+
+    // ── Felder (Make.com und Website liefern leicht unterschiedliche Namen)
+    const fullName = cut(body.full_name ?? body.name, 120);
+    const phone = cut(body.phone ?? body.p, 40);
+    const email = cut(body.email, 120).toLowerCase();
+    const companyName = cut(body.company_name ?? body.company, 160);
+    const platformRoh = cut(body.platform, 30).toLowerCase();
+    const platform = platformRoh === "ig" ? "instagram" : platformRoh || "facebook";
+    const source = cut(body.source, 30).toLowerCase() || (platform === "instagram" ? "instagram" : "facebook");
+    const campaignName = cut(body.campaign_name ?? body.campaign, 160);
+    const adName = cut(body.ad_name ?? body.ad, 160);
+    const additionalInfo = cut(body.additional_info ?? body.employees_info, 1000);
+    const geliefertUnternehmer = tri(body.is_entrepreneur);
+    const geliefertMehrAls5 = tri(body.has_more_than_5_employees);
+    const createdAt = (() => { const d = new Date(cut(body.created_at, 40)); return isNaN(d.getTime()) ? new Date() : d; })().toISOString();
+    const userId = cut(body.user_id, 40) || Deno.env.get("CRM_OWNER_USER_ID") || OWNER_DEFAULT;
+    const istWebsite = source === "website";
+
+    if (!fullName) return json({ error: "full_name is required" }, 400);
+    if (!phone && !email) return json({ error: "phone or email is required" }, 400);
+
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
+      db: { schema: "crm" }, auth: { persistSession: false },
+    });
+
+    // ── Dedup: gleiche Nummer in den letzten 24 Stunden → nur ein Kontakt-Eintrag
+    const tel9 = normPhone(phone);
+    if (tel9) {
+      const seit = new Date(Date.now() - DEDUP_STUNDEN * 3600_000).toISOString();
+      const { data: kandidaten } = await supabase.from("leads")
+        .select("id, phone, full_name, inquiry_count, email")
+        .eq("user_id", userId).gte("created_at", seit).order("created_at", { ascending: false }).limit(200);
+      const doppelt = (kandidaten ?? []).find((k: { phone: string | null }) => normPhone(k.phone || "") === tel9);
+      if (doppelt) {
+        const kommentar = [
+          `${istWebsite ? "Website" : platform}${campaignName ? ` (${campaignName})` : ""}: erneut gemeldet`,
+          additionalInfo,
+        ].filter(Boolean).join(" – ");
+        await supabase.from("contact_logs").insert({
+          lead_id: doppelt.id, date: createdAt, type: istWebsite ? "website" : source, comment: kommentar, reached_customer: false,
+        });
+        await supabase.from("leads").update({
+          last_inquiry_at: createdAt, inquiry_count: (doppelt.inquiry_count ?? 1) + 1, updated_at: createdAt,
+          ...(email && !doppelt.email ? { email } : {}),
+        }).eq("id", doppelt.id);
+        return json({ success: true, duplicate: true, lead: { id: doppelt.id, full_name: doppelt.full_name } });
       }
     }
 
-    // Insert into DB using service role
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // ── KI nur dort, wo die Website nichts weiß
+    let isEntrepreneur = geliefertUnternehmer;
+    let hasMoreThan5 = geliefertMehrAls5;
+    let stage = "new";
+    let kiNotiz = "";
+    if (geliefertUnternehmer === null || geliefertMehrAls5 === null) {
+      const ki = await qualifiziere(
+        `Name: ${fullName}\nFirma: ${companyName || "-"}\nTelefon: ${phone || "-"}\nE-Mail: ${email || "-"}\nPlattform: ${platform}\n` +
+        `Kampagne/Formular: ${campaignName || "-"}\nAnzeige: ${adName || "-"}\n` +
+        `Unternehmer (laut Formular): ${geliefertUnternehmer === null ? "unbekannt" : geliefertUnternehmer}\n` +
+        `Mehr als 5 Mitarbeiter (laut Formular): ${geliefertMehrAls5 === null ? "unbekannt" : geliefertMehrAls5}\n` +
+        `Zusätzliche Infos: ${additionalInfo || "keine"}`,
+      );
+      if (ki) {
+        // Geliefertes true/false hat Vorrang – die KI füllt nur die Lücken.
+        if (isEntrepreneur === null) isEntrepreneur = ki.is_entrepreneur;
+        if (hasMoreThan5 === null) hasMoreThan5 = ki.has_more_than_5_employees;
+        stage = ki.stage || "new";
+        kiNotiz = ki.notes || "";
+      }
+    } else if (istWebsite) {
+      // Website weiß alles: Chef mit Betrieb ist qualifiziert, sonst schauen wir selbst.
+      stage = geliefertUnternehmer ? "qualified" : "new";
+    }
+
+    const notizen = [
+      istWebsite ? `Anfrage über die Website${campaignName ? ` (${campaignName})` : ""}` : "",
+      additionalInfo,
+      kiNotiz,
+    ].filter(Boolean).join("\n");
 
     const { data, error } = await supabase.from("leads").insert({
       user_id: userId,
       full_name: fullName,
-      phone,
+      phone: phone || null,
+      email: email || null,
       company_name: companyName || null,
       source,
       platform,
-      stage: aiStage,
+      stage,
       campaign_name: campaignName || null,
       ad_name: adName || null,
-      is_entrepreneur: aiIsEntrepreneur,
-      has_more_than_5_employees: aiHasMore5,
-      qualification_notes: qualificationNotes || null,
+      form_name: istWebsite ? `Website ${campaignName || ""}`.trim() : null,
+      is_entrepreneur: isEntrepreneur ?? false,
+      has_more_than_5_employees: hasMoreThan5 ?? false,
+      qualification_notes: notizen || null,
+      last_inquiry_at: createdAt,
+      inquiry_count: 1,
       created_at: createdAt,
-    }).select().single();
+    }).select("id, full_name, stage").single();
 
     if (error) {
       console.error("DB insert error:", error);
-      return new Response(JSON.stringify({ error: "Failed to insert lead", details: error.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Failed to insert lead", details: error.message }, 500);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        lead: { id: data.id, full_name: data.full_name, stage: data.stage },
-        qualification: { stage: aiStage, is_entrepreneur: aiIsEntrepreneur, has_more_than_5: aiHasMore5, notes: qualificationNotes },
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({
+      success: true,
+      lead: data,
+      qualification: { stage, is_entrepreneur: isEntrepreneur, has_more_than_5: hasMoreThan5, notes: kiNotiz || null },
+    });
   } catch (e) {
     console.error("import-lead error:", e);
-    return new Response(
-      JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
   }
 });
