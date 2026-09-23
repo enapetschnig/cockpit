@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { APP_LABEL, APPS } from '@/lib/apps';
 import { Loader2, Image as ImageIcon, Check, Inbox } from 'lucide-react';
+import { RoboterKnopf, RoboterVorschlaege, useRoboter } from '@/components/RoboterVorschlaege';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -75,6 +76,7 @@ export default function WuenschePage() {
   const [bildOffen, setBildOffen] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [kunden, setKunden] = useState<{ id: string; name: string; app_key: string }[]>([]);
+  const { auftraege, puls, laden: ladenRoboter } = useRoboter();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setToken(data.session?.access_token ?? null));
@@ -172,6 +174,9 @@ export default function WuenschePage() {
         <p className="text-sm text-muted-foreground mb-5">
           Änderungswünsche, Fehler und Fragen aus allen Handwerker-Apps. Die Apps melden selbstständig hierher.
         </p>
+
+        <RoboterVorschlaege auftraege={auftraege} puls={puls} laden={ladenRoboter}
+          texte={Object.fromEntries(items.map((w) => [w.id, { text: w.text, melder: w.melder }]))} />
 
         {/* Kundenübersicht: auf einen Blick sehen, wo etwas offen ist */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
@@ -349,6 +354,9 @@ export default function WuenschePage() {
                 <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => gesehen(w)}>
                   {ungesehen ? 'gelesen' : '✓ gelesen'}
                 </Button>
+                {(offen || auftraege.some((x) => x.wunsch_ids.includes(w.id))) && (
+                  <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter} />
+                )}
                 <span className="text-xs text-muted-foreground">
                   {w.status === 'umgesetzt'
                     ? 'In der App bereits erledigt.'
