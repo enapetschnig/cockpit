@@ -11,12 +11,12 @@ import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SignaturePad } from '@/components/SignaturePad';
+import { UnterschriftFeld } from '@/components/UnterschriftFeld';
 import { VertragAnsicht, signerZuUnterschrift } from '@/components/VertragAnsicht';
 import { buildContractPdf, contractFileName } from '@/lib/contractPdf';
 import type { Contract, Signer, VertragsText } from '@/lib/vertrag';
 import { EPOWER_LOGO } from '@/lib/logoData';
-import { Check, Download, FileSignature, Loader2 } from 'lucide-react';
+import { ArrowDown, Check, Download, FileSignature, Loader2 } from 'lucide-react';
 
 type Oeffentlich = Pick<Contract, 'id' | 'number' | 'status' | 'party_company' | 'party_name' | 'party_email'
   | 'text_frozen' | 'text_hash' | 'our_signature' | 'our_signed_name' | 'our_signed_at' | 'signers'>;
@@ -31,6 +31,16 @@ export default function Unterschreiben() {
   const [gelesen, setGelesen] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [geradeFertig, setGeradeFertig] = useState<{ gemailt: boolean } | null>(null);
+  // Knopf unten „Zum Unterschreiben" – verschwindet, sobald das Feld im Bild ist.
+  const [signBox, setSignBox] = useState<HTMLDivElement | null>(null);
+  const [feldSichtbar, setFeldSichtbar] = useState(false);
+
+  useEffect(() => {
+    if (!signBox) { setFeldSichtbar(false); return; }
+    const io = new IntersectionObserver(([e]) => setFeldSichtbar(e.isIntersecting), { rootMargin: '0px 0px -25% 0px' });
+    io.observe(signBox);
+    return () => io.disconnect();
+  }, [signBox]);
 
   useEffect(() => {
     document.title = 'Vertrag unterschreiben – ePower GmbH';
@@ -99,7 +109,7 @@ export default function Unterschreiben() {
   const erledigt = v.signers.filter((s) => !!s.signature).length;
 
   return (
-    <div className="min-h-screen bg-[#f6f5f2] px-3 sm:px-4 py-6 sm:py-8">
+    <div className={'min-h-screen bg-[#f6f5f2] px-3 sm:px-4 pt-6 sm:pt-8 ' + (fertig ? 'pb-8' : 'pb-28')}>
       <div className="max-w-2xl mx-auto">
         <Kopf />
 
@@ -129,7 +139,7 @@ export default function Unterschreiben() {
         </div>
 
         {!fertig && (
-          <div className="bg-white rounded-2xl p-5 sm:p-8 shadow-sm mt-4">
+          <div ref={setSignBox} className="bg-white rounded-2xl p-5 sm:p-8 shadow-sm mt-4 scroll-mt-4">
             <h2 className="font-bold text-lg flex items-center gap-2 mb-1"><FileSignature className="w-5 h-5" /> Hier unterschreiben</h2>
             <p className="text-sm text-muted-foreground mb-4">
               Mit dem Finger oder der Maus – wie auf Papier.
@@ -147,7 +157,8 @@ export default function Unterschreiben() {
                   <Label className="text-xs text-muted-foreground">Name</Label>
                   <Input value={namen[i] ?? ''} onChange={(e) => setNamen((n) => n.map((x, k) => (k === i ? e.target.value : x)))} placeholder="Vor- und Nachname" autoComplete="name" />
                 </div>
-                <SignaturePad onChange={(png) => setPngs((p) => p.map((x, k) => (k === i ? png : x)))} height={170} />
+                <UnterschriftFeld onChange={(png) => setPngs((p) => p.map((x, k) => (k === i ? png : x)))} height={170}
+                  titel={namen[i]?.trim() ? `Unterschrift ${namen[i].trim()}` : 'Hier unterschreiben'} />
                 <Button size="lg" className="w-full mt-3 gap-2" disabled={!pngs[i] || !namen[i]?.trim() || !gelesen || busy !== null} onClick={() => unterschreiben(i)}>
                   {busy === i ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {v.signers.length > 1 ? `Als ${namen[i]?.trim() || 'Unterzeichner ' + (i + 1)} unterschreiben` : 'Vertrag unterschreiben'}
@@ -162,6 +173,16 @@ export default function Unterschreiben() {
           Vertrag {v.number} · Prüfsumme {v.text_hash?.slice(0, 16)}… · ePower GmbH, Teufenbach-Katsch
         </p>
       </div>
+
+      {!fertig && !feldSichtbar && (
+        <div className="fixed inset-x-0 bottom-0 z-20 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-[#f6f5f2] via-[#f6f5f2]/95 to-transparent">
+          <div className="max-w-2xl mx-auto">
+            <Button size="lg" className="w-full gap-2 shadow-lg" onClick={() => signBox?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              <ArrowDown className="w-4 h-4" /> Zum Unterschreiben
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { SignaturePad } from '@/components/SignaturePad';
+import { UnterschriftFeld } from '@/components/UnterschriftFeld';
 import { VertragAnsicht, signerZuUnterschrift } from '@/components/VertragAnsicht';
 import { useAuth } from '@/hooks/useAuth';
 import { useCompanySettings } from '@/hooks/useBilling';
@@ -422,7 +422,7 @@ export default function VertragEditor() {
             <Label className="text-[11px] text-muted-foreground">Unterschrieben von</Label>
             <Input value={vertreter} onChange={(e) => setVertreter(e.target.value)} />
           </div>
-          <SignaturePad onChange={setSigPng} />
+          <UnterschriftFeld onChange={setSigPng} height={160} titel={`Unterschrift ${vertreter}`} />
           {handyQr && (
             <div className="hidden sm:flex items-center gap-3 rounded-lg border p-3">
               <img src={handyQr} alt="QR-Code: am Handy unterschreiben" className="w-24 h-24 shrink-0" />

@@ -77,7 +77,14 @@ export function buildContractPdf(v: Contract, t: VertragsText): jsPDF {
   const box = (x: number, yy: number, label: string, png: string | null, name: string | null, rolle: string | null | undefined, wann: string | null) => {
     setF(8, 'bold'); pdf.setTextColor(90, 90, 90);
     pdf.text(label, x, yy); yy += 3;
-    if (png) { try { pdf.addImage(png, 'PNG', x, yy, sigW, sigH); } catch { /* optional */ } }
+    if (png) {
+      try {
+        // Seitenverhältnis behalten und auf die Linie setzen – nicht in den Kasten strecken.
+        const p = pdf.getImageProperties(png);
+        const s = Math.min(sigW / p.width, sigH / p.height);
+        pdf.addImage(png, 'PNG', x, yy + sigH - p.height * s, p.width * s, p.height * s);
+      } catch { /* optional */ }
+    }
     pdf.setDrawColor(60, 60, 60); pdf.setLineWidth(0.3); pdf.line(x, yy + sigH + 1, x + sigW, yy + sigH + 1);
     setF(9); pdf.setTextColor(0, 0, 0);
     pdf.text((name || (png ? '' : 'noch nicht unterschrieben')) + (rolle ? ` · ${rolle}` : ''), x, yy + sigH + 5.5);

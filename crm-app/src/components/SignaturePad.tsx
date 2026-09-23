@@ -13,11 +13,42 @@ interface Props {
   className?: string;
 }
 
+/**
+ * Nur die Striche plus etwas Rand – sonst wird die Unterschrift im PDF-Kasten
+ * verzerrt, je nachdem wie breit das Feld am jeweiligen Gerät war.
+ */
+function zugeschnitten(c: HTMLCanvasElement): string {
+  const { width: w, height: h } = c;
+  const d = c.getContext('2d')!.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] === 0) continue;
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return c.toDataURL('image/png');
+  const rand = Math.round(6 * (window.devicePixelRatio || 1));
+  x0 = Math.max(0, x0 - rand); y0 = Math.max(0, y0 - rand);
+  x1 = Math.min(w - 1, x1 + rand); y1 = Math.min(h - 1, y1 + rand);
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  // Vollbild am Handy ergibt riesige Flächen – 1000 px Breite reichen fürs PDF.
+  const f = Math.min(1, 1000 / bw);
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(bw * f)); out.height = Math.max(1, Math.round(bh * f));
+  out.getContext('2d')!.drawImage(c, x0, y0, bw, bh, 0, 0, out.width, out.height);
+  return out.toDataURL('image/png');
+}
+
 export function SignaturePad({ onChange, height = 160, className = '' }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const zeichnet = useRef(false);
   const letzter = useRef<{ x: number; y: number } | null>(null);
-  const [leer, setLeer] = useState(true);
+  const [leer, setLeerState] = useState(true);
+  // Der Größen-Beobachter unten braucht den aktuellen Stand, nicht den vom Einrichten.
+  const leerRef = useRef(true);
+  const setLeer = (x: boolean) => { leerRef.current = x; setLeerState(x); };
 
   // Canvas scharf halten – auch auf Handys mit hoher Pixeldichte.
   useEffect(() => {
@@ -25,8 +56,8 @@ export function SignaturePad({ onChange, height = 160, className = '' }: Props) 
     const fit = () => {
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth;
-      // Vorhandene Striche beim Umbau nicht verlieren.
-      const alt = leer ? null : c.toDataURL();
+      // Vorhandene Striche beim Umbau (z. B. Handy gedreht) nicht verlieren.
+      const alt = leerRef.current ? null : c.toDataURL();
       c.width = Math.round(w * dpr); c.height = Math.round(height * dpr);
       const ctx = c.getContext('2d')!;
       ctx.scale(dpr, dpr);
@@ -36,7 +67,6 @@ export function SignaturePad({ onChange, height = 160, className = '' }: Props) 
     fit();
     const ro = new ResizeObserver(fit); ro.observe(c);
     return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
 
   const punkt = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -65,7 +95,7 @@ export function SignaturePad({ onChange, height = 160, className = '' }: Props) 
   const ende = () => {
     if (!zeichnet.current) return;
     zeichnet.current = false; letzter.current = null;
-    onChange(ref.current!.toDataURL('image/png'));
+    onChange(zugeschnitten(ref.current!));
   };
   const loeschen = () => {
     const c = ref.current!; const ctx = c.getContext('2d')!;
