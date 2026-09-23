@@ -4,7 +4,8 @@
  * Erst lesen, dann unterschreiben: bei mehreren Unterzeichnern (zwei
  * Geschäftsführer …) hat jeder sein eigenes Feld und unterschreibt für sich,
  * auch zu verschiedenen Zeiten über denselben Link. Sind alle durch, ist der
- * Vertrag geschlossen und geht als PDF per E-Mail hinaus.
+ * Vertrag geschlossen; die Seite kündigt das PDF an die Adresse des Kunden an –
+ * verschickt wird es von Hand aus dem CRM.
  */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
@@ -31,7 +32,6 @@ export default function Unterschreiben() {
   // Jeder Unterzeichner bestätigt für sich – der Link geht an alle.
   const [gelesen, setGelesen] = useState<boolean[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
-  const [geradeFertig, setGeradeFertig] = useState<{ gemailt: boolean } | null>(null);
   // Knopf unten „Zum Unterschreiben" – verschwindet, sobald das Feld im Bild ist.
   const [signBox, setSignBox] = useState<HTMLDivElement | null>(null);
   const [feldSichtbar, setFeldSichtbar] = useState(false);
@@ -70,7 +70,7 @@ export default function Unterschreiben() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setFehler(d.error || 'Unterschrift konnte nicht gespeichert werden.'); return; }
       setV((x) => x ? { ...x, status: d.fertig ? 'signed' : x.status, signers: d.signers } : x);
-      if (d.fertig) { setGeradeFertig({ gemailt: !!d.gemailt }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      if (d.fertig) window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch { setFehler('Verbindung fehlgeschlagen. Bitte noch einmal versuchen.'); }
     finally { setBusy(null); }
   };
@@ -119,9 +119,8 @@ export default function Unterschreiben() {
           <div className="bg-green-50 border border-green-300 rounded-2xl p-5 mb-4">
             <div className="font-bold flex items-center gap-2 text-green-800"><Check className="w-5 h-5" /> Der Vertrag ist von allen Seiten unterschrieben.</div>
             <p className="text-sm text-green-900/80 mt-1">
-              {geradeFertig?.gemailt
-                ? <>Das PDF mit allen Unterschriften wurde soeben an <b>{v.party_email}</b> gesendet.</>
-                : <>Sie erhalten den Vertrag mit allen Unterschriften zusätzlich per E-Mail{v.party_email ? <> an <b>{v.party_email}</b></> : null}.</>}
+              {/* Nur Hinweis – verschickt wird von Hand aus dem CRM, nie automatisch. */}
+              Der Vertrag mit allen Unterschriften wird Ihnen noch per E-Mail{v.party_email ? <> an <b>{v.party_email}</b></> : null} zugeschickt.
               {' '}Hier können Sie ihn auch gleich herunterladen.
             </p>
             <Button className="mt-3 gap-1" onClick={download}><Download className="w-4 h-4" /> Vertrag als PDF</Button>
@@ -131,6 +130,7 @@ export default function Unterschreiben() {
         {!fertig && erledigt > 0 && (
           <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 mb-4 text-sm">
             <b>{erledigt} von {v.signers.length}</b> Unterschriften sind da – es fehlt noch: {offen.map(({ s }) => s.name || 'ein Unterzeichner').join(', ')}.
+            {' '}Sobald alle unterschrieben haben, wird der Vertrag{v.party_email ? <> an <b>{v.party_email}</b></> : null} geschickt.
           </div>
         )}
 

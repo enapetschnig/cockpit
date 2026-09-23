@@ -6,11 +6,15 @@
  *
  * Mehrere Unterzeichner (zwei Geschäftsführer …) unterschreiben jeder für
  * sich, auch zu verschiedenen Zeiten. Erst wenn alle unterschrieben haben,
- * gilt der Vertrag als geschlossen – dann geht das PDF per Mail hinaus.
+ * gilt der Vertrag als geschlossen.
+ *
+ * Das PDF geht bewusst NICHT automatisch hinaus (Christoph, 23.09.2026): der
+ * Kunde liest, dass es noch an seine Adresse kommt, und Christoph bekommt per
+ * Telegram die Erinnerung, es im CRM mit „Dem Kunden senden" selbst zu schicken.
  */
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegram } from './_apps.js';
-import type { Contract, Signer, VertragsText } from '../src/lib/vertrag';
+import type { Signer } from '../src/lib/vertrag';
 
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown; query?: Record<string, string | string[] | undefined> }
 interface Res { status(c: number): Res; json(b: unknown): void; setHeader(k: string, v: string): void }
@@ -22,45 +26,9 @@ const kopf = (r: Req, name: string): string => {
 
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const OEFFENTLICH = 'id,number,status,party_company,party_name,party_email,text_frozen,text_hash,our_signature,our_signed_name,our_signed_at,signers,token_expires_at';
-const COCKPIT = process.env.COCKPIT_URL ?? 'https://cockpit-flax-tau.vercel.app';
 
 /** Nach außen ohne IP/Browser – die gehen den Kunden nichts an. */
 const publik = (s: Signer[]) => s.map(({ name, signature, signed_at }) => ({ name, signature, signed_at }));
-
-/**
- * Unterschriebenen Vertrag an den Kunden mailen – über die Gmail-Verbindung
- * im Cockpit. Ohne gemeinsames Geheimnis (MAIL_SHARED_SECRET) passiert nichts;
- * dann steht im Telegram-Ping, dass die Mail noch händisch raus muss.
- */
-async function vertragMailen(v: Contract & { text_frozen: VertragsText }): Promise<boolean> {
-  const secret = process.env.MAIL_SHARED_SECRET;
-  const to = (v.party_email || '').trim();
-  if (!secret || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return false;
-  try {
-    // Erst hier laden (und mit .js – die Funktion läuft als ES-Modul): ein Fehler
-    // im PDF-Teil darf das Unterschreiben nie blockieren.
-    const { buildContractPdf, contractFileName } = await import('../src/lib/contractPdf.js');
-    const pdf = buildContractPdf(v, v.text_frozen);
-    const base64 = Buffer.from(pdf.output('arraybuffer')).toString('base64');
-    const namen = v.signers.map((s) => s.name).filter(Boolean).join(' und ');
-    const r = await fetch(`${COCKPIT}/api/mail/send-document`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-mail-secret': secret },
-      body: JSON.stringify({
-        to,
-        subject: `Unterschriebener Vertrag ${v.number || ''} – ePower GmbH`,
-        text: `Guten Tag ${namen || ''},\n\nvielen Dank – der Vertrag ${v.number || ''} ist von allen Seiten unterschrieben. Anbei das PDF mit allen Unterschriften.\n\nWir freuen uns auf die Zusammenarbeit!\n\nBeste Grüße\n${v.our_signed_name || 'Christoph Napetschnig'}\nePower GmbH`,
-        fileName: contractFileName(v),
-        pdfBase64: base64,
-      }),
-    });
-    const d = await r.json().catch(() => ({}));
-    return r.ok && d.ok === true;
-  } catch (e) {
-    console.error('[vertrag] Mail fehlgeschlagen:', e);
-    return false;
-  }
-}
 
 export default async function handler(req: Req, res: Res): Promise<void> {
   res.setHeader('Cache-Control', 'no-store');
@@ -126,16 +94,15 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     if (error || !upd) return res.status(409).json({ error: 'Unterschrift konnte nicht gespeichert werden.' });
 
     const offen = signers.filter((s) => !s.signature).map((s) => s.name || '?');
-    let gemailt = false;
-    if (fertig) gemailt = await vertragMailen({ ...(v as Contract), signers, status: 'signed', customer_signed_at: jetzt });
+    const mail = (v.party_email || '').trim();
 
     await sendTelegram(
       fertig
         ? `✍️ Vertrag ${v.number || ''} vollständig unterschrieben: ${v.party_company || v.party_name || ''} (${signers.map((s) => s.name).join(', ')})` +
-          (gemailt ? `\n📧 PDF an ${v.party_email} gesendet` : `\n⚠️ PDF noch nicht gemailt – bitte im CRM „Dem Kunden senden"`)
+          `\n📧 Bitte das PDF ${mail ? `an ${mail} ` : ''}schicken – CRM → Vertrag → „Dem Kunden senden"`
         : `✍️ Vertrag ${v.number || ''}: ${name} hat unterschrieben – es fehlt noch: ${offen.join(', ')}`,
     );
-    return res.status(200).json({ ok: true, signed_at: jetzt, fertig, gemailt, signers: publik(signers) });
+    return res.status(200).json({ ok: true, signed_at: jetzt, fertig, signers: publik(signers) });
   }
 
   return res.status(405).json({ error: 'nur GET oder POST' });

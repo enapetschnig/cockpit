@@ -332,6 +332,8 @@ export default function VertragEditor() {
               <div className="font-semibold text-sm flex items-center gap-1.5 mb-1"><Check className="w-4 h-4 text-green-600" /> Von beiden Seiten unterschrieben</div>
               <p className="text-xs text-muted-foreground mb-2">
                 {signers.map((x) => x.name).filter(Boolean).join(' und ')} – zuletzt am {new Date(v.customer_signed_at || '').toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })}.
+                {/* Geht nicht automatisch hinaus – dem Kunden wurde es aber angekündigt. */}
+                {v.party_email && <> Dem Kunden wurde angekündigt, dass das PDF noch an <b>{v.party_email}</b> kommt.</>}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" className="h-8 gap-1" onClick={download}><Download className="w-3.5 h-3.5" /> PDF herunterladen</Button>
