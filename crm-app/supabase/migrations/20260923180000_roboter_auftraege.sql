@@ -44,3 +44,6 @@ drop policy if exists roboter_puls_lesen on crm.roboter_puls;
 create policy roboter_puls_lesen on crm.roboter_puls for select to authenticated using (true);
 grant select, insert, update on crm.roboter_auftraege to authenticated;
 grant select on crm.roboter_puls to authenticated;
+
+-- Welche Stufe schon per Telegram gemeldet wurde (je Stufe nur einmal; /api/roboter-melden)
+alter table crm.roboter_auftraege add column if not exists gemeldet text;
