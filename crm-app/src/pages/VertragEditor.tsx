@@ -63,6 +63,14 @@ export default function VertragEditor() {
 
   useEffect(() => { if (loaded) { setV(loaded); setMailTo(loaded.party_email || ''); } }, [loaded]);
 
+  // Wartet der Vertrag auf den Kunden: regelmäßig neu laden, damit neue
+  // Unterschriften (✓) hier erscheinen. Nicht während der Mail-Eingabe.
+  useEffect(() => {
+    if (loaded?.status !== 'signed_by_us' || mailDialog) return;
+    const t = setInterval(reload, 20000);
+    return () => clearInterval(t);
+  }, [loaded?.status, mailDialog, reload]);
+
   // Per QR am Handy geöffnet: gleich das Unterschriftsfeld zeigen.
   useEffect(() => { if (sp.get('unterschreiben') && loaded?.status === 'draft') setSignDialog(true); }, [sp, loaded]);
 
@@ -166,11 +174,34 @@ export default function VertragEditor() {
     if (id) { setSignDialog(false); setSigPng(null); toast.success('Unterschrieben – der Link für den Kunden ist bereit'); }
   };
 
-  /** Unsere Unterschrift zurücknehmen, solange der Kunde noch nicht unterschrieben hat. */
+  /**
+   * Nur diese Felder schreiben – nie den ganzen Stand vom Öffnen der Seite.
+   * Sonst überschreibt z. B. „Link erneuern" eine Kundenunterschrift, die
+   * inzwischen über den Link hereingekommen ist.
+   */
+  const teilSpeichern = async (felder: Partial<Contract>): Promise<boolean> => {
+    if (!user || !v.id) return false;
+    setBusy(true);
+    const ok = await saveContract({ id: v.id, ...felder }, user.id);
+    setBusy(false);
+    if (ok) reload();
+    return !!ok;
+  };
+
+  /** Unsere Unterschrift zurücknehmen – warnt, wenn schon ein Kunde unterschrieben hat. */
   const zurueck = async () => {
-    if (status !== 'signed_by_us') return;
-    await speichern({ status: 'draft', text_frozen: null, text_hash: null, our_signature: null, our_signed_at: null, token: null, token_expires_at: null });
-    toast.success('Wieder Entwurf – der alte Link ist ungültig');
+    if (status !== 'signed_by_us' || !v.id) return;
+    // Frisch aus der Datenbank: der Kunde kann seit dem Öffnen unterschrieben haben.
+    const { data } = await db.from('contracts').select('signers').eq('id', v.id).maybeSingle();
+    const schon = ((data?.signers || []) as Signer[]).filter((s) => s.signature).map((s) => s.name || 'Ein Unterzeichner');
+    if (schon.length && !confirm(`${schon.join(' und ')} ${schon.length > 1 ? 'haben' : 'hat'} schon unterschrieben.\n\nZurück zum Entwurf macht das ungültig – der Kunde muss danach neu unterschreiben. Trotzdem?`)) return;
+    const ok = await teilSpeichern({
+      status: 'draft', text_frozen: null, text_hash: null, our_signature: null, our_signed_at: null, token: null, token_expires_at: null,
+      // Keine alten Unterschriften unter einem Text, der sich jetzt wieder ändern kann.
+      signers: signers.map((x) => ({ name: x.name, rolle: x.rolle || null, signature: null, signed_at: null })),
+      customer_signature: null, customer_signed_name: null, customer_signed_at: null,
+    });
+    if (ok) toast.success('Wieder Entwurf – der alte Link ist ungültig');
   };
 
   /** Unterschriebenen Vertrag wieder öffnen: alle Unterschriften weg, Text wieder änderbar. */
@@ -186,8 +217,7 @@ export default function VertragEditor() {
 
   const linkErneuern = async () => {
     const ablauf = new Date(); ablauf.setDate(ablauf.getDate() + 30);
-    await speichern({ token: neuerToken(), token_expires_at: ablauf.toISOString() });
-    toast.success('Neuer Link erzeugt – der alte gilt nicht mehr');
+    if (await teilSpeichern({ token: neuerToken(), token_expires_at: ablauf.toISOString() })) toast.success('Neuer Link erzeugt – der alte gilt nicht mehr');
   };
 
   const pdf = () => buildContractPdf({ ...(v as Contract), our_signed_name: v.our_signed_name || vertreter }, text);
