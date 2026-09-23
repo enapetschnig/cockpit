@@ -229,10 +229,15 @@ export function buildDocumentPdf(
   // ── 8) Summe ──
   // Brutto-Basis: eine große „Summe" – exakt wie in den bisherigen Belegen.
   // Netto-Basis: Zwischensumme netto hier, Gesamtbetrag erst nach der USt-Aufstellung.
+  // Schlussrechnung: zuerst die volle Leistung – die Anzahlungen kommen darunter weg.
+  const dNet = Number(doc.deducted_net) || 0;
+  const dVat = Number(doc.deducted_vat) || 0;
+  const vollNet = round2(t.net + dNet);
+  const vollGross = round2(t.gross + dNet + dVat);
   ty += 1;
   setF(14, 'bold');
   pdf.text(inclVat ? 'Summe' : 'Zwischensumme netto', ML, ty);
-  pdf.text(`€ ${money(inclVat ? t.gross : t.net)}`, X_SUM, ty, { align: 'right' });
+  pdf.text(`€ ${money(inclVat ? vollGross : vollNet)}`, X_SUM, ty, { align: 'right' });
   ty += 4; hr(ty, 0.4); ty += 6;
 
   // ── 9) USt-Aufstellung ──
@@ -250,26 +255,75 @@ export function buildDocumentPdf(
     pdf.text(money(round2(g.net + g.vat)), X_SUM, ty, { align: 'right' });
     ty += 5;
   }
-  if (Number(doc.deducted_net) > 0) {
+  if (dNet > 0) {
     setF(9);
-    pdf.text(`abzüglich bereits verrechneter Anzahlungen: ${money(Number(doc.deducted_net))} netto / ${money(Number(doc.deducted_vat))} USt`, ML, ty + 1);
-    ty += 6;
+    const zeilen = (doc.deducted_note || '').split('\n').filter((z) => z.trim());
+    const abzug = zeilen.length ? zeilen
+      : [`abzüglich bereits verrechneter Anzahlungen: ${money(dNet)} netto / ${money(dVat)} USt`];
+    ty += 1;
+    for (const z of abzug) { for (const l of pdf.splitTextToSize(z, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; } }
+    if (zeilen.length > 1) {
+      setF(9, 'bold');
+      pdf.text(`Anzahlungen gesamt: ${money(dNet)} netto + ${money(dVat)} USt = ${money(round2(dNet + dVat))}`, ML, ty);
+      ty += 4.6;
+    }
+    ty += 1.4;
   }
 
-  // Bei Netto-Basis steht der zahlbare Betrag erst hier – nach der USt-Aufstellung.
-  if (!inclVat) {
+  // Bei Netto-Basis (oder nach Abzug) steht der zahlbare Betrag erst hier – nach der USt-Aufstellung.
+  if (!inclVat || dNet > 0) {
     ty += 1;
     setF(14, 'bold');
-    pdf.text('Gesamtbetrag', ML, ty);
+    pdf.text(dNet > 0 ? 'Zu zahlen' : 'Gesamtbetrag', ML, ty);
     pdf.text(`€ ${money(t.gross)}`, X_SUM, ty, { align: 'right' });
     ty += 4; hr(ty, 0.4); ty += 2;
+  }
+
+  // ── 9b) Anzahlungsrechnung: der Kunde sieht den ganzen Auftrag, nicht nur diesen Teil ──
+  const istAnzahlung = doc.kind === 'partial_invoice';
+  if (istAnzahlung && Number(doc.project_total) > 0) {
+    const gesamt = Number(doc.project_total);
+    const offen = Math.max(0, Number(doc.rest_offen) || 0);
+    const vorher = round2(gesamt - offen - t.net);
+    const q = t.net ? t.vat / t.net : 0.2;                       // USt-Anteil dieser Rechnung
+    const reihe = (label: string, n: number, fett = false) => {
+      setF(9, fett ? 'bold' : 'normal');
+      pdf.text(label, ML, ty);
+      pdf.text(money(n), ML + 148, ty, { align: 'right' });
+      pdf.text(money(round2(n * q)), ML + 172, ty, { align: 'right' });
+      pdf.text(money(round2(n * (1 + q))), X_SUM, ty, { align: 'right' });
+      ty += 4.8;
+    };
+    if (ty > H - 70) { pdf.addPage(); ty = 25; }
+    ty += 8;
+    setF(9, 'bold');
+    pdf.text('Übersicht zum Auftrag', ML, ty);
+    pdf.text('Netto €', ML + 148, ty, { align: 'right' });
+    pdf.text('USt €', ML + 172, ty, { align: 'right' });
+    pdf.text('Brutto €', X_SUM, ty, { align: 'right' });
+    ty += 2; hr(ty); ty += 4.5;
+    reihe('Gesamtauftrag', gesamt, true);
+    if (vorher > 0.01) reihe('bereits verrechnet', vorher);
+    reihe(`diese Anzahlung${doc.part_percent ? ` (${doc.part_percent} %)` : ''}`, t.net);
+    reihe('noch offen', offen, true);
+    if (offen > 0.01) {
+      setF(9);
+      pdf.text(doc.rest_faellig_am
+        ? `Der offene Betrag wird ab ${dateTime(doc.rest_faellig_am)} mit der Schlussrechnung verrechnet.`
+        : 'Der offene Betrag wird mit der Schlussrechnung verrechnet.', ML, ty + 0.5);
+      ty += 4.8;
+    }
   }
 
   // ── 10) Hinweise + Zahlungstext (wie bisher) ──
   ty += 6;
   setF(9);
   if (!isOffer) {
-    pdf.text('Lieferdatum = Rechnungsdatum', ML, ty); ty += 8;
+    // Anzahlung: die Leistung kommt erst – statt Lieferdatum der voraussichtliche Zeitpunkt (§ 11 UStG).
+    pdf.text(istAnzahlung
+      ? `Anzahlung vor Erbringung der Leistung · Leistungszeitpunkt: ${doc.service_date ? `voraussichtlich ${dateTime(doc.service_date)}` : 'noch nicht festgelegt'}`
+      : 'Lieferdatum = Rechnungsdatum', ML, ty);
+    ty += 8;
     const tage = s?.default_payment_days ?? 7;
     const zahl = doc.outro_text?.trim()
       || `Bitte überweisen Sie den Rechnungsbetrag innerhalb von ${tage} Tagen an das Bankkonto rechts oben. `
@@ -277,7 +331,7 @@ export function buildDocumentPdf(
     for (const l of pdf.splitTextToSize(zahl, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; }
     // Teilrechnung: der Kunde soll sehen, was der Auftrag insgesamt kostet
     // und wann der Rest kommt – sonst wirkt die zweite Rechnung wie aus dem Nichts.
-    if (Number(doc.project_total) > 0 && Number(doc.rest_offen) > 0) {
+    if (!istAnzahlung && Number(doc.project_total) > 0 && Number(doc.rest_offen) > 0) {
       const rest = Number(doc.rest_offen);
       const restUst = round2(t.byRate.reduce((a, g) => a + rest * (g.net / (t.net || 1)) * g.rate / 100, 0));
       const wann = doc.rest_faellig_am ? ` und wird ab ${dateTime(doc.rest_faellig_am)} in Rechnung gestellt` : '';

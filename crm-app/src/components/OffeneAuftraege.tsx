@@ -23,7 +23,7 @@ export function OffeneAuftraege({ kompakt = false }: { kompakt?: boolean }) {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <h3 className="font-semibold text-sm flex items-center gap-1.5">
           {faellig.length
-            ? <><AlarmClock className="w-4 h-4 text-amber-600" /> {faellig.length} Restrechnung{faellig.length > 1 ? 'en' : ''} fällig</>
+            ? <><AlarmClock className="w-4 h-4 text-amber-600" /> {faellig.length} Auftr{faellig.length > 1 ? 'äge' : 'ag'} zum Abrechnen fällig</>
             : <><Link2 className="w-4 h-4 text-muted-foreground" /> Aufträge in Teilrechnung</>}
         </h3>
         <span className="text-xs text-muted-foreground">
@@ -50,7 +50,7 @@ export function OffeneAuftraege({ kompakt = false }: { kompakt?: boolean }) {
                 </span>
                 <Link to={`/beleg/${a.letzteId}`}>
                   <Button size="sm" variant={istFaellig ? 'default' : 'outline'} className="gap-1 h-7 text-xs">
-                    <Receipt className="w-3.5 h-3.5" /> Restrechnung
+                    <Receipt className="w-3.5 h-3.5" /> Abrechnen
                   </Button>
                 </Link>
               </div>

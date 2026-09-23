@@ -116,6 +116,8 @@ export interface BillingDocument {
   part_percent: number | null;
   deducted_net: number;
   deducted_vat: number;
+  /** Schlussrechnung: die abgezogenen Anzahlungen, je Zeile eine (Nummer, Datum, netto, USt). */
+  deducted_note?: string | null;
   pdf_url: string | null;
   pdf_path: string | null;
   legacy_source: string | null;

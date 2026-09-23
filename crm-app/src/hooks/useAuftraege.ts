@@ -21,7 +21,7 @@ export interface Auftrag {
   verrechnet: number;    // bereits in Rechnung gestellt (netto, ohne Stornos)
   offen: number;         // noch nicht verrechnet
   restFaelligAm: string | null;
-  rechnungen: { id: string; number: string | null; net: number; doc_date: string; status: string }[];
+  rechnungen: { id: string; number: string | null; kind: string; net: number; doc_date: string; status: string }[];
   /** Die zuletzt geschriebene Rechnung – von ihr erbt die Restrechnung Empfänger und Texte. */
   letzteId: string;
 }
@@ -72,7 +72,7 @@ export function useAuftraege() {
         projektId, gesamt, verrechnet, offen,
         kunde: letzte.recipient_company || letzte.recipient_name || '—',
         restFaelligAm: [...aktiv].reverse().find((r) => r.rest_faellig_am)?.rest_faellig_am ?? null,
-        rechnungen: aktiv.map((r) => ({ id: r.id, number: r.number, net: Number(r.net || 0), doc_date: r.doc_date, status: r.status })),
+        rechnungen: aktiv.map((r) => ({ id: r.id, number: r.number, kind: r.kind, net: Number(r.net || 0), doc_date: r.doc_date, status: r.status })),
         letzteId: letzte.id,
       });
     }
