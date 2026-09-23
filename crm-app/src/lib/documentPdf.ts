@@ -9,19 +9,34 @@ import { EPOWER_LOGO } from './logoData';
  * EPC-QR-Code (SEPA „Scan-to-Pay") – der Kunde scannt ihn mit seiner Banking-App
  * und die Überweisung ist fertig ausgefüllt. Standard: EPC069-12.
  */
-export async function epcQr(opts: { name: string; iban: string; bic?: string; amount: number; reference: string }): Promise<string | null> {
-  const iban = (opts.iban || '').replace(/\s/g, '');
-  if (!iban || !opts.amount) return null;
-  const payload = [
+/**
+ * Inhalt des Zahlungs-QR (EPC/GiroCode, von George & Co. gelesen). Der Standard
+ * verbietet ein Trennzeichen nach der letzten befüllten Angabe – mit einem
+ * Zeilenumbruch am Ende lehnte George den Code ab. Zeilenumbrüche in Name oder
+ * Verwendungszweck würden die Felder verschieben, deshalb werden sie geglättet.
+ */
+export function epcPayload(opts: { name: string; iban: string; bic?: string; amount: number; reference: string }): string | null {
+  const iban = (opts.iban || '').replace(/\s/g, '').toUpperCase();
+  const betrag = Math.round((Number(opts.amount) || 0) * 100) / 100;
+  if (!iban || betrag < 0.01) return null;
+  const glatt = (t: string, max: number) => (t || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const felder = [
     'BCD', '002', '1', 'SCT',
-    (opts.bic || '').replace(/\s/g, ''),
-    (opts.name || '').slice(0, 70),
+    (opts.bic || '').replace(/\s/g, '').toUpperCase(),
+    glatt(opts.name, 70),
     iban,
-    `EUR${opts.amount.toFixed(2)}`,
-    '', '',
-    (opts.reference || '').slice(0, 140),
-    '',
-  ].join('\n');
+    `EUR${betrag.toFixed(2)}`,
+    '',                          // Zweck (Code) – leer
+    '',                          // strukturierte Referenz – leer
+    glatt(opts.reference, 140),  // Verwendungszweck: die Rechnungsnummer
+  ];
+  while (felder.length && felder[felder.length - 1] === '') felder.pop();
+  return felder.join('\n');
+}
+
+export async function epcQr(opts: { name: string; iban: string; bic?: string; amount: number; reference: string }): Promise<string | null> {
+  const payload = epcPayload(opts);
+  if (!payload) return null;
   try {
     return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 0, width: 240 });
   } catch { return null; }
@@ -319,11 +334,8 @@ export function buildDocumentPdf(
   ty += 6;
   setF(9);
   if (!isOffer) {
-    // Anzahlung: die Leistung kommt erst – statt Lieferdatum der voraussichtliche Zeitpunkt (§ 11 UStG).
-    pdf.text(istAnzahlung
-      ? `Anzahlung vor Erbringung der Leistung · Leistungszeitpunkt: ${doc.service_date ? `voraussichtlich ${dateTime(doc.service_date)}` : 'noch nicht festgelegt'}`
-      : 'Lieferdatum = Rechnungsdatum', ML, ty);
-    ty += 8;
+    // Anzahlung: die Leistung kommt erst – dann keine Lieferdatum-Zeile.
+    if (!istAnzahlung) { pdf.text('Lieferdatum = Rechnungsdatum', ML, ty); ty += 8; }
     const tage = s?.default_payment_days ?? 7;
     const zahl = doc.outro_text?.trim()
       || `Bitte überweisen Sie den Rechnungsbetrag innerhalb von ${tage} Tagen an das Bankkonto rechts oben. `

@@ -69,7 +69,6 @@ export default function BelegEditor() {
   const [abrechnen, setAbrechnen] = useState<'anzahlung' | 'schluss' | null>(null); // Fenster „Auftrag abrechnen“
   const [teilBetrag, setTeilBetrag] = useState<number | ''>('');   // was jetzt verrechnet wird (netto)
   const [restAm, setRestAm] = useState('');                        // wann der Rest fällig wird
-  const [leistungAm, setLeistungAm] = useState('');                // voraussichtliche Leistung (Anzahlung)
   const [zahlungOffen, setZahlungOffen] = useState(false);          // Zahlungs-Dialog
   const set = (p: Partial<BillingDocument>) => setDoc((d) => ({ ...d, ...p }));
 
@@ -373,7 +372,6 @@ export default function BelegEditor() {
         kind: 'partial_invoice', project_total: gesamt, part_percent: anteil,
         rest_offen: restDanach > 0.01 ? restDanach : null,
         rest_faellig_am: restDanach > 0.01 ? restAm : null,
-        service_date: leistungAm || null,
         discount_percent: 0, deducted_net: 0, deducted_vat: 0, deducted_note: null, prices_include_vat: false,
       };
       if (!isOffer && !auftrag) {
@@ -393,7 +391,7 @@ export default function BelegEditor() {
           items: pos,
         } } });
       }
-      setAbrechnen(null); setTeilBetrag(''); setRestAm(''); setLeistungAm('');
+      setAbrechnen(null); setTeilBetrag(''); setRestAm('');
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -548,7 +546,7 @@ export default function BelegEditor() {
             <div><Label className="text-xs text-muted-foreground">Fällig am</Label>
               <Input type="date" value={doc.due_date || ''} onChange={(e) => set({ due_date: e.target.value })} /></div>
           )}
-          <div><Label className="text-xs text-muted-foreground">{kind === 'partial_invoice' ? 'Leistung voraussichtlich' : 'Leistungsdatum'}</Label>
+          <div><Label className="text-xs text-muted-foreground">Leistungsdatum</Label>
             <Input type="date" value={doc.service_date || ''} onChange={(e) => set({ service_date: e.target.value })} /></div>
           <div className="sm:col-span-3">
             <Label className="text-xs text-muted-foreground">Einleitungstext</Label>
@@ -880,11 +878,6 @@ export default function BelegEditor() {
                       </div>
                     </div>
                   )}
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Leistung voraussichtlich (optional)</Label>
-                    <Input type="date" className="h-9 w-40 mt-1" value={leistungAm} onChange={(e) => setLeistungAm(e.target.value)} />
-                    <p className="text-[11px] text-muted-foreground mt-1">Leer lassen = „noch nicht festgelegt“ auf der Rechnung.</p>
-                  </div>
                   {betrag > 0 && (
                     <div className={'rounded-lg p-2.5 text-xs ' + (zuViel ? 'bg-red-50 text-red-700' : 'bg-muted/50')}>
                       {zuViel ? `Mehr als der offene Auftragswert (${eur(offen)}).`
