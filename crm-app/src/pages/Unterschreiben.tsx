@@ -28,7 +28,8 @@ export default function Unterschreiben() {
   // Eingaben je Unterzeichner
   const [namen, setNamen] = useState<string[]>([]);
   const [pngs, setPngs] = useState<(string | null)[]>([]);
-  const [gelesen, setGelesen] = useState(false);
+  // Jeder Unterzeichner bestätigt für sich – der Link geht an alle.
+  const [gelesen, setGelesen] = useState<boolean[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
   const [geradeFertig, setGeradeFertig] = useState<{ gemailt: boolean } | null>(null);
   // Knopf unten „Zum Unterschreiben" – verschwindet, sobald das Feld im Bild ist.
@@ -53,17 +54,18 @@ export default function Unterschreiben() {
         setV({ ...d.vertrag, signers: s });
         setNamen(s.map((x) => x.name));
         setPngs(s.map(() => null));
+        setGelesen(s.map(() => false));
       } catch { setFehler('Verbindung fehlgeschlagen. Bitte später noch einmal versuchen.'); }
     })();
   }, [token]);
 
   const unterschreiben = async (slot: number) => {
-    if (!v || !pngs[slot] || !namen[slot]?.trim() || !gelesen) return;
+    if (!v || !pngs[slot] || !namen[slot]?.trim() || !gelesen[slot]) return;
     setBusy(slot); setFehler(null);
     try {
       const r = await fetch('/api/vertrag', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, slot, name: namen[slot].trim(), signature: pngs[slot] }),
+        body: JSON.stringify({ token, slot, name: namen[slot].trim(), signature: pngs[slot], zustimmung: true }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setFehler(d.error || 'Unterschrift konnte nicht gespeichert werden.'); return; }
@@ -145,11 +147,6 @@ export default function Unterschreiben() {
               Mit dem Finger oder der Maus – wie auf Papier.
               {v.signers.length > 1 && ' Jeder Unterzeichner hat sein eigenes Feld und kann auch später über denselben Link unterschreiben.'}
             </p>
-            <label className="flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
-              <input type="checkbox" className="mt-1" checked={gelesen} onChange={(e) => setGelesen(e.target.checked)} />
-              <span>Ich habe den Vertrag gelesen und stimme ihm zu. Meine elektronische Unterschrift gilt wie eine handschriftliche.</span>
-            </label>
-
             {offen.map(({ s, i }) => (
               <div key={i} className={'rounded-xl border p-4 ' + (offen.length > 1 ? 'mb-4' : '')}>
                 {v.signers.length > 1 && <div className="text-xs font-semibold text-muted-foreground mb-2">Unterzeichner {i + 1}{s.rolle ? ` · ${s.rolle}` : ''}</div>}
@@ -159,7 +156,15 @@ export default function Unterschreiben() {
                 </div>
                 <UnterschriftFeld onChange={(png) => setPngs((p) => p.map((x, k) => (k === i ? png : x)))} height={170}
                   titel={namen[i]?.trim() ? `Unterschrift ${namen[i].trim()}` : 'Hier unterschreiben'} />
-                <Button size="lg" className="w-full mt-3 gap-2" disabled={!pngs[i] || !namen[i]?.trim() || !gelesen || busy !== null} onClick={() => unterschreiben(i)}>
+                <label className="flex items-start gap-2.5 text-sm mt-3 cursor-pointer select-none">
+                  <input type="checkbox" className="mt-0.5 w-5 h-5 shrink-0 accent-primary" checked={!!gelesen[i]}
+                    onChange={(e) => setGelesen((g) => g.map((x, k) => (k === i ? e.target.checked : x)))} />
+                  <span>
+                    Ich{namen[i]?.trim() ? <>, <b>{namen[i].trim()}</b>,</> : ''} habe den Vertrag gelesen und stimme ihm zu.
+                    Meine elektronische Unterschrift gilt wie eine handschriftliche.
+                  </span>
+                </label>
+                <Button size="lg" className="w-full mt-3 gap-2" disabled={!pngs[i] || !namen[i]?.trim() || !gelesen[i] || busy !== null} onClick={() => unterschreiben(i)}>
                   {busy === i ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {v.signers.length > 1 ? `Als ${namen[i]?.trim() || 'Unterzeichner ' + (i + 1)} unterschreiben` : 'Vertrag unterschreiben'}
                 </Button>

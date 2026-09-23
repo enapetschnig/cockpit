@@ -25,6 +25,8 @@ export interface Signer {
   signed_at: string | null;
   ip?: string | null;
   ua?: string | null;
+  /** Hat selbst bestätigt: „gelesen und stimme zu" – jeder für sich. */
+  zugestimmt?: boolean;
 }
 
 /** Aus „Herren Thomas Wilfinger und Roman Kancz" werden zwei Unterzeichner. */

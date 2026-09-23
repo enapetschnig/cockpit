@@ -82,7 +82,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   }
 
   if (req.method === 'POST') {
-    let b: { token?: string; slot?: number; name?: string; signature?: string } = {};
+    let b: { token?: string; slot?: number; name?: string; signature?: string; zustimmung?: boolean } = {};
     try { b = (typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {})) as typeof b; }
     catch { return res.status(400).json({ error: 'Body ist kein gültiges JSON' }); }
 
@@ -92,6 +92,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const sig = (b.signature ?? '').toString();
     if (!TOKEN_RE.test(token)) return res.status(400).json({ error: 'Ungültiger Link' });
     if (!name) return res.status(400).json({ error: 'Bitte Namen angeben' });
+    // Jeder Unterzeichner bestätigt für sich, dass er gelesen hat und zustimmt.
+    if (b.zustimmung !== true) return res.status(400).json({ error: 'Bitte bestätigen Sie, dass Sie den Vertrag gelesen haben und ihm zustimmen (ggf. Seite neu laden).' });
     // Ein leeres PNG ist ~90 Zeichen; alles Kleinere als 150 ist sicher keine Unterschrift.
     if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig) || sig.length < 150) return res.status(400).json({ error: 'Unterschrift fehlt' });
     if (sig.length > 400_000) return res.status(413).json({ error: 'Unterschrift zu groß' });
@@ -109,7 +111,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const ip = (kopf(req, 'x-forwarded-for').split(',')[0] || kopf(req, 'x-real-ip') || '').trim().slice(0, 64);
     const ua = kopf(req, 'user-agent').slice(0, 300);
     const jetzt = new Date().toISOString();
-    signers[slot] = { name, signature: sig, signed_at: jetzt, ip, ua };
+    signers[slot] = { ...signers[slot], name, signature: sig, signed_at: jetzt, ip, ua, zugestimmt: true };
     const fertig = signers.every((s) => !!s.signature);
 
     // Nur ändern, was noch auf Unterschriften wartet – zwei gleichzeitige Klicks
