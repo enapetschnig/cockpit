@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
@@ -27,6 +27,15 @@ import Unterschreiben from './pages/Unterschreiben';
 import WartungPage from './pages/WartungPage';
 
 const queryClient = new QueryClient();
+
+/**
+ * Je Beleg eine frische Editor-Seite. Sonst bliebe beim Sprung von einem
+ * Angebot auf „/beleg/neu“ (vorbereitete Anzahlung) der alte Stand stehen.
+ */
+function BelegSeite() {
+  const { id } = useParams();
+  return <BelegEditor key={id} />;
+}
 
 /** Nur interne Pfade – kein Sprung auf fremde Seiten über ?next=. */
 const sichererPfad = (p: string | null) => (p && p.startsWith('/') && !p.startsWith('//') ? p : '/');
@@ -130,7 +139,7 @@ const App = () => (
           <Route path="/buchhaltung" element={<ProtectedRoute><BuchhaltungPage /></ProtectedRoute>} />
           <Route path="/angebote-rechnung" element={<ProtectedRoute><BelegePage mode="offer" /></ProtectedRoute>} />
           <Route path="/rechnungen" element={<ProtectedRoute><BelegePage mode="invoice" /></ProtectedRoute>} />
-          <Route path="/beleg/:id" element={<ProtectedRoute><BelegEditor /></ProtectedRoute>} />
+          <Route path="/beleg/:id" element={<ProtectedRoute><BelegSeite /></ProtectedRoute>} />
           <Route path="/kunden" element={<ProtectedRoute><KundenPage /></ProtectedRoute>} />
           <Route path="/kassabuch" element={<ProtectedRoute><KassabuchPage /></ProtectedRoute>} />
           <Route path="/archiv" element={<ProtectedRoute><ArchivPage /></ProtectedRoute>} />
