@@ -28,6 +28,8 @@ interface Wunsch {
   melder: string | null;
   bild_pfad: string | null;
   audio_pfad: string | null;
+  /** Zusätzliche Fotos aus der App (bis zu 10). */
+  anhaenge?: string[] | null;
   erstellt_am: string;
   aktualisiert: string;
   gesehen_am: string | null;
@@ -45,11 +47,14 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   gesehen:   { label: 'In Arbeit', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   umgesetzt: { label: '✓ Erledigt', cls: 'bg-green-100 text-green-800 border-green-300 font-bold' },
   abgelehnt: { label: 'Abgelehnt', cls: 'bg-muted text-muted-foreground border-border' },
+  geloescht: { label: 'Gelöscht', cls: 'bg-muted text-muted-foreground border-border line-through' },
 };
 
-/** Offen = in der App nicht erledigt/abgelehnt UND hier nicht von Hand abgehakt. */
+/** In der App abgeschlossen – egal ob erledigt, abgelehnt oder vom Kunden gelöscht. */
+const ERLEDIGT = ['umgesetzt', 'abgelehnt', 'geloescht'];
+/** Offen = in der App nicht abgeschlossen UND hier nicht von Hand abgehakt. */
 const istOffen = (w: { status: string; erledigt_am: string | null }) =>
-  w.status !== 'umgesetzt' && w.status !== 'abgelehnt' && !w.erledigt_am;
+  !ERLEDIGT.includes(w.status) && !w.erledigt_am;
 
 function wann(iso: string): string {
   const d = new Date(iso);
@@ -152,8 +157,8 @@ export default function WuenschePage() {
     if (error) { toast.error('Konnte nicht gespeichert werden'); load(); }
   }
 
-  const datei = (w: Wunsch, art: 'bild' | 'audio') =>
-    `/api/wuensche-datei?id=${encodeURIComponent(w.id)}&art=${art}&token=${encodeURIComponent(token ?? '')}`;
+  const datei = (w: Wunsch, art: 'bild' | 'audio', nr?: number) =>
+    `/api/wuensche-datei?id=${encodeURIComponent(w.id)}&art=${art}${nr !== undefined ? `&nr=${nr}` : ''}&token=${encodeURIComponent(token ?? '')}`;
 
   return (
     <div className="min-h-screen bg-background">
@@ -303,6 +308,31 @@ export default function WuenschePage() {
                   </div>
                 </div>
               )}
+
+              {/* Weitere Fotos aus der App – das erste ist oft schon das Bild oben. */}
+              {token && (() => {
+                const weitere = (w.anhaenge ?? []).map((p, nr) => ({ p, nr })).filter(({ p }) => p !== w.bild_pfad);
+                if (!weitere.length) return null;
+                return (
+                  <div className="mt-3">
+                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                      <ImageIcon className="w-3 h-3" /> {weitere.length} weitere{weitere.length === 1 ? 's' : ''} Foto{weitere.length === 1 ? '' : 's'} – Klick vergrößert
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {weitere.map(({ nr }) => {
+                        const k = `${w.id}:${nr}`;
+                        return (
+                          <img key={nr} src={datei(w, 'bild', nr)} alt={`Foto ${nr + 1} aus der App`} loading="lazy"
+                            onClick={() => setBildOffen(bildOffen === k ? null : k)}
+                            className={'rounded-lg border bg-muted/30 ' +
+                              (bildOffen === k ? 'w-full cursor-zoom-out' : 'h-28 max-w-[10rem] object-cover cursor-zoom-in')}
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {w.audio_pfad && (
                 <audio controls preload="none" src={datei(w, 'audio')} className="mt-3 w-full max-w-xs" />

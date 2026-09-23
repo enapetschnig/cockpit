@@ -1,5 +1,5 @@
 /**
- * Datei-Proxy für Screenshots und Sprachnachrichten.
+ * Datei-Proxy für Screenshots, zusätzliche Fotos (`&nr=0…9`) und Sprachnachrichten.
  *
  * Die Dateien bleiben im privaten Bucket der jeweiligen App. Wir holen bei der
  * App-eigenen Edge Function `wunsch-datei` eine signierte URL (1 h gültig) und
@@ -33,10 +33,17 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   if (!id) return res.status(400).json({ error: 'id fehlt' });
 
   const sb = createClient(url, key, { auth: { persistSession: false }, db: { schema: 'crm' } });
-  const { data: w } = await sb.from('app_wuensche').select('app_key, bild_pfad, audio_pfad').eq('id', id).maybeSingle();
+  const { data: w } = await sb.from('app_wuensche').select('app_key, bild_pfad, audio_pfad, anhaenge').eq('id', id).maybeSingle();
   if (!w) return res.status(404).json({ error: 'nicht gefunden' });
 
-  const pfad = art === 'audio' ? w.audio_pfad : w.bild_pfad;
+  // `nr` = eines der zusätzlichen Fotos (0–9), sonst das Bildschirmfoto.
+  let pfad: string | null = art === 'audio' ? w.audio_pfad : w.bild_pfad;
+  const nr = eins(req.query.nr);
+  if (art === 'bild' && nr !== '') {
+    const i = Number(nr);
+    if (!Number.isInteger(i) || i < 0 || i > 9) return res.status(400).json({ error: 'nr ungültig' });
+    pfad = ((w.anhaenge as string[] | null) ?? [])[i] ?? null;
+  }
   if (!pfad) return res.status(404).json({ error: 'keine Datei hinterlegt' });
 
   const app = appInfo(w.app_key);

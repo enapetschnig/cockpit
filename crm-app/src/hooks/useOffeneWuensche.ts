@@ -22,7 +22,7 @@ export function useOffeneWuensche() {
     if (!user) { setAnzahl(0); return; }
     const { count } = await db.from('app_wuensche')
       .select('id', { count: 'exact', head: true })
-      .not('status', 'in', '("umgesetzt","abgelehnt")')
+      .not('status', 'in', '("umgesetzt","abgelehnt","geloescht")')
       .is('erledigt_am', null);
     setAnzahl(count ?? 0);
   }, [user]);

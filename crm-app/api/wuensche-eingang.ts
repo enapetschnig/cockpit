@@ -17,8 +17,14 @@ interface Payload {
   id?: string; art?: string; status?: string; text?: string;
   antwort?: string | null; seite?: string | null;
   bild_pfad?: string | null; audio_pfad?: string | null; melder?: string | null;
+  anhaenge?: unknown;
   erstellt_am?: string; aktualisiert_am?: string;
 }
+
+/** Wie die Edge Function `wunsch-datei` der Apps es verlangt: `<uuid>/<name>`. */
+const PFAD = /^[0-9a-f-]{36}\/[\w.-]+$/i;
+const anhaenge = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((p) => String(p)).filter((p) => PFAD.test(p)).slice(0, 10) : [];
 
 const kopf = (r: Req, name: string): string => {
   const v = r.headers[name];
@@ -70,6 +76,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     melder: str(b.melder),
     bild_pfad: str(b.bild_pfad),
     audio_pfad: str(b.audio_pfad),
+    // Zusätzliche Fotos (bis zu 10); Apps ohne dieses Feld schicken keins → leer.
+    anhaenge: anhaenge(b.anhaenge),
     erstellt_am: datum(b.erstellt_am),
     aktualisiert: datum(b.aktualisiert_am ?? b.erstellt_am),
   };
