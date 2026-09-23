@@ -6,7 +6,7 @@
 create table if not exists crm.roboter_auftraege (
   id              uuid primary key default gen_random_uuid(),
   app_key         text not null,
-  wunsch_ids      uuid[] not null,
+  wunsch_ids      text[] not null,   -- wie crm.app_wuensche.id (Text)
   status          text not null default 'analyse' check (status in
                     ('analyse','vorschlag','aendern','freigegeben','in_arbeit','vorschau',
                      'live','erledigt','abgelehnt','verworfen','wartet','fehler')),
