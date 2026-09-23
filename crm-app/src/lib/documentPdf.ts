@@ -20,9 +20,11 @@ export function epcPayload(opts: { name: string; iban: string; bic?: string; amo
   const betrag = Math.round((Number(opts.amount) || 0) * 100) / 100;
   if (!iban || betrag < 0.01) return null;
   const glatt = (t: string, max: number) => (t || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const bic = (opts.bic || '').replace(/\s/g, '').toUpperCase();
   const felder = [
-    'BCD', '002', '1', 'SCT',
-    (opts.bic || '').replace(/\s/g, '').toUpperCase(),
+    // Mit BIC die Version 001 – die lesen wirklich alle Banking-Apps; 002 nur ohne BIC.
+    'BCD', bic ? '001' : '002', '1', 'SCT',
+    bic,
     glatt(opts.name, 70),
     iban,
     `EUR${betrag.toFixed(2)}`,
@@ -38,7 +40,8 @@ export async function epcQr(opts: { name: string; iban: string; bic?: string; am
   const payload = epcPayload(opts);
   if (!payload) return null;
   try {
-    return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 0, width: 240 });
+    // margin 4 = die Ruhezone, die der QR-Standard verlangt – ohne sie scheitern manche Scanner.
+    return await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 4, width: 320 });
   } catch { return null; }
 }
 
@@ -376,7 +379,7 @@ export function buildDocumentPdf(
 
   // ── 11) QR mittig (wie bisher an dieser Stelle) ──
   if (qrDataUrl && !isOffer) {
-    const q = 28;
+    const q = 32;   // inkl. Ruhezone – der Code selbst bleibt gut 2,5 cm groß
     const qy = Math.min(ty + 8, H - 60);
     try { pdf.addImage(qrDataUrl, 'PNG', (W - q) / 2, qy, q, q); } catch { /* optional */ }
     setF(8);
