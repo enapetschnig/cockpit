@@ -10,7 +10,6 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegram } from './_apps.js';
-import { buildContractPdf, contractFileName } from '../src/lib/contractPdf';
 import type { Contract, Signer, VertragsText } from '../src/lib/vertrag';
 
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown; query?: Record<string, string | string[] | undefined> }
@@ -38,6 +37,9 @@ async function vertragMailen(v: Contract & { text_frozen: VertragsText }): Promi
   const to = (v.party_email || '').trim();
   if (!secret || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return false;
   try {
+    // Erst hier laden (und mit .js – die Funktion läuft als ES-Modul): ein Fehler
+    // im PDF-Teil darf das Unterschreiben nie blockieren.
+    const { buildContractPdf, contractFileName } = await import('../src/lib/contractPdf.js');
     const pdf = buildContractPdf(v, v.text_frozen);
     const base64 = Buffer.from(pdf.output('arraybuffer')).toString('base64');
     const namen = v.signers.map((s) => s.name).filter(Boolean).join(' und ');

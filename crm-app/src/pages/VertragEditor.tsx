@@ -4,9 +4,10 @@
  * Ablauf: Entwurf → ich unterschreibe (Text wird eingefroren, Link entsteht)
  * → Kunde unterschreibt über den Link → beide Unterschriften am PDF.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import QRCode from 'qrcode';
 import { AppNav } from '@/components/AppNav';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -28,7 +29,7 @@ import {
   type Contract, type Signer, type VertragsText,
 } from '@/lib/vertrag';
 import { eur, round2 } from '@/types/billing';
-import { ArrowLeft, Check, Copy, Download, FileSignature, Link2, Mail, MessageCircle, RefreshCw, Save, Trash2, Undo2, Plus, X, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Download, FileSignature, Link2, Mail, MessageCircle, RefreshCw, Save, Smartphone, Trash2, Undo2, Plus, X, RotateCcw } from 'lucide-react';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -53,12 +54,17 @@ export default function VertragEditor() {
   const [busy, setBusy] = useState(false);
   const [signDialog, setSignDialog] = useState(false);
   const [sigPng, setSigPng] = useState<string | null>(null);
+  const [handyQr, setHandyQr] = useState<string | null>(null);
+  const signiertHier = useRef(false);
   const [mailDialog, setMailDialog] = useState(false);
   const [mailTo, setMailTo] = useState('');
   const [kopiert, setKopiert] = useState(false);
   const set = (p: Partial<Contract>) => setV((x) => ({ ...x, ...p }));
 
   useEffect(() => { if (loaded) { setV(loaded); setMailTo(loaded.party_email || ''); } }, [loaded]);
+
+  // Per QR am Handy geöffnet: gleich das Unterschriftsfeld zeigen.
+  useEffect(() => { if (sp.get('unterschreiben') && loaded?.status === 'draft') setSignDialog(true); }, [sp, loaded]);
 
   // Neu aus einem Angebot: Partner, Betrag und Umfang übernehmen.
   useEffect(() => {
@@ -116,9 +122,35 @@ export default function VertragEditor() {
     return gespeichert;
   };
 
+  const bereitZumUnterschreiben = !busy && Number(v.total_net) > 0 && !!(v.party_company || v.party_name) && !signers.some((x) => !x.name.trim());
+
+  /** Erst speichern – so unterschreibt auch das Handy (per QR) genau diesen Stand. */
+  const signierenOeffnen = async () => { if (await speichern()) setSignDialog(true); };
+
+  const handyLink = v.id ? `${window.location.origin}/vertrag/${v.id}?unterschreiben=1` : '';
+  useEffect(() => {
+    if (!signDialog || !handyLink) { setHandyQr(null); return; }
+    QRCode.toDataURL(handyLink, { errorCorrectionLevel: 'M', margin: 1, width: 220 }).then(setHandyQr).catch(() => setHandyQr(null));
+  }, [signDialog, handyLink]);
+
+  // Während der Dialog offen ist: merken, wenn am Handy unterschrieben wurde.
+  useEffect(() => {
+    if (!signDialog || !v.id || !editierbar) return;
+    const t = setInterval(async () => {
+      if (signiertHier.current) return;
+      const { data } = await db.from('contracts').select('status').eq('id', v.id).maybeSingle();
+      if (data && data.status !== 'draft') {
+        setSignDialog(false); reload();
+        toast.success('Am Handy unterschrieben – der Link für den Kunden ist bereit');
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [signDialog, v.id, editierbar, reload]);
+
   /** Ich unterschreibe: Text einfrieren, Unterschrift ablegen, Link erzeugen. */
   const unterschreiben = async () => {
     if (!sigPng || !user) return;
+    signiertHier.current = true;
     try { localStorage.setItem(VERTRETER_KEY, vertreter); } catch { /* egal */ }
     const jetzt = new Date().toISOString();
     const frozen = vertragsText({ ...v, our_signed_at: jetzt }, anbieter);
@@ -130,6 +162,7 @@ export default function VertragEditor() {
       signers: signers.map((x) => ({ name: x.name.trim(), rolle: x.rolle || null, signature: null, signed_at: null })),
       token: neuerToken(), token_expires_at: ablauf.toISOString(),
     });
+    signiertHier.current = false;
     if (id) { setSignDialog(false); setSigPng(null); toast.success('Unterschrieben – der Link für den Kunden ist bereit'); }
   };
 
@@ -209,17 +242,17 @@ export default function VertragEditor() {
   return (
     <div className="min-h-screen bg-background">
       <AppNav>
+        {/* Am Handy nur Symbole – sonst schiebt die Leiste die Knöpfe aus dem Bild. */}
         {editierbar && (
-          <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => speichern()}>
-            <Save className="w-4 h-4" /> Speichern
+          <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => speichern()} aria-label="Speichern">
+            <Save className="w-4 h-4" /> <span className="hidden sm:inline">Speichern</span>
           </Button>
         )}
-        <Button size="sm" variant="outline" className="gap-1" onClick={download}>
-          <Download className="w-4 h-4" /> PDF
+        <Button size="sm" variant="outline" className="gap-1" onClick={download} aria-label="PDF">
+          <Download className="w-4 h-4" /> <span className="hidden sm:inline">PDF</span>
         </Button>
         {editierbar && (
-          <Button size="sm" className="gap-1" disabled={busy || !(Number(v.total_net) > 0) || !(v.party_company || v.party_name) || signers.some((x) => !x.name.trim())}
-            onClick={() => setSignDialog(true)}>
+          <Button size="sm" className="gap-1 hidden lg:inline-flex" disabled={!bereitZumUnterschreiben} onClick={signierenOeffnen}>
             <FileSignature className="w-4 h-4" /> Jetzt unterschreiben
           </Button>
         )}
@@ -234,6 +267,12 @@ export default function VertragEditor() {
               {CONTRACT_STATUS_LABEL[status]}
             </Badge>
           </div>
+
+          {editierbar && (
+            <Button size="lg" className="w-full gap-2 lg:hidden" disabled={!bereitZumUnterschreiben} onClick={signierenOeffnen}>
+              <FileSignature className="w-4 h-4" /> Jetzt unterschreiben
+            </Button>
+          )}
 
           {/* Link-Kasten: das Herzstück, sobald ich unterschrieben habe */}
           {status === 'signed_by_us' && link && (
@@ -384,7 +423,16 @@ export default function VertragEditor() {
             <Input value={vertreter} onChange={(e) => setVertreter(e.target.value)} />
           </div>
           <SignaturePad onChange={setSigPng} />
-          <div className="flex justify-end gap-2">
+          {handyQr && (
+            <div className="hidden sm:flex items-center gap-3 rounded-lg border p-3">
+              <img src={handyQr} alt="QR-Code: am Handy unterschreiben" className="w-24 h-24 shrink-0" />
+              <div className="text-xs text-muted-foreground">
+                <div className="font-medium text-foreground flex items-center gap-1 mb-0.5"><Smartphone className="w-3.5 h-3.5" /> Lieber am Handy?</div>
+                QR-Code scannen und dort mit dem Finger unterschreiben – dieses Fenster merkt es von selbst.
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={() => setSignDialog(false)}>Abbrechen</Button>
             <Button onClick={unterschreiben} disabled={!sigPng || !vertreter.trim() || busy} className="gap-1">
               <FileSignature className="w-4 h-4" /> Unterschreiben und Link erzeugen

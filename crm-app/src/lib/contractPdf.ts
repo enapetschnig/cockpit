@@ -4,7 +4,7 @@
  * Unterschriften als Bild mit Name, Ort und Zeitpunkt.
  */
 import { jsPDF } from 'jspdf';
-import { EPOWER_LOGO } from './logoData';
+import { EPOWER_LOGO } from './logoData.js';
 import type { Contract, Signer, VertragsText } from './vertrag';
 
 const zeit = (iso?: string | null) => {
