@@ -37,9 +37,15 @@ export interface RoboterAuftrag {
   yolo?: boolean;
   freigegeben_am?: string | null;
   sitzungen?: string[];
+  vor_kunde?: string | null;        // was vor der Antwort an den Kunden noch nötig ist (nur Christoph kann es)
+  vor_kunde_ok_am?: string | null;  // Christophs OK zu genau dieser Liste
   erstellt_am: string;
   aktualisiert: string;
 }
+
+/** Live, aber der Kunde wartet noch auf Christophs OK (Roboter 2.8) – „Nochmal versuchen“ zählt hier nicht. */
+const vorDemKunden = (a: RoboterAuftrag) =>
+  a.status === 'wartet' && !!a.vor_kunde && !a.vor_kunde_ok_am && (a.fehler ?? '').startsWith('🧾 Vor dem Kunden');
 
 const STATUS: Record<string, { label: string; cls: string; arbeitet?: boolean }> = {
   analyse:     { label: 'Roboter analysiert …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
@@ -363,7 +369,15 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
               )}
               {(a.status === 'fehler' || a.status === 'wartet') && (
                 <>
-                  {!handarbeit && <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>}
+                  {/* Live, aber vor der Antwort an den Kunden fehlte noch etwas, das nur Christoph kann – sein OK zu genau dieser Liste */}
+                  {!handarbeit && (vorDemKunden(a)
+                    ? <Button size="sm" onClick={() => confirm(`Erledigt?\n\n${a.vor_kunde}\n\nDer Roboter prüft dann den Live-Stand nochmal und schickt dem Kunden erst danach die Antwort.`)
+                        && setze(a, { status: 'live', vor_kunde_ok_am: new Date().toISOString() },
+                          'Der Kunde bekommt die Antwort, sobald der Roboter den Live-Stand geprüft hat',
+                          { von: ['wartet'], nurWenn: { vor_kunde: a.vor_kunde ?? null, vor_kunde_ok_am: null } })}>
+                        ✅ Erledigt – Kunde bekommt Bescheid
+                      </Button>
+                    : <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>)}
                   <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
                 </>
               )}

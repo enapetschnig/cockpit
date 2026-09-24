@@ -32,6 +32,9 @@ export interface Auftrag {
   freigegeben_am: Date | null; // gesetzt = Christoph (oder YOLO) hat den Vorschlag freigegeben
   sitzungen: string[]; // Claude-Sitzungen, in denen der Roboter daran gearbeitet hat
   ver: string; // Kurz-Prüfsumme von Vorschlag + Datenbank-Stand: ein „Ja“ gilt nur für den gezeigten Stand
+  vor_kunde: string | null; // was vor der Antwort an den Kunden noch nötig ist (nur Christoph kann es)
+  vor_kunde_ok_am: Date | null; // Christophs OK zu genau dieser Liste
+  vk: string; // Kurz-Prüfsumme von vor_kunde: „✅ Erledigt“ gilt nur für die gezeigte Liste
   erstellt_am: Date;
   aktualisiert: Date;
 }
@@ -93,9 +96,10 @@ export const ohneMarkdown = (s: string) =>
     .replace(/^\s*[-*]\s+/gm, "• ");
 
 const VER = Prisma.sql`left(md5(coalesce(vorschlag, '') || '|' || coalesce(db_hash, '')), 8)`;
+const VK = Prisma.sql`left(md5(coalesce(vor_kunde, '')), 8)`;
 const SPALTEN = Prisma.sql`id::text as id, app_key, wunsch_ids, status, vorschlag, aufwand, risiko, datenbank,
   antwort_kunde, anmerkung, zweig, vorschau_url, fehler, protokoll, gemeldet, db_info, yolo, freigegeben_am, sitzungen,
-  ${VER} as ver, erstellt_am, aktualisiert`;
+  ${VER} as ver, vor_kunde, vor_kunde_ok_am, ${VK} as vk, erstellt_am, aktualisiert`;
 
 // ── Lesen ──────────────────────────────────────────────────────────────────
 /** app_key → Kundenname (aus dem CRM; Apps ohne Kunde behalten ihren Schlüssel). */
@@ -200,6 +204,21 @@ const nurStand = (ver?: string) => (ver ? Prisma.sql`and ${VER} = ${ver}` : Pris
 /** Nur Altaufträge aus Roboter 2.1: umgesetzt, Datenbank sollte von Hand eingespielt werden. */
 export const handarbeit = (a: Auftrag) =>
   a.status === "wartet" && a.datenbank && !!a.zweig && /bewusst nicht selbst ein/.test(a.fehler ?? "");
+/**
+ * Live, aber vor der Antwort an den Kunden fehlt noch etwas, das nur Christoph kann (Roboter 2.8). Sein OK gibt es
+ * nur über „✅ Erledigt“ (rob:vk, gebunden an genau diese Liste) – „Nochmal“ zählt hier nicht. Der Roboter prüft
+ * danach den Live-Stand erneut und schickt dem Kunden erst dann die Antwort.
+ */
+export const vorDemKunden = (a: Auftrag) =>
+  a.status === "wartet" && !!a.vor_kunde && !a.vor_kunde_ok_am && (a.fehler ?? "").startsWith("🧾 Vor dem Kunden");
+// → „live“: Der Roboter geht direkt in den Live-Schritt (schon zusammengeführt) – prüft Live-Stand und Schlüssel
+// erneut und schickt dem Kunden erst dann die Antwort. Geht auch bei Altaufträgen ohne Freigabe-Zeitpunkt.
+export const vorKundeBestaetigen = (id: string, vk: string) =>
+  wechsel(id, ["wartet"], Prisma.sql`status = 'live', vor_kunde_ok_am = now()`,
+    Prisma.sql`and vor_kunde is not null and vor_kunde_ok_am is null and ${VK} = ${vk}
+      and coalesce(fehler, '') like '🧾 Vor dem Kunden%'`);
+/** Bis zu dieser Länge passt die ganze Liste auf die Telegram-Karte – länger: nur im CRM bestätigen. */
+export const VOR_KUNDE_TELEGRAM = 2400;
 
 // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) landete sonst als „ging schief“ im Umsetzen-Prompt.
 export const freigeben = (id: string, ver?: string) =>
@@ -221,7 +240,8 @@ export const datenbankFreigeben = (id: string, ver?: string) =>
 export const datenbankEinspielen = (id: string, ver?: string) =>
   wechsel(id, ["wartet"], Prisma.sql`status = 'db_pruefen', fehler = null`, nurStand(ver));
 export async function nochmal(a: Auftrag): Promise<boolean> {
-  if (handarbeit(a)) return false;
+  // Wartet der Kunde auf Christophs OK („vor dem Kunden“), ist „Nochmal“ kein OK – dafür gibt es „✅ Erledigt“.
+  if (handarbeit(a) || vorDemKunden(a)) return false;
   // Umsetzen nur, wenn wirklich freigegeben wurde – ein bloß vorhandener Vorschlag reicht nicht
   // (ältere Aufträge: zurück zur Vorschau).
   const ziel = a.vorschau_url ? "vorschau" : a.freigegeben_am ? "freigegeben" : "analyse";
@@ -385,7 +405,13 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
     case "fehler":
       return [
         [
-          handarbeit(a) ? { text: "🗄 Datenbank einspielen & live", data: `rob:dbp:${id}` } : { text: "🔁 Nochmal versuchen", data: `rob:nochmal:${id}` },
+          handarbeit(a)
+            ? { text: "🗄 Datenbank einspielen & live", data: `rob:dbp:${id}` }
+            : vorDemKunden(a)
+              ? (a.vor_kunde ?? "").length <= VOR_KUNDE_TELEGRAM
+                ? { text: "✅ Erledigt – Kunde bekommt Bescheid", data: `rob:vk:${id}:${a.vk}` }
+                : { text: "✅ Im CRM bestätigen (Liste zu lang)", url: `${CRM_LINK}${id}` }
+              : { text: "🔁 Nochmal versuchen", data: `rob:nochmal:${id}` },
           { text: "🗑 Verwerfen", data: `rob:verw:${id}` },
         ],
         [{ text: "💬 Mit Roboter reden", data: `rob:chat:${id}` }, crm],
@@ -426,8 +452,15 @@ function karteText(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOp
     fuss.push("", `<b>Datenbank${a.status === "db_freigabe" ? " – das würde sich ändern" : ""}</b>`, esc(kuerzen(a.db_info, n(900))));
   }
   if (a.protokoll && ["erledigt", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) fuss.push("", "<b>Umgesetzt</b>", esc(kuerzen(ohneMarkdown(a.protokoll), n(700))));
-  if (a.antwort_kunde && ["vorschlag", "vorschau"].includes(a.status)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, n(450)))}</i>`);
-  if (a.fehler && ["wartet", "fehler"].includes(a.status)) fuss.push("", `⚠️ ${esc(kuerzen(a.fehler, n(600)))}`);
+  const vk = vorDemKunden(a);
+  if (a.antwort_kunde && (["vorschlag", "vorschau"].includes(a.status) || vk)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, n(450)))}</i>`);
+  if (vk) {
+    // Die GANZE Liste – „✅ Erledigt“ bestätigt genau sie (Prüfsumme). Zu lang für Telegram → nur im CRM bestätigen.
+    const liste = a.vor_kunde ?? "";
+    fuss.push("", "<b>🧾 Bevor der Kunde Bescheid bekommt</b>",
+      esc(liste.length <= VOR_KUNDE_TELEGRAM ? liste : kuerzen(liste, VOR_KUNDE_TELEGRAM)),
+      "<i>Die Änderung ist schon live. Wenn das erledigt ist (oder es ohne geht): „✅ Erledigt“ – der Roboter prüft dann nochmal und schickt dem Kunden erst danach die Antwort.</i>");
+  } else if (a.fehler && ["wartet", "fehler"].includes(a.status)) fuss.push("", `⚠️ ${esc(kuerzen(a.fehler, n(600)))}`);
   // z. B. „YOLO wurde ausgeschaltet – schon umgesetzt im Zweig …“
   if (a.fehler && a.status === "vorschlag") fuss.push("", `ℹ️ ${esc(kuerzen(a.fehler, n(400)))}`);
   if (opts.bestaetigen) {

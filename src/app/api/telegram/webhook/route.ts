@@ -452,6 +452,9 @@ async function roboterKnopf(cb: TgCallback) {
       return danach("🗑 Verworfen", await roboter.verwerfen(a.id));
     case "nochmal":
       return danach("🔁 Der Roboter versucht es erneut", await roboter.nochmal(a));
+    case "vk": // rob:vk:<id>:<Prüfsumme der Liste> – Christophs OK zu genau der gezeigten Liste „vor dem Kunden“
+      return danach("✅ Danke – der Roboter prüft den Live-Stand nochmal und schickt dem Kunden dann die Antwort",
+        !!zusatz && zusatz === a.vk && (await roboter.vorKundeBestaetigen(a.id, zusatz)));
     case "vsc": // „In VS Code erledigt“ aus 2.1 gibt es nicht mehr
     default:
       await tgAnswerCallback(cb.id, "Knopf veraltet – bitte /wuensche");

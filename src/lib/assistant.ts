@@ -244,6 +244,11 @@ async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Prom
     case "roboter_ablehnen":
       return (await roboter.ablehnen(auftrag.id)) ? { ok: true } : { error: `Geht nur bei einem Vorschlag – Status ist '${auftrag.status}'.` };
     case "roboter_nochmal":
+      if (roboter.vorDemKunden(auftrag)) {
+        // Hier ist „Nochmal“ kein OK – der Kunde wartet auf Christophs Bestätigung genau dieser Liste (Knopf auf der Karte).
+        karten.push(await roboter.karteFuer(auftrag));
+        return { error: "Der Auftrag ist schon live – der Kunde wartet nur noch auf Christophs OK zu „Bevor der Kunde Bescheid bekommt“. Das geht nur über den Knopf „✅ Erledigt – Kunde bekommt Bescheid“ auf der Karte (wird angezeigt). Sag ihm das kurz." };
+      }
       return (await roboter.nochmal(auftrag)) ? { ok: true } : { error: `Geht nur, wenn er wartet oder einen Fehler hatte – Status ist '${auftrag.status}'.` };
     case "roboter_frage":
       await roboter.frageStellen(auftrag.app_key, auftrag.id, a.frage || "");
