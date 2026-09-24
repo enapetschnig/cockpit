@@ -116,6 +116,18 @@ export async function tgSetWebhook(url: string, secret: string): Promise<{ ok: b
   return (await res.json()) as { ok: boolean; description?: string };
 }
 
+/** Zeigt oben „schreibt …“ (hält ein paar Sekunden) – z. B. während der Roboter nachdenkt. */
+export async function tgTippt(): Promise<void> {
+  const token = await getConfig("TELEGRAM_BOT_TOKEN");
+  const chatId = await getConfig("TELEGRAM_CHAT_ID");
+  if (!token || !chatId) return;
+  await fetch(`${API(token)}/sendChatAction`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, action: "typing" }),
+  }).catch(() => {});
+}
+
 /** Beantwortet einen Button-Klick (entfernt die Lade-Animation, zeigt optional einen Hinweis). */
 export async function tgAnswerCallback(callbackId: string, text?: string): Promise<void> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");

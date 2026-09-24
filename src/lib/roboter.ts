@@ -325,6 +325,37 @@ export async function frageStellen(appKey: string, auftragId: string | null, fra
   return f.id;
 }
 
+// ── Gespräch mit dem Roboter (Telegram) ────────────────────────────────────
+/**
+ * „/chat schafferhofer“ bzw. „💬 Mit Roboter reden“: solange das Gespräch läuft, gehen Christophs
+ * Nachrichten direkt an den Roboter dieses Kunden (Claude im Projekt-Verlauf) – bis /fertig oder
+ * 30 Minuten Ruhe. Gemerkt in cockpit.Setting, nur eine Unterhaltung zur Zeit.
+ */
+const CHAT_KEY = "ROBOTER_CHAT";
+const CHAT_RUHE_MS = 30 * 60_000;
+export interface Gespraech { appKey: string; auftrag: string | null; bis: number }
+
+export async function gespraechStarten(appKey: string, auftrag: string | null): Promise<void> {
+  const v = JSON.stringify({ appKey, auftrag, bis: Date.now() + CHAT_RUHE_MS } satisfies Gespraech);
+  await prisma.setting.upsert({ where: { key: CHAT_KEY }, create: { key: CHAT_KEY, value: v }, update: { value: v } });
+}
+export async function gespraechBeenden(): Promise<void> {
+  await prisma.setting.deleteMany({ where: { key: CHAT_KEY } });
+}
+/** Laufendes Gespräch (und gleich um 30 Minuten verlängert) – oder null. */
+export async function gespraech(verlaengern = false): Promise<Gespraech | null> {
+  const row = await prisma.setting.findUnique({ where: { key: CHAT_KEY } });
+  if (!row?.value) return null;
+  try {
+    const g = JSON.parse(row.value) as Gespraech;
+    if (!g.appKey || g.bis < Date.now()) return null;
+    if (verlaengern) await gespraechStarten(g.appKey, g.auftrag);
+    return g;
+  } catch {
+    return null;
+  }
+}
+
 // ── Telegram-Karten ────────────────────────────────────────────────────────
 function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
   const id = a.id;
@@ -338,12 +369,12 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
     case "vorschlag":
       return [
         [{ text: "✅ Freigeben & live", data: `rob:frei:${id}` }, { text: "✏️ Ändern", data: `rob:aend:${id}` }],
-        [{ text: "💬 Frage", data: `rob:frage:${id}` }, { text: "❌ Ablehnen", data: `rob:abl:${id}` }, crm],
+        [{ text: "💬 Mit Roboter reden", data: `rob:chat:${id}` }, { text: "❌ Ablehnen", data: `rob:abl:${id}` }, crm],
       ];
     case "db_freigabe":
       return [
         [{ text: "🗄 Einspielen & live", data: `rob:frei:${id}` }],
-        [{ text: "💬 Frage", data: `rob:frage:${id}` }, { text: "🗑 Verwerfen", data: `rob:verw:${id}` }, crm],
+        [{ text: "💬 Mit Roboter reden", data: `rob:chat:${id}` }, { text: "🗑 Verwerfen", data: `rob:verw:${id}` }, crm],
       ];
     case "vorschau":
       return [
@@ -357,7 +388,7 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
           handarbeit(a) ? { text: "🗄 Datenbank einspielen & live", data: `rob:dbp:${id}` } : { text: "🔁 Nochmal versuchen", data: `rob:nochmal:${id}` },
           { text: "🗑 Verwerfen", data: `rob:verw:${id}` },
         ],
-        [{ text: "💬 Frage", data: `rob:frage:${id}` }, crm],
+        [{ text: "💬 Mit Roboter reden", data: `rob:chat:${id}` }, crm],
       ];
     default:
       return [[crm]];

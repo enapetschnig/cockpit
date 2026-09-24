@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage } from "@/lib/telegram";
+import { sendTelegram, tgDownloadFile, tgAnswerCallback, tgEditMessage, tgTippt } from "@/lib/telegram";
 import { transcribeVoice } from "@/lib/openai";
 import { sendReply, sendNewEmail, type Account } from "@/lib/gmail";
 import { createEvent } from "@/lib/calendar";
@@ -170,6 +170,25 @@ async function handleMessage(msg: TgMessage) {
     await sendTelegram(k.text, { buttons: k.buttons });
     return;
   }
+  // Direkt mit dem Roboter eines Kunden reden: /chat schafferhofer … /fertig
+  if (text.startsWith("/fertig") || text.startsWith("/ende")) {
+    await roboter.gespraechBeenden();
+    await sendTelegram("👋 Gespräch mit dem Roboter beendet – ab jetzt antworte wieder ich (Assistent).");
+    return;
+  }
+  if (text.startsWith("/chat")) {
+    const wer = text.replace(/^\/chat(@\w+)?/, "").trim();
+    if (!wer) {
+      const g = await roboter.gespraech();
+      const name = g ? (await roboter.kundenNamen()).get(g.appKey) ?? g.appKey : null;
+      await sendTelegram(g
+        ? `💬 Du redest gerade mit dem Roboter von <b>${esc(name!)}</b>. /fertig beendet das Gespräch.`
+        : "Mit wem? Zum Beispiel: <b>/chat schafferhofer</b>");
+      return;
+    }
+    await gespraechOeffnen(wer);
+    return;
+  }
 
   // Anweisung aus Text oder Sprachnachricht
   let instruction = text.trim();
@@ -184,11 +203,12 @@ async function handleMessage(msg: TgMessage) {
   }
   if (!instruction) return;
 
-  // Antwort auf eine Roboter-Nachricht? Die tragen unten „Auftrag xxxxxxxx“.
+  // Antwort auf eine Roboter-Nachricht? Die tragen unten „Auftrag xxxxxxxx“ bzw. „Projekt <app>“.
   const bezug = msg.reply_to_message?.text || "";
   // die letzte Fundstelle – weiter oben könnte ein Wunschtext „Auftrag 12345678“ enthalten
   const ref = [...bezug.matchAll(/Auftrag ([0-9a-f]{8})\b/g)].pop()?.[1];
   const auftrag = ref ? await roboter.ladeAuftrag(ref) : null;
+  const projekt = auftrag?.app_key ?? [...bezug.matchAll(/Projekt ([a-z0-9._-]+)/g)].pop()?.[1] ?? null;
   if (auftrag && bezug.startsWith("✏️")) {
     const ok = await roboter.aendern(auftrag.id, instruction);
     await sendTelegram(ok
@@ -196,8 +216,17 @@ async function handleMessage(msg: TgMessage) {
       : `Das geht gerade nicht mehr (Status: ${esc(auftrag.status)}). /wuensche zeigt den aktuellen Stand.`);
     return;
   }
-  if (auftrag && bezug.startsWith("💬 Was möchtest")) {
-    await roboterFrage(auftrag.app_key, auftrag.id, instruction);
+  // Antworten auf Roboter-Nachrichten gehen direkt an den Roboter (Claude im Projekt-Verlauf) –
+  // er antwortet selbst und kann den Vorschlag überarbeiten, den Freigabe-Knopf schicken oder einen Auftrag anlegen.
+  if (projekt) {
+    await roboterNachricht(projekt, auftrag?.id ?? null, instruction);
+    return;
+  }
+  // Läuft ein Gespräch (/chat …), gehen auch freie Nachrichten an den Roboter – nicht Antworten auf Mails.
+  const g = msg.reply_to_message ? null : await roboter.gespraech(true);
+  if (g) {
+    const laufend = g.auftrag ? await roboter.ladeAuftrag(g.auftrag) : null;
+    await roboterNachricht(g.appKey, laufend && laufend.status !== "erledigt" ? laufend.id : null, instruction);
     return;
   }
 
@@ -263,6 +292,38 @@ async function handleMessage(msg: TgMessage) {
 }
 
 /** Frage an den Roboter am PC – die Antwort kommt über /api/roboter/melden. */
+/** Nachricht an den Roboter eines Kunden – er antwortet über /api/roboter/melden (meist nach 20–90 s). */
+async function roboterNachricht(appKey: string, auftragId: string | null, text: string) {
+  await roboter.frageStellen(appKey, auftragId, text);
+  const p = await roboter.roboterPuls();
+  if (p.laeuft) await tgTippt();
+  else await sendTelegram("⚠️ Der Roboter am PC antwortet gerade nicht (PC aus?) – deine Nachricht wartet, er antwortet, sobald er wieder läuft.");
+}
+
+/** Gespräch mit dem Roboter eines Kunden öffnen (mit seinem laufenden Auftrag, falls es einen gibt). */
+async function gespraechOeffnen(wer: string, auftragId?: string) {
+  let appKey: string | undefined;
+  let auftrag: string | null = auftragId ?? null;
+  if (auftragId) appKey = (await roboter.ladeAuftrag(auftragId))?.app_key;
+  else {
+    const k = await roboter.findeKunde(wer);
+    if (!k.appKey) {
+      await sendTelegram(`Welchen Kunden meinst du? ${esc((k.kandidaten || []).slice(0, 12).join(", "))}`);
+      return;
+    }
+    appKey = k.appKey;
+    auftrag = (await roboter.auftragFuer({ kunde: k.name }))?.a?.id ?? null;
+  }
+  if (!appKey) return;
+  await roboter.gespraechStarten(appKey, auftrag);
+  const name = (await roboter.kundenNamen()).get(appKey) ?? appKey;
+  await sendTelegram(
+    `💬 Du redest jetzt direkt mit dem Roboter von <b>${esc(name)}</b> – er kennt den Code und den ganzen Verlauf.\n` +
+      `Schreib einfach (Text oder 🎤): Fragen, Änderungen am Vorschlag, neue Aufträge. <b>/fertig</b> beendet das Gespräch.\n<i>Projekt ${esc(appKey)}</i>`,
+    { forceReply: "Nachricht an den Roboter" }
+  );
+}
+
 async function roboterFrage(appKey: string, auftragId: string | null, frage: string) {
   await roboter.frageStellen(appKey, auftragId, frage);
   const p = await roboter.roboterPuls();
@@ -372,9 +433,10 @@ async function roboterKnopf(cb: TgCallback) {
       await tgAnswerCallback(cb.id);
       await sendTelegram(`✏️ Was soll beim Vorschlag für <b>${esc(kunde)}</b> anders sein? Antworte auf diese Nachricht (Text oder 🎤).\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Was soll anders sein?" });
       return;
-    case "frage":
-      await tgAnswerCallback(cb.id);
-      await sendTelegram(`💬 Was möchtest du zum Auftrag für <b>${esc(kunde)}</b> wissen? Der Roboter schaut im Code nach.\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Deine Frage an den Roboter" });
+    case "chat":
+    case "frage": // alte Karten
+      await tgAnswerCallback(cb.id, "💬 Gespräch mit dem Roboter");
+      await gespraechOeffnen(kunde, a.id);
       return;
     case "abl":
       return danach("❌ Abgelehnt – am Code ändert sich nichts", await roboter.ablehnen(a.id));

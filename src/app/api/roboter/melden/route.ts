@@ -27,13 +27,19 @@ export async function POST(req: Request) {
     if (!f) return NextResponse.json({ ok: true, nichts: true });
     const kunde = (await kundenNamen()).get(f.app_key) ?? f.app_key;
     const a = f.auftrag_id ? await ladeAuftrag(f.auftrag_id) : null;
-    const antwort = f.status === "fehler" ? `⚠️ Der Roboter konnte die Frage nicht beantworten: ${f.antwort || "unbekannter Fehler"}` : ohneMarkdown(f.antwort || "");
+    const antwort = f.status === "fehler" ? `⚠️ Da kam ich nicht weiter: ${f.antwort || "unbekannter Fehler"}` : ohneMarkdown(f.antwort || "");
     // Unter der Antwort die Knöpfe des Auftrags, damit man gleich freigeben/ändern kann.
     const knoepfe = a && ["vorschlag", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status) ? (await karteFuer(a)).buttons : undefined;
-    await sendTelegram(
-      `💬 <b>${esc(kunde)}</b> – deine Frage:\n<i>${esc(f.frage)}</i>\n\n${esc(antwort)}` + (a ? `\n\n<i>Auftrag ${a.id.slice(0, 8)}</i>` : ""),
+    // Wie eine Chat-Nachricht vom Roboter. Unten „Auftrag …“/„Projekt …“: darüber landet eine Antwort
+    // darauf wieder beim richtigen Roboter (Webhook).
+    const r = await sendTelegram(
+      `🤖 <b>Roboter · ${esc(kunde)}</b>\n${esc(antwort)}\n<i>${a ? `Auftrag ${a.id.slice(0, 8)}` : `Projekt ${esc(f.app_key)}`}</i>`,
       knoepfe ? { buttons: knoepfe } : undefined
     );
+    if (!r.ok) {
+      await prisma.$executeRaw`update crm.roboter_fragen set gemeldet = false where id = ${b.frage}::uuid`;
+      return NextResponse.json({ ok: false, error: "Telegram nicht erreicht" }, { status: 502 });
+    }
     return NextResponse.json({ ok: true });
   }
 
