@@ -134,7 +134,7 @@ export default function WuenschePage() {
     // YOLO aus: noch nicht begonnene YOLO-Aufträge warten wieder auf die Freigabe (laufende hält der Roboter selbst an).
     const { data: zurueck } = await db.from('roboter_auftraege')
       .update({ status: 'vorschlag', yolo: false, freigegeben_am: null, gemeldet: null, aktualisiert: new Date().toISOString() })
-      .eq('app_key', key).eq('yolo', true).eq('status', 'freigegeben').select('id');
+      .eq('app_key', key).eq('yolo', true).eq('status', 'freigegeben').is('zweig', null).select('id');   // begonnene macht der Roboter selbst richtig
     const n = zurueck?.length ?? 0;
     toast.success(`YOLO für ${name} aus${n ? ` – ${n === 1 ? '1 Auftrag wartet' : `${n} Aufträge warten`} wieder auf deine Freigabe` : ''}`);
     ladenRoboter();

@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   if (!b.id || !UUID.test(b.id)) return NextResponse.json({ error: "id fehlt" }, { status: 400 });
   const [beansprucht] = await prisma.$queryRaw<{ id: string }[]>`
     update crm.roboter_auftraege set gemeldet = status
-    where id = ${b.id}::uuid and gemeldet is distinct from status and aktualisiert > now() - interval '15 minutes'
+    where id = ${b.id}::uuid and gemeldet is distinct from status and aktualisiert > now() - interval '1 day'
       and status in ('vorschlag', 'vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe')
     returning id::text as id`;
   if (!beansprucht) return NextResponse.json({ ok: true, schon: true });

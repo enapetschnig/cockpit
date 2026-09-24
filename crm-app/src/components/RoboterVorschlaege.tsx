@@ -112,7 +112,7 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
 }) {
   const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && zaehlt(x));
   if (a) {
-    const st = STATUS[a.status] ?? { label: a.status, cls: '' };
+    const st = (a.status === 'in_arbeit' && !a.freigegeben_am && !a.yolo ? STATUS.vorbereiten : STATUS[a.status]) ?? { label: a.status, cls: '' };
     return (
       <a href={`#a-${a.id}`} className={'text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ' + st.cls}>
         <Bot className="w-3 h-3" /> {st.label}
@@ -132,6 +132,7 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
       const { data, error } = await db.from('roboter_auftraege').update({
         // neue Wünsche → neu analysieren, umsetzen und prüfen; die bisher geprüfte Lösung gilt nicht mehr
         wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', freigegeben_am: null, gemeldet: null, geprueft: null,
+        versuche: 0, naechster_versuch: null,
         aktualisiert: new Date().toISOString(),
       }).eq('id', offenerVorschlag.id).in('status', OFFEN_FUER_NEUE)
         .contains('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids)).containedBy('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids))
@@ -213,9 +214,10 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
       return laden();
     }
     // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) käme sonst als „ging schief“ in den Umsetzen-Prompt.
-    setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, versuche: 0, naechster_versuch: null, wartet_seit: null, ...antwortFeld(a) },
+    setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, versuche: 0, naechster_versuch: null, wartet_seit: null,
+      ...(a.vor_kunde ? { vor_kunde_ok_am: new Date().toISOString() } : {}), ...antwortFeld(a) },
       a.geprueft ? 'Passt – der Roboter schaltet es jetzt live' : 'Freigegeben – der Roboter setzt es um und schaltet live',
-      { nurWenn: { geprueft: a.geprueft ?? null } });
+      { nurWenn: { geprueft: a.geprueft ?? null, db_hash: a.db_hash ?? null, vor_kunde: a.vor_kunde ?? null } });
   };
 
   const vorMin = puls?.zuletzt ? Math.round((Date.now() - new Date(puls.zuletzt).getTime()) / 60_000) : null;
@@ -240,7 +242,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
         </p>
       )}
       {sichtbar.map((a) => {
-        const st = STATUS[a.status] ?? { label: a.status, cls: '' };
+        const st = (a.status === 'in_arbeit' && !a.freigegeben_am && !a.yolo ? STATUS.vorbereiten : STATUS[a.status]) ?? { label: a.status, cls: '' };
         // Umsetzen nur, wenn wirklich freigegeben wurde – sonst neu analysieren (ältere Aufträge: zurück zur Vorschau).
         // Vor der Freigabe gescheitert, aber schon analysiert → weiter umsetzen und prüfen (vorbereiten).
         const nochmal = a.vorschau_url ? 'vorschau' : a.freigegeben_am ? 'freigegeben' : a.vorschlag ? 'vorbereiten' : 'analyse';
@@ -372,10 +374,10 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                   Datenbank einspielen & live schalten
                 </Button>
               )}
-              {a.yolo && STOPPBAR.includes(a.status) && (
+              {STOPPBAR.includes(a.status) && (a.yolo || !!a.freigegeben_am) && (
                 <Button size="sm" variant="outline" className="text-red-700"
-                  onClick={() => confirm('YOLO-Auftrag stoppen? Es geht nichts live; schon Umgesetztes bleibt nur im Zweig.')
-                    && setze(a, { status: 'verworfen' }, 'Gestoppt – es geht nichts live', { von: STOPPBAR, nurWenn: { yolo: true } })}>
+                  onClick={() => confirm('Auftrag stoppen? Es geht nichts live; schon Umgesetztes bleibt nur im Zweig.')
+                    && setze(a, { status: 'verworfen' }, 'Gestoppt – es geht nichts live', { von: STOPPBAR })}>
                   ⏹ Stopp
                 </Button>
               )}
@@ -392,7 +394,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                           { von: ['wartet'], nurWenn: { vor_kunde: a.vor_kunde ?? null, vor_kunde_ok_am: null } })}>
                         ✅ Erledigt – Kunde bekommt Bescheid
                       </Button>
-                    : <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>)}
+                    : <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal, versuche: 0, naechster_versuch: null, wartet_seit: null }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>)}
                   <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
                 </>
               )}

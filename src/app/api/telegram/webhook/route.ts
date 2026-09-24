@@ -227,7 +227,15 @@ async function handleMessage(msg: TgMessage) {
   // „ja passt, machen wir“ auf eine fertige Lösung (oder eine Datenbank-Rückfrage): gleich freigeben, ohne Umweg über
   // den Roboter – gilt nur für den Stand, der gerade gezeigt wird (ver).
   if (auftrag && roboter.istJa(instruction) && ((auftrag.status === "vorschlag" && auftrag.geprueft) || auftrag.status === "db_freigabe")) {
-    const ok = auftrag.status === "vorschlag" ? await roboter.freigeben(auftrag.id, auftrag.ver) : await roboter.datenbankFreigeben(auftrag.id, auftrag.ver);
+    // Nur der Stand, auf dessen Karte er geantwortet hat – eine ältere Karte gibt keinen neueren Stand frei.
+    const stand = [...bezug.matchAll(/Stand ([0-9a-f]{8})\b/g)].pop()?.[1];
+    if (stand !== auftrag.ver) {
+      const k = await roboter.karteFuer(auftrag);
+      await sendTelegram("Das war ein älterer Stand – hier ist der aktuelle. Wenn er passt: ✅ antippen oder „passt“ darauf antworten.");
+      await sendTelegram(k.text, { buttons: k.buttons });
+      return;
+    }
+    const ok = auftrag.status === "vorschlag" ? await roboter.freigeben(auftrag.id, stand) : await roboter.datenbankFreigeben(auftrag.id, stand);
     await sendTelegram(ok
       ? "✅ Passt – der Roboter schaltet es jetzt live. Der Kunde bekommt die Antwort, sobald alles wirklich läuft."
       : "Das geht gerade nicht mehr – der Stand hat sich geändert. /wuensche zeigt den aktuellen.");
@@ -445,7 +453,7 @@ async function roboterKnopf(cb: TgCallback) {
           : "🚀 Wird eingespielt und live geschaltet", ok);
     }
     case "stop":
-      return danach("⏹ Gestoppt – es geht nichts live", a.yolo && (await roboter.stoppen(a.id)));
+      return danach("⏹ Gestoppt – es geht nichts live", await roboter.stoppen(a.id));
     case "aend":
       await tgAnswerCallback(cb.id);
       await sendTelegram(`✏️ Was soll beim Vorschlag für <b>${esc(kunde)}</b> anders sein? Antworte auf diese Nachricht (Text oder 🎤).\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Was soll anders sein?" });
