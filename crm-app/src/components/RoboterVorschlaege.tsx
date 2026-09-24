@@ -209,7 +209,8 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
 
   const vorMin = puls?.zuletzt ? Math.round((Date.now() - new Date(puls.zuletzt).getTime()) / 60_000) : null;
   const laeuft = vorMin !== null && vorMin <= 3;
-  const sichtbar = auftraege.filter((a) => a.status !== 'abgelehnt' && a.status !== 'verworfen');
+  // Oben nur, woran gerade gearbeitet wird oder was auf Christoph wartet – Fertiges steht im Verlauf beim Kunden.
+  const sichtbar = auftraege.filter((a) => AKTIV.includes(a.status));
 
   return (
     <div className="mb-6">
@@ -223,7 +224,8 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
       </div>
       {sichtbar.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Neue Wünsche sammelt der Roboter 10 Minuten je Kunde und schreibt dann einen Vorschlag. Ältere Wünsche: unten „Vorschlag vom Roboter“.
+          Gerade läuft nichts. Neue Wünsche sammelt der Roboter 10 Minuten je Kunde (bei YOLO 2) und schreibt dann einen Vorschlag.
+          Was er schon erledigt hat: Kunden anklicken → Verlauf.
         </p>
       )}
       {sichtbar.map((a) => {
@@ -376,6 +378,73 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+const FERTIG: Record<string, string> = { erledigt: '✓ Live', abgelehnt: 'Abgelehnt', verworfen: 'Verworfen' };
+const kuerzen = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** Was der Roboter bei einem Kunden schon erledigt (oder verworfen) hat – kompakt, zum Aufklappen. */
+export function RoboterVerlauf({ appKey }: { appKey: string }) {
+  const [liste, setListe] = useState<RoboterAuftrag[] | null>(null);
+  const [texte, setTexte] = useState<Record<string, { text: string; melder: string | null }>>({});
+  useEffect(() => {
+    let aktiv = true;
+    (async () => {
+      const { data } = await db.from('roboter_auftraege').select('*').eq('app_key', appKey)
+        .in('status', Object.keys(FERTIG)).order('aktualisiert', { ascending: false }).limit(30);
+      const auftraege = (data as RoboterAuftrag[]) || [];
+      const ids = [...new Set(auftraege.flatMap((a) => a.wunsch_ids))];
+      const { data: ws } = ids.length
+        ? await db.from('app_wuensche').select('id, text, melder').in('id', ids)
+        : { data: [] };
+      if (!aktiv) return;
+      setTexte(Object.fromEntries(((ws || []) as { id: string; text: string; melder: string | null }[]).map((w) => [w.id, { text: w.text, melder: w.melder }])));
+      setListe(auftraege);
+    })();
+    return () => { aktiv = false; };
+  }, [appKey]);
+
+  if (!liste?.length) return null;
+  const kunde = APP_LABEL[appKey] ?? appKey;
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-baseline gap-x-2 mb-1.5">
+        <h3 className="text-sm font-semibold">Verlauf beim Roboter</h3>
+        <span className="text-[11px] text-muted-foreground">
+          {liste.length} erledigt · ganzer Verlauf: VS Code (epower-pc) → Projektordner → Claude → „Roboter · {kunde}“
+        </span>
+      </div>
+      <div className="rounded-xl border divide-y bg-card">
+        {liste.map((a) => {
+          const erster = texte[a.wunsch_ids[0]]?.text ?? a.anmerkung ?? '';
+          return (
+            <details key={a.id} className="group px-3 py-2 text-sm">
+              <summary className="cursor-pointer list-none flex items-baseline gap-2">
+                <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+                  {new Date(a.aktualisiert).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit' })}
+                </span>
+                <span className={'text-[11px] shrink-0 ' + (a.status === 'erledigt' ? 'text-green-700 font-medium' : 'text-muted-foreground')}>
+                  {FERTIG[a.status]}{a.yolo ? ' ⚡' : ''}
+                </span>
+                <span className="truncate">{kuerzen(erster.replace(/\s+/g, ' '), 110)}</span>
+                {a.wunsch_ids.length > 1 && <span className="text-[11px] text-muted-foreground shrink-0">+{a.wunsch_ids.length - 1}</span>}
+              </summary>
+              <div className="mt-2 space-y-2 text-[13px]">
+                <ol className="list-decimal pl-5 text-muted-foreground space-y-0.5">
+                  {a.wunsch_ids.map((id) => (
+                    <li key={id}>„{texte[id]?.text ?? '…'}“{texte[id]?.melder ? ` – ${texte[id].melder}` : ''}</li>
+                  ))}
+                </ol>
+                {a.protokoll && <div className="whitespace-pre-wrap"><span className="font-semibold">Umgesetzt: </span>{a.protokoll}</div>}
+                {a.db_info && <div className="whitespace-pre-wrap text-muted-foreground"><span className="font-semibold">Datenbank: </span>{a.db_info}</div>}
+                {a.antwort_kunde && <div className="text-muted-foreground"><span className="font-semibold">Antwort an den Kunden: </span>{a.antwort_kunde}</div>}
+              </div>
+            </details>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { APP_LABEL, APPS } from '@/lib/apps';
 import { Loader2, Image as ImageIcon, Check, Inbox } from 'lucide-react';
-import { RoboterKnopf, RoboterVorschlaege, useRoboter } from '@/components/RoboterVorschlaege';
+import { RoboterKnopf, RoboterVerlauf, RoboterVorschlaege, useRoboter } from '@/components/RoboterVorschlaege';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -276,6 +276,8 @@ export default function WuenschePage() {
             </div>
           );
         })()}
+        {/* Kunde angeklickt: was der Roboter dort schon erledigt hat (oben stehen nur laufende Aufträge) */}
+        {fApp && <RoboterVerlauf appKey={fApp} />}
 
         <Card className="p-3 mb-4 flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted-foreground mx-1">Art</span>
