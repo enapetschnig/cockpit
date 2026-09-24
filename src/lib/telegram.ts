@@ -39,7 +39,8 @@ const tastatur = (buttons: TgButton[][]) => ({
 export async function sendTelegram(
   text: string,
   // forceReply: Telegram öffnet direkt das Antwortfeld auf diese Nachricht (z. B. „Was soll anders sein?“)
-  opts?: { replyTo?: number; buttons?: TgButton[][]; forceReply?: string }
+  // leise: ohne Ton/Benachrichtigung (reine Info, z. B. „ist live“)
+  opts?: { replyTo?: number; buttons?: TgButton[][]; forceReply?: string; leise?: boolean }
 ): Promise<{ ok: boolean; skipped?: boolean; messageId?: number }> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
   const chatId = await getConfig("TELEGRAM_CHAT_ID");
@@ -59,6 +60,7 @@ export async function sendTelegram(
   for (let i = 0; i < chunks.length; i++) {
     const last = i === chunks.length - 1;
     const base: Record<string, unknown> = { chat_id: chatId, disable_web_page_preview: true };
+    if (opts?.leise) base.disable_notification = true;
     if (last && opts?.replyTo) base.reply_to_message_id = opts.replyTo;
     if (last && replyMarkup) base.reply_markup = replyMarkup;
     try {

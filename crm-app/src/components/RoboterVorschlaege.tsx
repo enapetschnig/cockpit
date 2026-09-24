@@ -37,6 +37,7 @@ export interface RoboterAuftrag {
   yolo?: boolean;
   freigegeben_am?: string | null;
   sitzungen?: string[];
+  geprueft?: string | null;         // fertig umgesetzt und geprüft (Zweig-Stand) – „Passt“ schaltet genau das live
   vor_kunde?: string | null;        // was vor der Antwort an den Kunden noch nötig ist (nur Christoph kann es)
   vor_kunde_ok_am?: string | null;  // Christophs OK zu genau dieser Liste
   erstellt_am: string;
@@ -49,6 +50,7 @@ const vorDemKunden = (a: RoboterAuftrag) =>
 
 const STATUS: Record<string, { label: string; cls: string; arbeitet?: boolean }> = {
   analyse:     { label: 'Roboter analysiert …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
+  vorbereiten: { label: 'Roboter setzt um und prüft – die fertige Lösung kommt gleich', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
   vorschlag:   { label: 'Vorschlag zur Freigabe', cls: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
   aendern:     { label: 'Roboter überarbeitet …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
   freigegeben: { label: 'Freigegeben – startet gleich', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
@@ -65,8 +67,8 @@ const STATUS: Record<string, { label: string; cls: string; arbeitet?: boolean }>
   db_freigabe: { label: 'Datenbank-Änderung braucht dein OK', cls: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
   db_live:     { label: 'Spielt Datenbank ein und schaltet live …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
 };
-const AKTIV = ['analyse', 'vorschlag', 'aendern', 'freigegeben', 'in_arbeit', 'vorschau', 'live', 'wartet', 'fehler', 'db_pruefen', 'db_freigabe', 'db_live'];
-const OFFEN_FUER_NEUE = ['analyse', 'vorschlag', 'aendern'];
+const AKTIV = ['analyse', 'vorbereiten', 'vorschlag', 'aendern', 'freigegeben', 'in_arbeit', 'vorschau', 'live', 'wartet', 'fehler', 'db_pruefen', 'db_freigabe', 'db_live'];
+const OFFEN_FUER_NEUE = ['analyse', 'vorbereiten', 'vorschlag', 'aendern'];
 // Hier läuft ein YOLO-Auftrag ohne Freigabe – „Stopp“ hält ihn vor Datenbank und Live an.
 const STOPPBAR = ['freigegeben', 'in_arbeit', 'db_pruefen', 'db_live'];
 /** Postgres-Array-Literal für Filter ({"a","b"}). */
@@ -128,7 +130,8 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
     if (offenerVorschlag) {
       // Nur solange der Vorschlag noch offen ist und niemand inzwischen Wünsche angehängt hat.
       const { data, error } = await db.from('roboter_auftraege').update({
-        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', freigegeben_am: null, gemeldet: null,
+        // neue Wünsche → neu analysieren, umsetzen und prüfen; die bisher geprüfte Lösung gilt nicht mehr
+        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', freigegeben_am: null, gemeldet: null, geprueft: null,
         aktualisiert: new Date().toISOString(),
       }).eq('id', offenerVorschlag.id).in('status', OFFEN_FUER_NEUE)
         .contains('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids)).containedBy('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids))
@@ -204,13 +207,15 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
   };
   const freigeben = async (a: RoboterAuftrag) => {
     // Kam während der Rückfrage ein neuer Vorschlag, nicht den ungesehenen freigeben.
-    const { data: jetzt } = await db.from('roboter_auftraege').select('vorschlag').eq('id', a.id).maybeSingle();
-    if ((jetzt?.vorschlag ?? null) !== (a.vorschlag ?? null)) {
+    const { data: jetzt } = await db.from('roboter_auftraege').select('vorschlag, geprueft').eq('id', a.id).maybeSingle();
+    if ((jetzt?.vorschlag ?? null) !== (a.vorschlag ?? null) || (jetzt?.geprueft ?? null) !== (a.geprueft ?? null)) {
       toast.error('Inzwischen gibt es einen neuen Vorschlag – bitte nochmal ansehen');
       return laden();
     }
     // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) käme sonst als „ging schief“ in den Umsetzen-Prompt.
-    setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, ...antwortFeld(a) }, 'Freigegeben – der Roboter setzt es um und schaltet live');
+    setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, versuche: 0, naechster_versuch: null, wartet_seit: null, ...antwortFeld(a) },
+      a.geprueft ? 'Passt – der Roboter schaltet es jetzt live' : 'Freigegeben – der Roboter setzt es um und schaltet live',
+      { nurWenn: { geprueft: a.geprueft ?? null } });
   };
 
   const vorMin = puls?.zuletzt ? Math.round((Date.now() - new Date(puls.zuletzt).getTime()) / 60_000) : null;
@@ -237,7 +242,9 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
       {sichtbar.map((a) => {
         const st = STATUS[a.status] ?? { label: a.status, cls: '' };
         // Umsetzen nur, wenn wirklich freigegeben wurde – sonst neu analysieren (ältere Aufträge: zurück zur Vorschau).
-        const nochmal = a.vorschau_url ? 'vorschau' : a.freigegeben_am ? 'freigegeben' : 'analyse';
+        // Vor der Freigabe gescheitert, aber schon analysiert → weiter umsetzen und prüfen (vorbereiten).
+        const nochmal = a.vorschau_url ? 'vorschau' : a.freigegeben_am ? 'freigegeben' : a.vorschlag ? 'vorbereiten' : 'analyse';
+        const fertig = a.status === 'vorschlag' && !!a.geprueft;   // fertig umgesetzt und geprüft – wartet auf „Passt“
         // Nur Altaufträge (2.1): umgesetzt, Datenbank sollte von Hand eingespielt werden.
         const handarbeit = a.status === 'wartet' && a.datenbank && !!a.zweig && /bewusst nicht selbst ein/.test(a.fehler ?? '');
         const kunde = APP_LABEL[a.app_key] ?? a.app_key;
@@ -262,14 +269,20 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
 
             {a.vorschlag && (
               <div className="rounded-lg bg-muted/50 p-3 text-sm whitespace-pre-wrap mb-2">
-                <div className="text-xs font-semibold text-muted-foreground mb-1">Vorschlag</div>
+                <div className="text-xs font-semibold text-muted-foreground mb-1">{fertig ? 'Plan' : 'Vorschlag'}</div>
                 {a.vorschlag}
               </div>
             )}
-            {a.protokoll && ['vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe'].includes(a.status) && (
+            {a.protokoll && (fertig || ['vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe'].includes(a.status)) && (
               <div className="rounded-lg border p-3 text-sm whitespace-pre-wrap mb-2">
-                <div className="text-xs font-semibold text-muted-foreground mb-1">Umgesetzt</div>
+                <div className="text-xs font-semibold text-muted-foreground mb-1">{fertig ? 'So habe ich es gelöst (fertig und geprüft)' : 'Umgesetzt'}</div>
                 {a.protokoll}
+              </div>
+            )}
+            {fertig && a.vor_kunde && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm whitespace-pre-wrap mb-2">
+                <div className="text-xs font-semibold text-amber-800 mb-1">🧾 Dafür brauche ich noch von dir</div>
+                {a.vor_kunde}
               </div>
             )}
             {a.db_info && (
@@ -303,7 +316,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                 <div className="flex gap-2 mt-1.5">
                   <Button size="sm" disabled={!anmerkung[a.id]?.trim()}
                     onClick={() => setze(a, {
-                      status: 'aendern', anmerkung: anmerkung[a.id].trim(),
+                      status: 'aendern', anmerkung: anmerkung[a.id].trim(), geprueft: null, versuche: 0,
                       // überarbeiteter Vorschlag muss neu freigegeben werden
                       ...(a.status === 'vorschlag' ? { freigegeben_am: null } : {}),
                     }, 'Der Roboter überarbeitet es')}>Absenden</Button>
@@ -318,11 +331,13 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                   <Button size="sm" className="bg-green-600 hover:bg-green-700"
                     onClick={() => {
                       antwortSpeichern(a);
-                      const frage = 'Freigeben & live schalten? Der Roboter setzt es um, prüft selbst (Build, Tests, Durchsicht) und schaltet live – der Kunde bekommt deine Antwort.'
-                        + (a.datenbank ? ' Neue Tabellen/Spalten spielt er selbst ein; verändert die Datenbank-Änderung Bestehendes, fragt er vorher noch einmal.' : '');
+                      const frage = fertig
+                        ? 'Passt – live schalten? Die Lösung ist fertig und geprüft. Der Roboter spielt die Datenbank-Änderung ein (wie oben), schaltet live und schickt dem Kunden deine Antwort, sobald alles wirklich läuft.'
+                        : 'Freigeben & live schalten? Der Roboter setzt es um, prüft selbst (Build, Tests, Durchsicht) und schaltet live – der Kunde bekommt deine Antwort.'
+                          + (a.datenbank ? ' Neue Tabellen/Spalten spielt er selbst ein; verändert die Datenbank-Änderung Bestehendes, fragt er vorher noch einmal.' : '');
                       if (confirm(frage)) freigeben(a);
                     }}>
-                    Freigeben & live schalten
+                    {fertig ? '✅ Passt – live schalten' : 'Freigeben & live schalten'}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAendernOffen(a.id)}>Ändern</Button>
                   <Button size="sm" variant="ghost" className="text-muted-foreground"

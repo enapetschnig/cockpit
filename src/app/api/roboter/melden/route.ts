@@ -47,13 +47,13 @@ export async function POST(req: Request) {
   const [beansprucht] = await prisma.$queryRaw<{ id: string }[]>`
     update crm.roboter_auftraege set gemeldet = status
     where id = ${b.id}::uuid and gemeldet is distinct from status and aktualisiert > now() - interval '15 minutes'
-      and (status in ('vorschlag', 'vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe') or (status = 'freigegeben' and yolo))
+      and status in ('vorschlag', 'vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe')
     returning id::text as id`;
   if (!beansprucht) return NextResponse.json({ ok: true, schon: true });
   const a = (await ladeAuftrag(beansprucht.id)) as Auftrag;
   const m = await meldungFuerAuftrag(a);
   if (m) {
-    const r = await sendTelegram(m.text, m.buttons.length ? { buttons: m.buttons } : undefined);
+    const r = await sendTelegram(m.text, { ...(m.buttons.length ? { buttons: m.buttons } : {}), leise: !!m.leise });
     // Nicht angekommen → Stufe wieder freigeben, damit ein erneuter Aufruf sie meldet.
     if (!r.ok) {
       await prisma.$executeRaw`update crm.roboter_auftraege set gemeldet = null where id = ${a.id}::uuid and gemeldet = ${a.status}`;

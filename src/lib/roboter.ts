@@ -32,6 +32,7 @@ export interface Auftrag {
   freigegeben_am: Date | null; // gesetzt = Christoph (oder YOLO) hat den Vorschlag freigegeben
   sitzungen: string[]; // Claude-Sitzungen, in denen der Roboter daran gearbeitet hat
   ver: string; // Kurz-Prüfsumme von Vorschlag + Datenbank-Stand: ein „Ja“ gilt nur für den gezeigten Stand
+  geprueft: string | null; // fertig umgesetzt und geprüft (Zweig-Stand) – „passt“ schaltet genau das live
   vor_kunde: string | null; // was vor der Antwort an den Kunden noch nötig ist (nur Christoph kann es)
   vor_kunde_ok_am: Date | null; // Christophs OK zu genau dieser Liste
   vk: string; // Kurz-Prüfsumme von vor_kunde: „✅ Erledigt“ gilt nur für die gezeigte Liste
@@ -51,12 +52,13 @@ export type Knopf = { text: string; data?: string; url?: string };
 export interface Karte {
   text: string;
   buttons: Knopf[][];
+  leise?: boolean; // ohne Ton/Benachrichtigung (nur zur Info, z. B. „ist live“)
 }
 
 const CRM_LINK = "https://app.epowergmbh.at/wuensche#a-";
-const AKTIV = ["analyse", "vorschlag", "aendern", "freigegeben", "in_arbeit", "vorschau", "live", "wartet", "fehler", "db_pruefen", "db_freigabe", "db_live"];
+const AKTIV = ["analyse", "vorbereiten", "vorschlag", "aendern", "freigegeben", "in_arbeit", "vorschau", "live", "wartet", "fehler", "db_pruefen", "db_freigabe", "db_live"];
 // In diese Aufträge dürfen neue Wünsche desselben Kunden noch dazu (noch nicht freigegeben).
-const OFFEN_FUER_NEUE = ["analyse", "vorschlag", "aendern"];
+const OFFEN_FUER_NEUE = ["analyse", "vorbereiten", "vorschlag", "aendern"];
 // Wie im CRM: erledigt ist ein Wunsch, wenn umgesetzt/abgelehnt/gelöscht oder abgehakt.
 const WUNSCH_ERLEDIGT = ["umgesetzt", "abgelehnt", "geloescht"];
 // Hier läuft ein YOLO-Auftrag ohne Freigabe – „⏹ Stopp“ hält ihn vor Datenbank und Live an.
@@ -64,6 +66,7 @@ export const STOPPBAR = ["freigegeben", "in_arbeit", "db_pruefen", "db_live"];
 
 const STATUS_TEXT: Record<string, string> = {
   analyse: "🔎 Roboter analysiert …",
+  vorbereiten: "🛠 Roboter setzt um und prüft – die fertige Lösung kommt gleich",
   vorschlag: "🟡 Vorschlag zur Freigabe",
   aendern: "✏️ wird überarbeitet …",
   freigegeben: "🚀 freigegeben – startet gleich",
@@ -95,11 +98,12 @@ export const ohneMarkdown = (s: string) =>
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/^\s*[-*]\s+/gm, "• ");
 
-const VER = Prisma.sql`left(md5(coalesce(vorschlag, '') || '|' || coalesce(db_hash, '')), 8)`;
+// „passt“ gilt nur für den gezeigten Stand: Vorschlag, Datenbank-Einordnung und geprüfter Zweig-Stand
+const VER = Prisma.sql`left(md5(coalesce(vorschlag, '') || '|' || coalesce(db_hash, '') || '|' || coalesce(geprueft, '')), 8)`;
 const VK = Prisma.sql`left(md5(coalesce(vor_kunde, '')), 8)`;
 const SPALTEN = Prisma.sql`id::text as id, app_key, wunsch_ids, status, vorschlag, aufwand, risiko, datenbank,
   antwort_kunde, anmerkung, zweig, vorschau_url, fehler, protokoll, gemeldet, db_info, yolo, freigegeben_am, sitzungen,
-  ${VER} as ver, vor_kunde, vor_kunde_ok_am, ${VK} as vk, erstellt_am, aktualisiert`;
+  ${VER} as ver, geprueft, vor_kunde, vor_kunde_ok_am, ${VK} as vk, erstellt_am, aktualisiert`;
 
 // ── Lesen ──────────────────────────────────────────────────────────────────
 /** app_key → Kundenname (aus dem CRM; Apps ohne Kunde behalten ihren Schlüssel). */
@@ -217,15 +221,29 @@ export const vorKundeBestaetigen = (id: string, vk: string) =>
   wechsel(id, ["wartet"], Prisma.sql`status = 'live', vor_kunde_ok_am = now()`,
     Prisma.sql`and vor_kunde is not null and vor_kunde_ok_am is null and ${VK} = ${vk}
       and coalesce(fehler, '') like '🧾 Vor dem Kunden%'`);
+/**
+ * „ja passt, machen wir“ als Antwort auf die Karte einer fertigen Lösung: eindeutiges Ja, kurz, ohne Änderungswunsch.
+ * Alles andere geht an den Roboter (der fragt nach oder überarbeitet).
+ */
+export function istJa(text: string): boolean {
+  const t = (text || "").trim().toLowerCase();
+  if (!t || t.length > 80 || t.includes("?")) return false;
+  // Ohne \b: das kennt in JavaScript keine Umlaute („ändern“ würde übersehen). Klingt es nach Einschränkung oder
+  // Änderungswunsch, geht es lieber an den Roboter.
+  if (/(^|[^a-zäöüß])(nicht|nein|aber|änder|aender|anders|statt|noch|warte|stop|halt|später|spaeter|frage|lieber|sondern)/.test(t)) return false;
+  return /^(ja|jo|jep|jup|yes|passt|ok|okay|oke|mach|los|go|gut|super|perfekt|freigeben|gib frei|schalt|live|top|👍|✅)/.test(t);
+}
+
 /** Bis zu dieser Länge passt die ganze Liste auf die Telegram-Karte – länger: nur im CRM bestätigen. */
 export const VOR_KUNDE_TELEGRAM = 2400;
 
 // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) landete sonst als „ging schief“ im Umsetzen-Prompt.
 export const freigeben = (id: string, ver?: string) =>
-  wechsel(id, ["vorschlag"], Prisma.sql`status = 'freigegeben', freigegeben_am = now(), fehler = null`, nurStand(ver));
+  wechsel(id, ["vorschlag"], Prisma.sql`status = 'freigegeben', freigegeben_am = now(), fehler = null,
+    versuche = 0, naechster_versuch = null, wartet_seit = null`, nurStand(ver));
 // Überarbeiteter Vorschlag muss neu freigegeben werden (sonst würde „Nochmal“ ihn nach einem Fehler umsetzen).
 export const aendern = (id: string, anmerkung: string) =>
-  wechsel(id, ["vorschlag", "vorschau"], Prisma.sql`status = 'aendern', anmerkung = ${anmerkung},
+  wechsel(id, ["vorschlag", "vorschau"], Prisma.sql`status = 'aendern', anmerkung = ${anmerkung}, geprueft = null, versuche = 0,
     freigegeben_am = case when status = 'vorschlag' then null else freigegeben_am end`);
 export const ablehnen = (id: string) => wechsel(id, ["vorschlag"], Prisma.sql`status = 'abgelehnt'`);
 export const verwerfen = (id: string) =>
@@ -244,8 +262,9 @@ export async function nochmal(a: Auftrag): Promise<boolean> {
   if (handarbeit(a) || vorDemKunden(a)) return false;
   // Umsetzen nur, wenn wirklich freigegeben wurde – ein bloß vorhandener Vorschlag reicht nicht
   // (ältere Aufträge: zurück zur Vorschau).
-  const ziel = a.vorschau_url ? "vorschau" : a.freigegeben_am ? "freigegeben" : "analyse";
-  return wechsel(a.id, ["wartet", "fehler"], Prisma.sql`status = ${ziel}`);
+  // Vor der Freigabe gescheitert, aber schon analysiert → weiter umsetzen und prüfen (vorbereiten).
+  const ziel = a.vorschau_url ? "vorschau" : a.freigegeben_am ? "freigegeben" : a.vorschlag ? "vorbereiten" : "analyse";
+  return wechsel(a.id, ["wartet", "fehler"], Prisma.sql`status = ${ziel}, versuche = 0, naechster_versuch = null, wartet_seit = null`);
 }
 
 /**
@@ -263,7 +282,7 @@ export async function anRoboterGeben(appKey: string): Promise<{ auftrag?: string
   if (offen) {
     // Nur solange noch offen – hat der Roboter inzwischen freigegeben/umgesetzt, neuer Auftrag.
     const n = await prisma.$executeRaw`
-      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[], status = 'analyse', freigegeben_am = null,
+      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[], status = 'analyse', freigegeben_am = null, geprueft = null,
         gemeldet = null, aktualisiert = now()
       where id = ${offen.id}::uuid and status = any(${OFFEN_FUER_NEUE})`;
     if (n > 0) {
@@ -388,7 +407,9 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
   switch (a.status) {
     case "vorschlag":
       return [
-        [{ text: "✅ Freigeben & live", data: `rob:frei:${id}` }, { text: "✏️ Ändern", data: `rob:aend:${id}` }],
+        // Fertig umgesetzt und geprüft → ein Tipp genügt („passt“, an den gezeigten Stand gebunden).
+        [a.geprueft ? { text: "✅ Passt – live schalten", data: `rob:ja:${id}:${a.ver}` } : { text: "✅ Freigeben & live", data: `rob:frei:${id}` },
+          { text: "✏️ Ändern", data: `rob:aend:${id}` }],
         [{ text: "💬 Mit Roboter reden", data: `rob:chat:${id}` }, { text: "❌ Ablehnen", data: `rob:abl:${id}` }, crm],
       ];
     case "db_freigabe":
@@ -448,9 +469,12 @@ function karteText(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOp
   if (wuensche.length > MAX_WUENSCHE) kopf.push(`<i>… und ${wuensche.length - MAX_WUENSCHE} weitere (im CRM)</i>`);
 
   const fuss: string[] = [];
-  if (a.db_info && ["db_freigabe", "db_live", "erledigt", "wartet", "fehler"].includes(a.status)) {
+  const fertig = a.status === "vorschlag" && !!a.geprueft;   // fertig umgesetzt und geprüft, wartet auf „passt“
+  if (fertig && a.protokoll) fuss.push("", "<b>So habe ich es gelöst</b>", esc(kuerzen(ohneMarkdown(a.protokoll), n(1200))));
+  if (a.db_info && (fertig || ["db_freigabe", "db_live", "erledigt", "wartet", "fehler"].includes(a.status))) {
     fuss.push("", `<b>Datenbank${a.status === "db_freigabe" ? " – das würde sich ändern" : ""}</b>`, esc(kuerzen(a.db_info, n(900))));
   }
+  if (fertig && a.vor_kunde) fuss.push("", "<b>🧾 Dafür brauche ich noch von dir</b>", esc(a.vor_kunde));
   if (a.protokoll && ["erledigt", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) fuss.push("", "<b>Umgesetzt</b>", esc(kuerzen(ohneMarkdown(a.protokoll), n(700))));
   const vk = vorDemKunden(a);
   if (a.antwort_kunde && (["vorschlag", "vorschau"].includes(a.status) || vk)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, n(450)))}</i>`);
@@ -483,7 +507,7 @@ function karteText(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOp
 
   // Der Vorschlag bekommt, was übrig bleibt.
   let mitte: string[] = [];
-  if (a.vorschlag && a.status !== "erledigt") {
+  if (a.vorschlag && a.status !== "erledigt" && !(fertig && a.protokoll)) {
     const rest = n(3800) - kopf.join("\n").length - fuss.join("\n").length - 60;
     mitte = ["", "<b>So würde ich es machen</b>", esc(kuerzen(ohneMarkdown(a.vorschlag), Math.max(n(300), rest)))];
   }
@@ -501,8 +525,8 @@ export async function karteFuer(a: Auftrag, opts: KartenOpts = {}): Promise<Kart
 
 /** Was der Roboter zu einer Stufe meldet (Vorschlag, live, wartet, Fehler). */
 export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
-  if (a.status === "vorschlag") return karteFuer(a, { kopf: "🟡 neuer Vorschlag – bitte ansehen" });
-  if (a.status === "freigegeben" && a.yolo) return karteFuer(a, { kopf: "YOLO – wird jetzt ohne Freigabe umgesetzt" });
+  // Christoph (24.09.2026): „die Nachricht nur, wenn er die Lösung schon parat hat – ich sage nur noch ja passt“.
+  if (a.status === "vorschlag") return karteFuer(a, { kopf: a.geprueft ? "🟢 Lösung fertig und geprüft – passt?" : "🟡 neuer Vorschlag – bitte ansehen" });
   if (["wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) return karteFuer(a);
   if (a.status === "erledigt") {
     const kunde = (await kundenNamen()).get(a.app_key) ?? a.app_key;
@@ -519,6 +543,7 @@ export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
         (a.fehler ? `\n\n⚠️ ${esc(a.fehler)}` : `\n\n<i>Der Kunde sieht „umgesetzt“ mit deiner Antwort.</i>`) +
         `\n<i>Auftrag ${kurz(a.id)}</i>`,
       buttons: [[{ text: "🔗 Im CRM", url: CRM_LINK + a.id }]],
+      leise: true, // nur zur Info – kommt ohne Ton
     };
   }
   return null;

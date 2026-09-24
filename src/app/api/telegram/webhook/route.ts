@@ -224,8 +224,17 @@ async function handleMessage(msg: TgMessage) {
       : `Das geht gerade nicht mehr (Status: ${esc(auftrag.status)}). /wuensche zeigt den aktuellen Stand.`);
     return;
   }
+  // „ja passt, machen wir“ auf eine fertige Lösung (oder eine Datenbank-Rückfrage): gleich freigeben, ohne Umweg über
+  // den Roboter – gilt nur für den Stand, der gerade gezeigt wird (ver).
+  if (auftrag && roboter.istJa(instruction) && ((auftrag.status === "vorschlag" && auftrag.geprueft) || auftrag.status === "db_freigabe")) {
+    const ok = auftrag.status === "vorschlag" ? await roboter.freigeben(auftrag.id, auftrag.ver) : await roboter.datenbankFreigeben(auftrag.id, auftrag.ver);
+    await sendTelegram(ok
+      ? "✅ Passt – der Roboter schaltet es jetzt live. Der Kunde bekommt die Antwort, sobald alles wirklich läuft."
+      : "Das geht gerade nicht mehr – der Stand hat sich geändert. /wuensche zeigt den aktuellen.");
+    return;
+  }
   // Antworten auf Roboter-Nachrichten gehen direkt an den Roboter (Claude im Projekt-Verlauf) –
-  // er antwortet selbst und kann den Vorschlag überarbeiten, den Freigabe-Knopf schicken oder einen Auftrag anlegen.
+  // er antwortet selbst und kann den Vorschlag überarbeiten, freigeben oder einen Auftrag anlegen.
   if (projekt) {
     // Ohne Auftrag im Fuß (Start-Nachricht des Gesprächs, Antwort ohne Auftrag): den Auftrag des laufenden Gesprächs nehmen.
     const g0 = auftrag ? null : await roboter.gespraech(true);
