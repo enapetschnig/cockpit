@@ -43,3 +43,6 @@ create trigger roboter_apps_umschaltzeit before insert or update on crm.roboter_
   for each row execute function crm.roboter_apps_umschaltzeit();
 -- Name des Claude-Verlaufs, wie der Roboter ihn angelegt hat („Roboter · …“) – für den Hinweis in Telegram/CRM.
 alter table crm.roboter_apps add column if not exists sitzung_name text;
+
+-- Auftrag, den Christoph im Telegram-Gespräch angelegt hat: aus welcher Nachricht (nie doppelt anlegen).
+alter table crm.roboter_auftraege add column if not exists quelle_frage uuid unique references crm.roboter_fragen(id) on delete set null;

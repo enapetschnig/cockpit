@@ -66,7 +66,7 @@ const ROBOTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "roboter_vorschlag_anfordern",
       description:
-        "Gibt ALLE offenen Änderungswünsche eines Kunden an den Roboter: er schreibt EINEN gemeinsamen Lösungsvorschlag (kommt in ein paar Minuten per Telegram). Läuft für den Kunden schon ein Vorschlag, kommen die Wünsche dazu und er fasst neu zusammen. Ausnahme YOLO-Kunde: sind alle Wünsche erst nach dem Einschalten von YOLO gekommen, setzt er ohne Freigabe sofort um und schaltet live (das Ergebnis sagt es dir – gib es so weiter). Nur auf ausdrücklichen Wunsch des Nutzers, nicht zum bloßen Zusammenfassen.",
+        "Gibt ALLE offenen Änderungswünsche eines Kunden an den Roboter: er schreibt EINEN gemeinsamen Lösungsvorschlag (kommt in ein paar Minuten per Telegram). Läuft für den Kunden schon ein Vorschlag, kommen die Wünsche dazu und er fasst neu zusammen. Ausnahme YOLO-Kunde: dann setzt er ohne Freigabe sofort um und schaltet live (das Ergebnis sagt es dir – gib es so weiter). Nur auf ausdrücklichen Wunsch des Nutzers, nicht zum bloßen Zusammenfassen.",
       parameters: { type: "object", properties: { kunde: ROBOTER_REF.kunde }, required: ["kunde"] },
     },
   },
@@ -146,7 +146,7 @@ async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Prom
     karten.push({
       text:
         `💬 Du redest jetzt direkt mit dem Roboter von <b>${roboter.esc(k.name!)}</b> – er kennt den Code und den ganzen Verlauf.\n` +
-        `Schreib einfach (Text oder 🎤). <b>/fertig</b> beendet das Gespräch.\n<i>Projekt ${roboter.esc(k.appKey)}</i>`,
+        `Schreib einfach (Text oder 🎤). <b>/fertig</b> beendet das Gespräch.\n<i>${laufend ? `Auftrag ${roboter.kurz(laufend.id)}` : `Projekt ${roboter.esc(k.appKey)}`}</i>`,
       buttons: [],
     });
     return { ok: true, hinweis: "Gespräch ist offen – antworte nur ganz knapp oder gar nicht." };
@@ -805,7 +805,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
         "\n\nÄNDERUNGSWÜNSCHE & ROBOTER: Die Kunden (Handwerksbetriebe) melden in ihren Apps Änderungswünsche und Fehler. Der Roboter (Claude am Windows-PC, kennt den Code jeder App) " +
         "fasst je Kunde ALLE offenen Wünsche zu EINEM Vorschlag zusammen. Nach der Freigabe setzt er um, prüft den Build und schaltet selbst live – der Kunde sieht dann 'umgesetzt' mit der Antwort. " +
         "Vorher prüft er sich selbst (Build, Tests, unabhängige Durchsicht). Neue Tabellen/Spalten spielt er selbst in die Datenbank ein; verändert eine Datenbank-Änderung Bestehendes, fragt er per Knopf (roboter_freigeben). " +
-        "Im YOLO-Modus eines Kunden (roboter_yolo) setzt er Wünsche, die nach dem Einschalten kamen, ohne Freigabe sofort um (Stopp-Knopf auf der Karte). Du steuerst das mit den roboter_*-Tools: " +
+        "Im YOLO-Modus eines Kunden (roboter_yolo) setzt er alle Wünsche ohne Freigabe sofort um (Stopp-Knopf auf der Karte). Du steuerst das mit den roboter_*-Tools: " +
         "Zusammenfassen → roboter_details, dann in eigenen Worten je Kunde kurz: was will der Kunde, wie würde der Roboter es lösen, Aufwand/Risiko. " +
         "Umsetzen lassen → roboter_freigeben (er bestätigt per Knopf). Anmerkungen zum Vorschlag → roboter_aendern. " +
         "Technische Fragen, die der Vorschlag nicht beantwortet → roboter_frage (rate nie, wie der Code aussieht). Will Christoph direkt mit dem Roboter reden → roboter_chat. " +

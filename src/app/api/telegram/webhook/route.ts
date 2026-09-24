@@ -46,7 +46,8 @@ const HELP = [
   "• Trag mir Donnerstag 14 Uhr einen Termin mit Müller ein",
   "• Was ist von Pachlinger offen?",
   "• <b>/wuensche</b> – Änderungswünsche der Kunden & was der Roboter macht",
-  "• <b>/yolo</b> – YOLO-Modus je Kunde: neue Wünsche ohne Freigabe sofort umsetzen",
+  "• <b>/yolo</b> – YOLO-Modus je Kunde: Wünsche ohne Freigabe sofort umsetzen & live",
+  "• <b>/chat schafferhofer</b> – direkt mit dem Roboter eines Kunden reden (<b>/fertig</b> beendet)",
   "• Fass mir die Wünsche von Schafferhofer zusammen",
   "",
   "🤖 Vorschläge vom Roboter kommen hierher – freigeben, ändern oder einfach auf die Nachricht antworten und fragen.",
@@ -203,12 +204,19 @@ async function handleMessage(msg: TgMessage) {
   }
   if (!instruction) return;
 
+  // Antwort auf eine Mail-Benachrichtigung? Die geht immer an den Assistenten (Entwurf) – auch wenn im
+  // Mailtext zufällig „Projekt …“ oder „Auftrag …“ steht.
+  const mail = msg.reply_to_message?.message_id
+    ? await prisma.email.findFirst({ where: { telegramMsgId: String(msg.reply_to_message.message_id) } })
+    : null;
   // Antwort auf eine Roboter-Nachricht? Die tragen unten „Auftrag xxxxxxxx“ bzw. „Projekt <app>“.
-  const bezug = msg.reply_to_message?.text || "";
+  const bezug = mail ? "" : msg.reply_to_message?.text || "";
   // die letzte Fundstelle – weiter oben könnte ein Wunschtext „Auftrag 12345678“ enthalten
   const ref = [...bezug.matchAll(/Auftrag ([0-9a-f]{8})\b/g)].pop()?.[1];
   const auftrag = ref ? await roboter.ladeAuftrag(ref) : null;
-  const projekt = auftrag?.app_key ?? [...bezug.matchAll(/Projekt ([a-z0-9._-]+)/g)].pop()?.[1] ?? null;
+  // „Projekt …“ nur, wenn es wirklich eine angebundene App ist.
+  const projektText = [...bezug.matchAll(/Projekt ([a-z0-9._-]+)/g)].pop()?.[1];
+  const projekt = auftrag?.app_key ?? (projektText && (await roboter.kundenNamen()).has(projektText) ? projektText : null);
   if (auftrag && bezug.startsWith("✏️")) {
     const ok = await roboter.aendern(auftrag.id, instruction);
     await sendTelegram(ok
@@ -219,7 +227,9 @@ async function handleMessage(msg: TgMessage) {
   // Antworten auf Roboter-Nachrichten gehen direkt an den Roboter (Claude im Projekt-Verlauf) –
   // er antwortet selbst und kann den Vorschlag überarbeiten, den Freigabe-Knopf schicken oder einen Auftrag anlegen.
   if (projekt) {
-    await roboterNachricht(projekt, auftrag?.id ?? null, instruction);
+    // Ohne Auftrag im Fuß (Start-Nachricht des Gesprächs, Antwort ohne Auftrag): den Auftrag des laufenden Gesprächs nehmen.
+    const g0 = auftrag ? null : await roboter.gespraech(true);
+    await roboterNachricht(projekt, auftrag?.id ?? (g0?.appKey === projekt ? g0.auftrag : null), instruction);
     return;
   }
   // Läuft ein Gespräch (/chat …), gehen auch freie Nachrichten an den Roboter – nicht Antworten auf Mails.
@@ -231,11 +241,7 @@ async function handleMessage(msg: TgMessage) {
   }
 
   // Kontext: Antwort auf eine bestimmte Mail-Benachrichtigung?
-  let replyEmailId: string | undefined;
-  if (msg.reply_to_message?.message_id && !auftrag) {
-    const e = await prisma.email.findFirst({ where: { telegramMsgId: String(msg.reply_to_message.message_id) } });
-    if (e) replyEmailId = e.id;
-  }
+  const replyEmailId: string | undefined = mail?.id;
 
   const result = await runAssistant(instruction, { replyEmailId, roboterAuftrag: auftrag?.id });
 
@@ -319,7 +325,9 @@ async function gespraechOeffnen(wer: string, auftragId?: string) {
   const name = (await roboter.kundenNamen()).get(appKey) ?? appKey;
   await sendTelegram(
     `💬 Du redest jetzt direkt mit dem Roboter von <b>${esc(name)}</b> – er kennt den Code und den ganzen Verlauf.\n` +
-      `Schreib einfach (Text oder 🎤): Fragen, Änderungen am Vorschlag, neue Aufträge. <b>/fertig</b> beendet das Gespräch.\n<i>Projekt ${esc(appKey)}</i>`,
+      `Schreib einfach (Text oder 🎤): Fragen, Änderungen am Vorschlag, neue Aufträge. <b>/fertig</b> beendet das Gespräch.\n` +
+      // Fuß mit dem Auftrag, wenn es einen gibt – eine Antwort auf diese Nachricht landet dann bei ihm.
+      `<i>${auftrag ? `Auftrag ${roboter.kurz(auftrag)}` : `Projekt ${esc(appKey)}`}</i>`,
     { forceReply: "Nachricht an den Roboter" }
   );
 }

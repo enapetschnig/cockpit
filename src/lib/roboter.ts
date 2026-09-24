@@ -274,9 +274,9 @@ export async function yoloSeit(): Promise<Map<string, Date>> {
     select app_key, aktualisiert from crm.roboter_apps where yolo`;
   return new Map(rows.map((r) => [r.app_key, new Date(r.aktualisiert)]));
 }
-/** YOLO greift nur, wenn alle Wünsche nach dem Einschalten kamen – Altwünsche bekommen einen normalen Vorschlag. */
-export const yoloGreift = (seit: Date | undefined, wuensche: { erstellt_am: Date }[]) =>
-  !!seit && wuensche.length > 0 && wuensche.every((w) => new Date(w.erstellt_am) >= seit);
+/** YOLO an → jeder Auftrag des Kunden geht ohne Freigabe live, auch ältere Wünsche („das ist der Sinn des YOLO-Modus“). */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const yoloGreift = (seit: Date | undefined, _wuensche?: { erstellt_am: Date }[]) => !!seit;
 
 /**
  * YOLO an/aus. Beim Ausschalten warten noch nicht begonnene YOLO-Aufträge wieder auf die
@@ -301,7 +301,7 @@ export async function yoloKarte(): Promise<Karte> {
   const aktiv = liste.filter((x) => x.an);
   const z = [
     "⚡ <b>YOLO-Modus</b>",
-    "Ist er bei einem Kunden an, setzt der Roboter Wünsche, die <b>ab dann</b> hereinkommen, <b>ohne deine Freigabe</b> sofort um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen; Riskantes steht in der Live-Meldung) – und schaltet live. Ältere Wünsche bekommen weiter einen normalen Vorschlag. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem; besteht sie nicht, geht nichts live.",
+    "Ist er bei einem Kunden an, setzt der Roboter <b>alle</b> Wünsche dieses Kunden <b>ohne deine Freigabe</b> sofort um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen; Riskantes steht in der Live-Meldung) – und schaltet live. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem; besteht sie nicht, geht nichts live.",
     "",
     aktiv.length ? `An bei: <b>${aktiv.map((x) => esc(x.name)).join(", ")}</b>` : "Derzeit bei keinem Kunden an.",
     "<i>Tippe auf einen Kunden zum Umschalten.</i>",

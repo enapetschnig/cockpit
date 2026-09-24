@@ -113,19 +113,18 @@ export default function WuenschePage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // YOLO je Kunde (crm.roboter_apps): Wünsche, die nach dem Einschalten kommen, setzt der Roboter ohne Freigabe um.
+  // YOLO je Kunde (crm.roboter_apps): alle Wünsche des Kunden setzt der Roboter sofort ohne Freigabe um.
   const [yolo, setYolo] = useState<Record<string, boolean>>({});
   const [yoloSeit, setYoloSeit] = useState<Record<string, string>>({});
   const ladeYolo = useCallback(async () => {
     const { data } = await db.from('roboter_apps').select('app_key, yolo, aktualisiert');
     const rows = (data || []) as { app_key: string; yolo: boolean; aktualisiert: string }[];
     setYolo(Object.fromEntries(rows.map((r) => [r.app_key, r.yolo])));
-    // aktualisiert = letztes Umschalten: YOLO gilt nur für Wünsche, die danach kamen
     setYoloSeit(Object.fromEntries(rows.filter((r) => r.yolo).map((r) => [r.app_key, r.aktualisiert])));
   }, []);
   useEffect(() => { ladeYolo(); }, [ladeYolo]);
   async function yoloUmschalten(key: string, name: string, an: boolean) {
-    if (an && !confirm(`YOLO für ${name} einschalten?\n\nÄnderungswünsche dieses Kunden, die ab jetzt hereinkommen, setzt der Roboter dann OHNE deine Freigabe um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen) – und schaltet sie live. Ältere Wünsche bekommen weiter einen normalen Vorschlag. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem.`)) return;
+    if (an && !confirm(`YOLO für ${name} einschalten?\n\nAlle Änderungswünsche dieses Kunden setzt der Roboter dann sofort OHNE deine Freigabe um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen) – und schaltet sie live. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem.`)) return;
     setYolo((y) => ({ ...y, [key]: an }));
     // Einschaltzeit setzt die Datenbank selbst (Trigger, nur bei echtem Umschalten) – nicht die Browser-Uhr.
     const { error } = await db.from('roboter_apps').upsert({ app_key: key, yolo: an });

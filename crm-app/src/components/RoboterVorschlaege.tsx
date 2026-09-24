@@ -114,9 +114,9 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
   const frei = [...new Set([wunsch.id, ...offeneIds])]
     .filter((id) => !auftraege.some((x) => zaehlt(x) && x.wunsch_ids.includes(id)));
   const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key && OFFEN_FUER_NEUE.includes(x.status));
-  // YOLO greift nur, wenn alle Wünsche nach dem Einschalten kamen – ältere bekommen einen normalen Vorschlag.
+  // YOLO an → alles geht ohne Freigabe live (auch ältere Wünsche).
   const alle = [...(offenerVorschlag?.wunsch_ids ?? []), ...frei];
-  const direkt = !!yoloSeit && alle.every((id) => !!erstelltAm[id] && new Date(erstelltAm[id]) >= new Date(yoloSeit));
+  const direkt = !!yoloSeit && alle.length > 0;
   const geben = async () => {
     if (direkt && !confirm('YOLO ist an: Der Roboter setzt das OHNE deine Freigabe um und schaltet live. Weiter?')) return;
     if (offenerVorschlag) {
