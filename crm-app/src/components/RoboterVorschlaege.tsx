@@ -76,7 +76,8 @@ export function RoboterKnopf({ wunsch, auftraege, onNeu }: {
   auftraege: RoboterAuftrag[];
   onNeu: () => void;
 }) {
-  const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id));
+  // Verworfene oder abgelehnte Aufträge sperren nicht – der Wunsch kann erneut an den Roboter.
+  const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && x.status !== 'verworfen' && x.status !== 'abgelehnt');
   if (a) {
     const st = STATUS[a.status] ?? { label: a.status, cls: '' };
     return (
