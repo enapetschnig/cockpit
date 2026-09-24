@@ -33,6 +33,7 @@ export const APPS: AppInfo[] = [
   { key: 'birgmann', label: 'Tischlerei Birgmann', projectRef: 'irfhbetcnxhuvoxgjeym' },
   { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas', projectRef: 'luxnyybspuvzhjcfohbp' },
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik', projectRef: 'xsflcdvorwaufiagvilw' },
+  { key: 'holzbau-demo', label: 'Holzbau-Demo', projectRef: 'yernlanmcepfhazzfucj' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

@@ -8,6 +8,7 @@ import { BillingNav } from '@/components/billing/BillingNav';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { APP_LABEL, APPS } from '@/lib/apps';
@@ -111,6 +112,34 @@ export default function WuenschePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // YOLO je Kunde (crm.roboter_apps): Wünsche, die nach dem Einschalten kommen, setzt der Roboter ohne Freigabe um.
+  const [yolo, setYolo] = useState<Record<string, boolean>>({});
+  const [yoloSeit, setYoloSeit] = useState<Record<string, string>>({});
+  const ladeYolo = useCallback(async () => {
+    const { data } = await db.from('roboter_apps').select('app_key, yolo, aktualisiert');
+    const rows = (data || []) as { app_key: string; yolo: boolean; aktualisiert: string }[];
+    setYolo(Object.fromEntries(rows.map((r) => [r.app_key, r.yolo])));
+    // aktualisiert = letztes Umschalten: YOLO gilt nur für Wünsche, die danach kamen
+    setYoloSeit(Object.fromEntries(rows.filter((r) => r.yolo).map((r) => [r.app_key, r.aktualisiert])));
+  }, []);
+  useEffect(() => { ladeYolo(); }, [ladeYolo]);
+  async function yoloUmschalten(key: string, name: string, an: boolean) {
+    if (an && !confirm(`YOLO für ${name} einschalten?\n\nÄnderungswünsche dieses Kunden, die ab jetzt hereinkommen, setzt der Roboter dann OHNE deine Freigabe um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen) – und schaltet sie live. Ältere Wünsche bekommen weiter einen normalen Vorschlag. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem.`)) return;
+    setYolo((y) => ({ ...y, [key]: an }));
+    // Einschaltzeit setzt die Datenbank selbst (Trigger, nur bei echtem Umschalten) – nicht die Browser-Uhr.
+    const { error } = await db.from('roboter_apps').upsert({ app_key: key, yolo: an });
+    if (error) { toast.error('Konnte nicht gespeichert werden'); ladeYolo(); return; }
+    ladeYolo();
+    if (an) return toast.success(`⚡ YOLO für ${name} an`);
+    // YOLO aus: noch nicht begonnene YOLO-Aufträge warten wieder auf die Freigabe (laufende hält der Roboter selbst an).
+    const { data: zurueck } = await db.from('roboter_auftraege')
+      .update({ status: 'vorschlag', yolo: false, freigegeben_am: null, gemeldet: null, aktualisiert: new Date().toISOString() })
+      .eq('app_key', key).eq('yolo', true).eq('status', 'freigegeben').select('id');
+    const n = zurueck?.length ?? 0;
+    toast.success(`YOLO für ${name} aus${n ? ` – ${n === 1 ? '1 Auftrag wartet' : `${n} Aufträge warten`} wieder auf deine Freigabe` : ''}`);
+    ladenRoboter();
+  }
   // Meldungen kommen jederzeit herein – alle 60 s nachsehen.
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
 
@@ -119,6 +148,7 @@ export default function WuenschePage() {
     && (!fStatus || w.status === fStatus) && (!nurOffen || istOffen(w))),
     [items, fApp, fArt, fStatus, nurOffen]);
 
+  const erstelltAm = useMemo(() => Object.fromEntries(items.map((w) => [w.id, w.erstellt_am])), [items]);
   const neu = items.filter(istOffen).length;
   const ungelesen = items.filter((w) => !w.gesehen_am && istOffen(w)).length;
 
@@ -194,10 +224,14 @@ export default function WuenschePage() {
           </button>
 
           {uebersicht.map((u) => (
-            <button
+            // div statt button: unten sitzt der YOLO-Schalter (ein Knopf darf nicht in einem Knopf stecken)
+            <div
               key={u.key}
+              role="button"
+              tabIndex={0}
               onClick={() => setFApp(fApp === u.key ? '' : u.key)}
-              className={'text-left rounded-xl border p-3 transition-colors ' +
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFApp(fApp === u.key ? '' : u.key); } }}
+              className={'text-left rounded-xl border p-3 transition-colors cursor-pointer ' +
                 (fApp === u.key ? 'border-primary bg-primary/5' : 'bg-card hover:bg-accent/50')}
             >
               <div className="font-semibold text-sm leading-tight line-clamp-2" title={u.name}>{u.name}</div>
@@ -214,9 +248,35 @@ export default function WuenschePage() {
               {u.gesamt === 0 && (
                 <div className="text-[11px] text-muted-foreground mt-0.5">noch keine Meldung</div>
               )}
-            </button>
+              <div className="flex items-center gap-1 mt-2 pt-1.5 border-t" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                <Switch id={`yolo-${u.key}`} checked={!!yolo[u.key]} onCheckedChange={(v) => yoloUmschalten(u.key, u.name, v)}
+                  className="scale-75 origin-left data-[state=checked]:bg-amber-500" />
+                <label htmlFor={`yolo-${u.key}`} className={'text-[11px] cursor-pointer ' + (yolo[u.key] ? 'text-amber-700 font-semibold' : 'text-muted-foreground')}
+                  title="Wünsche, die ab dem Einschalten kommen, ohne Freigabe sofort umsetzen und live schalten">
+                  {yolo[u.key] ? '⚡ YOLO an' : 'YOLO'}
+                </label>
+              </div>
+            </div>
           ))}
         </div>
+
+        {/* Kunde angeklickt: YOLO gut sichtbar über seinen Wünschen */}
+        {fApp && (() => {
+          const name = uebersicht.find((x) => x.key === fApp)?.name ?? APP_LABEL[fApp] ?? fApp;
+          const an = !!yolo[fApp];
+          return (
+            <div className={'rounded-xl border p-3 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 ' + (an ? 'border-amber-300 bg-amber-50' : 'bg-card')}>
+              <span className="font-semibold text-sm">{name}</span>
+              <span className="flex items-center gap-2">
+                <Switch id="yolo-kunde" checked={an} onCheckedChange={(v) => yoloUmschalten(fApp, name, v)} className="data-[state=checked]:bg-amber-500" />
+                <label htmlFor="yolo-kunde" className={'text-sm cursor-pointer ' + (an ? 'text-amber-800 font-semibold' : '')}>⚡ YOLO</label>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {an ? 'An: neue Wünsche setzt der Roboter ohne deine Freigabe um und schaltet sie live.' : 'Aus: jeder Vorschlag wartet auf deine Freigabe.'}
+              </span>
+            </div>
+          );
+        })()}
 
         <Card className="p-3 mb-4 flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted-foreground mx-1">Art</span>
@@ -356,6 +416,7 @@ export default function WuenschePage() {
                 </Button>
                 {(offen || auftraege.some((x) => x.wunsch_ids.includes(w.id))) && (
                   <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter}
+                    yoloSeit={yoloSeit[w.app_key]} erstelltAm={erstelltAm}
                     offeneIds={items.filter((x) => x.app_key === w.app_key && istOffen(x)).map((x) => x.id)} />
                 )}
                 <span className="text-xs text-muted-foreground">

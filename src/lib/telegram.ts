@@ -127,20 +127,39 @@ export async function tgAnswerCallback(callbackId: string, text?: string): Promi
   });
 }
 
-/** Ersetzt den Text (und optional die Knöpfe) einer bestehenden Nachricht. Ohne buttons verschwinden sie. */
+/**
+ * Ersetzt den Text (und optional die Knöpfe) einer bestehenden Nachricht. Ohne buttons verschwinden sie.
+ * false = nicht geklappt (z. B. über 4096 Zeichen oder Nachricht zu alt) – dann lieber neu senden.
+ */
 export async function tgEditMessage(
   chatId: number | string,
   messageId: number,
   text: string,
   buttons?: TgButton[][]
-): Promise<void> {
+): Promise<boolean> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
-  if (!token) return;
+  if (!token) return false;
   const body: Record<string, unknown> = { chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", disable_web_page_preview: true };
   if (buttons && buttons.length) body.reply_markup = tastatur(buttons);
-  await fetch(`${API(token)}/editMessageText`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const senden = async (b: Record<string, unknown>) => {
+    try {
+      const res = await fetch(`${API(token)}/editMessageText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(b),
+      });
+      return (await res.json()) as { ok: boolean; description?: string };
+    } catch (e) {
+      return { ok: false, description: String(e) };
+    }
+  };
+  let json = await senden(body);
+  if (!json.ok && /parse|entit/i.test(json.description ?? "")) {
+    // HTML nicht parsebar -> als Klartext erneut versuchen
+    json = await senden({ ...body, text: stripTags(text), parse_mode: undefined });
+  }
+  // Gleicher Inhalt wie vorher ist kein Fehler (sonst käme die Karte doppelt).
+  if (!json.ok && /not modified/i.test(json.description ?? "")) return true;
+  if (!json.ok) console.error("[telegram] editMessageText fehlgeschlagen:", json.description);
+  return json.ok;
 }

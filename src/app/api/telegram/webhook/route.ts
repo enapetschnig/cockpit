@@ -46,6 +46,7 @@ const HELP = [
   "• Trag mir Donnerstag 14 Uhr einen Termin mit Müller ein",
   "• Was ist von Pachlinger offen?",
   "• <b>/wuensche</b> – Änderungswünsche der Kunden & was der Roboter macht",
+  "• <b>/yolo</b> – YOLO-Modus je Kunde: neue Wünsche ohne Freigabe sofort umsetzen",
   "• Fass mir die Wünsche von Schafferhofer zusammen",
   "",
   "🤖 Vorschläge vom Roboter kommen hierher – freigeben, ändern oder einfach auf die Nachricht antworten und fragen.",
@@ -102,12 +103,14 @@ async function refreshOverview(cb: TgCallback): Promise<void> {
 
 export async function POST(req: Request) {
   const secret = await getConfig("TELEGRAM_WEBHOOK_SECRET");
-  if (secret && req.headers.get("x-telegram-bot-api-secret-token") !== secret) {
+  const chatId = await getConfig("TELEGRAM_CHAT_ID");
+  // Nicht ladbar (z. B. Datenbank kurz weg) → nichts durchlassen; Telegram stellt später erneut zu.
+  if (!secret || !chatId) return NextResponse.json({ ok: false }, { status: 503 });
+  if (req.headers.get("x-telegram-bot-api-secret-token") !== secret) {
     return NextResponse.json({ ok: true });
   }
 
   const update = (await req.json().catch(() => ({}))) as { update_id?: number; message?: TgMessage; callback_query?: TgCallback };
-  const chatId = await getConfig("TELEGRAM_CHAT_ID");
 
   // Dedupe: Telegram stellt Updates bei Timeout erneut zu -> jedes nur einmal verarbeiten
   if (typeof update.update_id === "number") {
@@ -120,7 +123,7 @@ export async function POST(req: Request) {
   // Button-Klick (Senden / Verwerfen)
   if (update.callback_query) {
     const cb = update.callback_query;
-    if (chatId && String(cb.message?.chat?.id) !== String(chatId)) {
+    if (String(cb.message?.chat?.id) !== String(chatId)) {
       await tgAnswerCallback(cb.id);
       return NextResponse.json({ ok: true });
     }
@@ -136,7 +139,7 @@ export async function POST(req: Request) {
 
   const msg = update.message;
   if (!msg) return NextResponse.json({ ok: true });
-  if (chatId && String(msg.chat?.id) !== String(chatId)) return NextResponse.json({ ok: true });
+  if (String(msg.chat?.id) !== String(chatId)) return NextResponse.json({ ok: true });
 
   try {
     await handleMessage(msg);
@@ -160,6 +163,11 @@ async function handleMessage(msg: TgMessage) {
   if (text.startsWith("/wuensche") || text.startsWith("/wünsche") || text.startsWith("/roboter")) {
     const u = await roboter.uebersicht();
     await sendTelegram(u.text, u.buttons.length ? { buttons: u.buttons } : undefined);
+    return;
+  }
+  if (text.startsWith("/yolo")) {
+    const k = await roboter.yoloKarte();
+    await sendTelegram(k.text, { buttons: k.buttons });
     return;
   }
 
@@ -265,19 +273,47 @@ async function roboterFrage(appKey: string, auftragId: string | null, frage: str
 
 /** Knöpfe unter Roboter-Nachrichten: rob:<aktion>:<auftrag-id | app_key> */
 async function roboterKnopf(cb: TgCallback) {
-  const [, aktion, ref] = (cb.data || "").split(":");
+  const [, aktion, ref, zusatz] = (cb.data || "").split(":");
   const bearbeite = async (k: roboter.Karte) => {
-    if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, k.text, k.buttons);
+    const ok = cb.message ? await tgEditMessage(cb.message.chat.id, cb.message.message_id, k.text, k.buttons) : false;
+    // Zu lang oder nicht mehr änderbar → als neue Nachricht, sonst liefe der Knopf ins Leere
+    if (!ok) await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
   };
+
+  if (aktion === "x") {
+    await tgAnswerCallback(cb.id, "Abgebrochen");
+    if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, "Abgebrochen – nichts geändert.");
+    return;
+  }
+
+  if (aktion === "yolo") {
+    // rob:yolo:<app_key>:<1|0>
+    const an = zusatz === "1";
+    const zurueck = await roboter.yoloSetzen(ref, an);
+    await tgAnswerCallback(cb.id, an
+      ? "⚡ YOLO an – Wünsche, die ab jetzt kommen, gehen ohne Freigabe live"
+      : zurueck.length
+        ? `YOLO aus – ${zurueck.length === 1 ? "1 Auftrag wartet" : `${zurueck.length} Aufträge warten`} wieder auf deine Freigabe`
+        : "YOLO aus – wieder mit Freigabe");
+    await bearbeite(await roboter.yoloKarte());
+    for (const a of zurueck) {
+      const k = await roboter.karteFuer(a, { kopf: "🟡 YOLO aus – wartet auf deine Freigabe" });
+      await sendTelegram(k.text, { buttons: k.buttons });
+    }
+    return;
+  }
 
   if (aktion === "start") {
     const r = await roboter.anRoboterGeben(ref);
     await tgAnswerCallback(cb.id, r.neu ? "✓ An den Roboter übergeben" : "Nichts Neues");
+    const wuensche = r.neu === 1 ? "1 Wunsch" : `${r.neu} Wünsche`;
     await sendTelegram(!r.neu
       ? "Für diesen Kunden liegen keine offenen Wünsche mehr ohne Roboter-Auftrag."
-      : r.dazu
-        ? `🤖 ${r.neu === 1 ? "1 Wunsch kommt" : `${r.neu} Wünsche kommen`} zum offenen Vorschlag dazu – der Roboter fasst alles neu zusammen.`
-        : `🤖 ${r.neu === 1 ? "1 Wunsch ist" : `${r.neu} Wünsche sind`} beim Roboter – der gemeinsame Vorschlag kommt in ein paar Minuten.`);
+      : r.yolo
+        ? `⚡ ${wuensche} beim Roboter – YOLO: er setzt ${r.dazu ? "alles" : "sie"} <b>ohne Freigabe</b> um und schaltet live. Du bekommst Bescheid (⏹ Stopp auf der Karte).`
+        : r.dazu
+          ? `🤖 ${r.neu === 1 ? "1 Wunsch kommt" : `${r.neu} Wünsche kommen`} zum offenen Vorschlag dazu – der Roboter fasst alles neu zusammen.`
+          : `🤖 ${r.neu === 1 ? "1 Wunsch ist" : `${r.neu} Wünsche sind`} beim Roboter – der gemeinsame Vorschlag kommt in ein paar Minuten.`);
     return;
   }
 
@@ -306,15 +342,32 @@ async function roboterKnopf(cb: TgCallback) {
       await bearbeite(await roboter.karteFuer(a));
       return;
     case "frei": // erst nachfragen – Freigeben schaltet live
-      if (a.status !== "vorschlag" && !(a.status === "vorschau" && !a.datenbank)) return danach("", false);
+      if (!["vorschlag", "db_freigabe", "vorschau"].includes(a.status)) return danach("", false);
+      await tgAnswerCallback(cb.id);
+      await bearbeite(await roboter.karteFuer(a, { bestaetigen: true }));
+      return;
+    case "dbp": // Altaufträge (2.1): auch hier erst nachfragen – schaltet live
+      if (!roboter.handarbeit(a)) return danach("", false);
       await tgAnswerCallback(cb.id);
       await bearbeite(await roboter.karteFuer(a, { bestaetigen: true }));
       return;
     case "ja": {
-      const ok = a.status === "vorschlag" ? await roboter.freigeben(a.id)
-        : a.status === "vorschau" && !a.datenbank ? await roboter.liveSchalten(a.id) : false;
-      return danach(a.status === "vorschau" ? "🚀 Wird live geschaltet" : "✅ Freigegeben – der Roboter legt los", ok);
+      // rob:ja:<id>:<stand> – gilt nur für den Stand, der auf der Bestätigungs-Karte zu sehen war
+      if (!zusatz || zusatz !== a.ver) {
+        await tgAnswerCallback(cb.id, "Der Stand hat sich geändert – bitte nochmal ansehen");
+        await bearbeite(await roboter.karteFuer(a));
+        return;
+      }
+      const ok = a.status === "vorschlag" ? await roboter.freigeben(a.id, zusatz)
+        : a.status === "db_freigabe" ? await roboter.datenbankFreigeben(a.id, zusatz)
+          : a.status === "vorschau" ? await roboter.liveSchalten(a.id, zusatz)
+            : roboter.handarbeit(a) ? await roboter.datenbankEinspielen(a.id, zusatz) : false;
+      return danach(a.status === "vorschlag" ? "✅ Freigegeben – der Roboter legt los"
+        : a.status === "wartet" ? "🗄 Der Roboter prüft, spielt die Datenbank ein und schaltet live"
+          : "🚀 Wird eingespielt und live geschaltet", ok);
     }
+    case "stop":
+      return danach("⏹ Gestoppt – es geht nichts live", a.yolo && (await roboter.stoppen(a.id)));
     case "aend":
       await tgAnswerCallback(cb.id);
       await sendTelegram(`✏️ Was soll beim Vorschlag für <b>${esc(kunde)}</b> anders sein? Antworte auf diese Nachricht (Text oder 🎤).\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Was soll anders sein?" });
@@ -329,10 +382,11 @@ async function roboterKnopf(cb: TgCallback) {
       return danach("🗑 Verworfen", await roboter.verwerfen(a.id));
     case "nochmal":
       return danach("🔁 Der Roboter versucht es erneut", await roboter.nochmal(a));
-    case "vsc":
-      return danach("✔️ Als erledigt markiert", await roboter.inVsCodeErledigt(a.id));
+    case "vsc": // „In VS Code erledigt“ aus 2.1 gibt es nicht mehr
+    default:
+      await tgAnswerCallback(cb.id, "Knopf veraltet – bitte /wuensche");
+      await bearbeite(await roboter.karteFuer(a));
   }
-  await tgAnswerCallback(cb.id);
 }
 
 async function handleCallback(cb: TgCallback) {

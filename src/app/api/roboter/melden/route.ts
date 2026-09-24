@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const a = f.auftrag_id ? await ladeAuftrag(f.auftrag_id) : null;
     const antwort = f.status === "fehler" ? `⚠️ Der Roboter konnte die Frage nicht beantworten: ${f.antwort || "unbekannter Fehler"}` : ohneMarkdown(f.antwort || "");
     // Unter der Antwort die Knöpfe des Auftrags, damit man gleich freigeben/ändern kann.
-    const knoepfe = a && ["vorschlag", "wartet", "fehler", "vorschau"].includes(a.status) ? (await karteFuer(a)).buttons : undefined;
+    const knoepfe = a && ["vorschlag", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status) ? (await karteFuer(a)).buttons : undefined;
     await sendTelegram(
       `💬 <b>${esc(kunde)}</b> – deine Frage:\n<i>${esc(f.frage)}</i>\n\n${esc(antwort)}` + (a ? `\n\n<i>Auftrag ${a.id.slice(0, 8)}</i>` : ""),
       knoepfe ? { buttons: knoepfe } : undefined
@@ -41,11 +41,18 @@ export async function POST(req: Request) {
   const [beansprucht] = await prisma.$queryRaw<{ id: string }[]>`
     update crm.roboter_auftraege set gemeldet = status
     where id = ${b.id}::uuid and gemeldet is distinct from status and aktualisiert > now() - interval '15 minutes'
-      and status in ('vorschlag', 'vorschau', 'erledigt', 'wartet', 'fehler')
+      and (status in ('vorschlag', 'vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe') or (status = 'freigegeben' and yolo))
     returning id::text as id`;
   if (!beansprucht) return NextResponse.json({ ok: true, schon: true });
   const a = (await ladeAuftrag(beansprucht.id)) as Auftrag;
   const m = await meldungFuerAuftrag(a);
-  if (m) await sendTelegram(m.text, m.buttons.length ? { buttons: m.buttons } : undefined);
+  if (m) {
+    const r = await sendTelegram(m.text, m.buttons.length ? { buttons: m.buttons } : undefined);
+    // Nicht angekommen → Stufe wieder freigeben, damit ein erneuter Aufruf sie meldet.
+    if (!r.ok) {
+      await prisma.$executeRaw`update crm.roboter_auftraege set gemeldet = null where id = ${a.id}::uuid and gemeldet = ${a.status}`;
+      return NextResponse.json({ ok: false, error: "Telegram nicht erreicht" }, { status: 502 });
+    }
+  }
   return NextResponse.json({ ok: true });
 }

@@ -32,6 +32,10 @@ export interface RoboterAuftrag {
   vorschau_url: string | null;
   fehler: string | null;
   protokoll: string | null;
+  db_info?: string | null;
+  db_hash?: string | null;
+  yolo?: boolean;
+  freigegeben_am?: string | null;
   sitzungen?: string[];
   erstellt_am: string;
   aktualisiert: string;
@@ -51,8 +55,16 @@ const STATUS: Record<string, { label: string; cls: string; arbeitet?: boolean }>
   verworfen:   { label: 'Verworfen', cls: 'bg-muted text-muted-foreground border-border' },
   wartet:      { label: 'Wartet auf dich', cls: 'bg-red-50 text-red-700 border-red-200' },
   fehler:      { label: 'Fehler', cls: 'bg-red-50 text-red-700 border-red-200' },
+  db_pruefen:  { label: 'Prüft & spielt Datenbank ein …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
+  db_freigabe: { label: 'Datenbank-Änderung braucht dein OK', cls: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
+  db_live:     { label: 'Spielt Datenbank ein und schaltet live …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
 };
-const AKTIV = ['analyse', 'vorschlag', 'aendern', 'freigegeben', 'in_arbeit', 'vorschau', 'live', 'wartet', 'fehler'];
+const AKTIV = ['analyse', 'vorschlag', 'aendern', 'freigegeben', 'in_arbeit', 'vorschau', 'live', 'wartet', 'fehler', 'db_pruefen', 'db_freigabe', 'db_live'];
+const OFFEN_FUER_NEUE = ['analyse', 'vorschlag', 'aendern'];
+// Hier läuft ein YOLO-Auftrag ohne Freigabe – „Stopp“ hält ihn vor Datenbank und Live an.
+const STOPPBAR = ['freigegeben', 'in_arbeit', 'db_pruefen', 'db_live'];
+/** Postgres-Array-Literal für Filter ({"a","b"}). */
+const pgArray = (ids: string[]) => `{${ids.map((i) => `"${i.replace(/["\\]/g, '\\$&')}"`).join(',')}}`;
 
 /** Aufträge + Lebenszeichen, alle 20 s aktualisiert. */
 export function useRoboter() {
@@ -81,11 +93,14 @@ const zaehlt = (x: RoboterAuftrag) => x.status !== 'verworfen' && x.status !== '
  * Alle offenen Wünsche desselben Kunden gehen gemeinsam mit; läuft für den Kunden schon
  * ein Vorschlag (noch nicht freigegeben), kommen sie dort dazu → ein gemeinsamer Vorschlag.
  */
-export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu }: {
+export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, erstelltAm }: {
   wunsch: { id: string; app_key: string };
   offeneIds: string[];
   auftraege: RoboterAuftrag[];
   onNeu: () => void;
+  /** YOLO an seit (roboter_apps.aktualisiert) – undefined = aus */
+  yoloSeit?: string;
+  erstelltAm: Record<string, string>;
 }) {
   const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && zaehlt(x));
   if (a) {
@@ -98,25 +113,42 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu }: {
   }
   const frei = [...new Set([wunsch.id, ...offeneIds])]
     .filter((id) => !auftraege.some((x) => zaehlt(x) && x.wunsch_ids.includes(id)));
-  const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key
-    && ['analyse', 'vorschlag', 'aendern'].includes(x.status));
+  const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key && OFFEN_FUER_NEUE.includes(x.status));
+  // YOLO greift nur, wenn alle Wünsche nach dem Einschalten kamen – ältere bekommen einen normalen Vorschlag.
+  const alle = [...(offenerVorschlag?.wunsch_ids ?? []), ...frei];
+  const direkt = !!yoloSeit && alle.every((id) => !!erstelltAm[id] && new Date(erstelltAm[id]) >= new Date(yoloSeit));
   const geben = async () => {
-    const { error } = offenerVorschlag
-      ? await db.from('roboter_auftraege').update({
-        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', gemeldet: null,
+    if (direkt && !confirm('YOLO ist an: Der Roboter setzt das OHNE deine Freigabe um und schaltet live. Weiter?')) return;
+    if (offenerVorschlag) {
+      // Nur solange der Vorschlag noch offen ist und niemand inzwischen Wünsche angehängt hat.
+      const { data, error } = await db.from('roboter_auftraege').update({
+        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', freigegeben_am: null, gemeldet: null,
         aktualisiert: new Date().toISOString(),
-      }).eq('id', offenerVorschlag.id)
-      : await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: frei, status: 'analyse' });
-    if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
-    toast.success(offenerVorschlag
-      ? 'Zum offenen Vorschlag dazugegeben – der Roboter fasst alles neu zusammen'
-      : 'Übergeben – der Vorschlag kommt in ein paar Minuten');
+      }).eq('id', offenerVorschlag.id).in('status', OFFEN_FUER_NEUE)
+        .contains('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids)).containedBy('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids))
+        .select('id');
+      if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
+      if (!data?.length) { toast.error('Der Stand hat sich geändert – neu geladen, bitte nochmal'); return onNeu(); }
+    } else {
+      // Frisch nachsehen: hat der Roboter die Wünsche inzwischen selbst gesammelt? Sonst stecken sie in zwei Aufträgen.
+      const { data: schon } = await db.from('roboter_auftraege').select('id')
+        .overlaps('wunsch_ids', pgArray(frei)).not('status', 'in', '(verworfen,abgelehnt)').limit(1);
+      if (schon?.length) { toast.error('Der Roboter hat die Wünsche inzwischen selbst übernommen – neu geladen'); return onNeu(); }
+      const { error } = await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: frei, status: 'analyse' });
+      if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
+    }
+    toast.success(direkt
+      ? '⚡ YOLO: Der Roboter setzt es ohne Freigabe um und schaltet live'
+      : offenerVorschlag
+        ? 'Zum offenen Vorschlag dazugegeben – der Roboter fasst alles neu zusammen'
+        : 'Übergeben – der Vorschlag kommt in ein paar Minuten');
     onNeu();
   };
   return (
-    <Button size="sm" variant="outline" className="gap-1" onClick={geben}>
+    <Button size="sm" variant="outline" className="gap-1" onClick={geben}
+      title={direkt ? 'YOLO: ohne Freigabe umsetzen und live schalten' : undefined}>
       <Bot className="w-3.5 h-3.5" />
-      {offenerVorschlag ? 'Zum Roboter-Vorschlag dazu' : 'Vorschlag vom Roboter'}
+      {direkt ? '⚡ Umsetzen (YOLO)' : offenerVorschlag ? 'Zum Roboter-Vorschlag dazu' : 'Vorschlag vom Roboter'}
       {frei.length > 1 && ` (${frei.length} Wünsche)`}
     </Button>
   );
@@ -139,17 +171,40 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
     if (h.startsWith('#a-')) setTimeout(() => document.getElementById(h.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
   }, [auftraege.length]);
 
-  const setze = async (a: RoboterAuftrag, felder: Partial<RoboterAuftrag> & Record<string, unknown>, ok: string) => {
-    const { error } = await db.from('roboter_auftraege').update({ ...felder, aktualisiert: new Date().toISOString() }).eq('id', a.id);
+  /**
+   * Status nur ändern, wenn der Auftrag noch so steht wie angezeigt (die Liste kann 20 s alt sein,
+   * confirm() hält beliebig lange). gemeldet zurück, damit Telegram die nächste Stufe wieder meldet.
+   */
+  const setze = async (a: RoboterAuftrag, felder: Record<string, unknown>, ok: string,
+    opt: { von?: string[]; nurWenn?: Record<string, unknown> } = {}) => {
+    let q = db.from('roboter_auftraege').update({ ...felder, gemeldet: null, aktualisiert: new Date().toISOString() })
+      .eq('id', a.id).in('status', opt.von ?? [a.status]);
+    for (const [k, v] of Object.entries(opt.nurWenn ?? {})) q = v === null ? q.is(k, null) : q.eq(k, v);
+    const { data, error } = await q.select('id');
     if (error) return toast.error('Konnte nicht gespeichert werden');
+    if (!data?.length) { toast.error('Der Stand hat sich geändert – neu geladen'); return laden(); }
     toast.success(ok);
     setAendernOffen(null);
     laden();
   };
-  const antwortSpeichern = (a: RoboterAuftrag) => {
+  const antwortFeld = (a: RoboterAuftrag) => {
     const t = antwort[a.id];
-    if (t === undefined || t === (a.antwort_kunde || '')) return;
-    db.from('roboter_auftraege').update({ antwort_kunde: t }).eq('id', a.id).then(() => laden());
+    return t !== undefined && t !== (a.antwort_kunde || '') ? { antwort_kunde: t } : {};
+  };
+  const antwortSpeichern = (a: RoboterAuftrag) => {
+    const f = antwortFeld(a);
+    if (!('antwort_kunde' in f)) return;
+    db.from('roboter_auftraege').update(f).eq('id', a.id).in('status', ['vorschlag', 'vorschau']).then(() => laden());
+  };
+  const freigeben = async (a: RoboterAuftrag) => {
+    // Kam während der Rückfrage ein neuer Vorschlag, nicht den ungesehenen freigeben.
+    const { data: jetzt } = await db.from('roboter_auftraege').select('vorschlag').eq('id', a.id).maybeSingle();
+    if ((jetzt?.vorschlag ?? null) !== (a.vorschlag ?? null)) {
+      toast.error('Inzwischen gibt es einen neuen Vorschlag – bitte nochmal ansehen');
+      return laden();
+    }
+    // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) käme sonst als „ging schief“ in den Umsetzen-Prompt.
+    setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, ...antwortFeld(a) }, 'Freigegeben – der Roboter setzt es um und schaltet live');
   };
 
   const vorMin = puls?.zuletzt ? Math.round((Date.now() - new Date(puls.zuletzt).getTime()) / 60_000) : null;
@@ -173,17 +228,19 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
       )}
       {sichtbar.map((a) => {
         const st = STATUS[a.status] ?? { label: a.status, cls: '' };
-        // Dort weitermachen, wo es hakte: vor dem Vorschlag oder beim Umsetzen (ältere Aufträge: zurück zur Vorschau).
-        const nochmal = !a.vorschlag ? 'analyse' : a.vorschau_url ? 'vorschau' : 'freigegeben';
-        // Umgesetzt, aber mit Datenbank-Änderung: live schaltet Christoph mit Claude in VS Code.
-        const handarbeit = a.status === 'wartet' && a.datenbank && !!a.zweig;
+        // Umsetzen nur, wenn wirklich freigegeben wurde – sonst neu analysieren (ältere Aufträge: zurück zur Vorschau).
+        const nochmal = a.vorschau_url ? 'vorschau' : a.freigegeben_am ? 'freigegeben' : 'analyse';
+        // Nur Altaufträge (2.1): umgesetzt, Datenbank sollte von Hand eingespielt werden.
+        const handarbeit = a.status === 'wartet' && a.datenbank && !!a.zweig && /bewusst nicht selbst ein/.test(a.fehler ?? '');
+        const kunde = APP_LABEL[a.app_key] ?? a.app_key;
         return (
           <Card key={a.id} id={`a-${a.id}`} className="p-4 mb-3 scroll-mt-20 border-l-4 border-l-amber-400">
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              <strong>{APP_LABEL[a.app_key] ?? a.app_key}</strong>
+              <strong>{kunde}</strong>
               <span className={'text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ' + st.cls}>
                 {st.arbeitet && <Loader2 className="w-3 h-3 animate-spin" />}{st.label}
               </span>
+              {a.yolo && <span className="text-xs text-amber-700 font-semibold">⚡ YOLO</span>}
               {a.aufwand && <span className="text-xs text-muted-foreground">Aufwand {a.aufwand}</span>}
               {a.risiko && <span className="text-xs text-muted-foreground">· Risiko {a.risiko}</span>}
               {a.datenbank && <span className="text-xs text-red-700 font-medium">· braucht Datenbank-Änderung</span>}
@@ -201,10 +258,18 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                 {a.vorschlag}
               </div>
             )}
-            {a.protokoll && ['vorschau', 'erledigt', 'wartet', 'fehler'].includes(a.status) && (
+            {a.protokoll && ['vorschau', 'erledigt', 'wartet', 'fehler', 'db_freigabe'].includes(a.status) && (
               <div className="rounded-lg border p-3 text-sm whitespace-pre-wrap mb-2">
                 <div className="text-xs font-semibold text-muted-foreground mb-1">Umgesetzt</div>
                 {a.protokoll}
+              </div>
+            )}
+            {a.db_info && (
+              <div className="rounded-lg border p-3 text-sm whitespace-pre-wrap mb-2">
+                <div className="text-xs font-semibold text-muted-foreground mb-1">
+                  Datenbank{a.status === 'db_freigabe' ? ' – das würde sich ändern' : ''}
+                </div>
+                {a.db_info}
               </div>
             )}
             {a.fehler && <div className="rounded-lg bg-red-50 text-red-800 p-3 text-sm mb-2 whitespace-pre-wrap">{a.fehler}</div>}
@@ -229,7 +294,11 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                   value={anmerkung[a.id] ?? ''} onChange={(e) => setAnmerkung((x) => ({ ...x, [a.id]: e.target.value }))} />
                 <div className="flex gap-2 mt-1.5">
                   <Button size="sm" disabled={!anmerkung[a.id]?.trim()}
-                    onClick={() => setze(a, { status: 'aendern', anmerkung: anmerkung[a.id].trim() }, 'Der Roboter überarbeitet es')}>Absenden</Button>
+                    onClick={() => setze(a, {
+                      status: 'aendern', anmerkung: anmerkung[a.id].trim(),
+                      // überarbeiteter Vorschlag muss neu freigegeben werden
+                      ...(a.status === 'vorschlag' ? { freigegeben_am: null } : {}),
+                    }, 'Der Roboter überarbeitet es')}>Absenden</Button>
                   <Button size="sm" variant="ghost" onClick={() => setAendernOffen(null)}>Abbrechen</Button>
                 </div>
               </div>
@@ -241,12 +310,11 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                   <Button size="sm" className="bg-green-600 hover:bg-green-700"
                     onClick={() => {
                       antwortSpeichern(a);
-                      const frage = a.datenbank
-                        ? 'Freigeben? Der Roboter setzt es um. Weil eine Datenbank-Änderung dabei ist, schaltest du es danach mit Claude in VS Code live.'
-                        : 'Freigeben & live schalten? Der Roboter setzt es um, prüft den Build und schaltet es danach selbst live – der Kunde bekommt deine Antwort.';
-                      if (confirm(frage)) setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString() }, 'Freigegeben – der Roboter setzt es um und schaltet live');
+                      const frage = 'Freigeben & live schalten? Der Roboter setzt es um, prüft selbst (Build, Tests, Durchsicht) und schaltet live – der Kunde bekommt deine Antwort.'
+                        + (a.datenbank ? ' Neue Tabellen/Spalten spielt er selbst ein; verändert die Datenbank-Änderung Bestehendes, fragt er vorher noch einmal.' : '');
+                      if (confirm(frage)) freigeben(a);
                     }}>
-                    {a.datenbank ? 'Freigeben' : 'Freigeben & live schalten'}
+                    Freigeben & live schalten
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAendernOffen(a.id)}>Ändern</Button>
                   <Button size="sm" variant="ghost" className="text-muted-foreground"
@@ -257,7 +325,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                 <>
                   <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={a.datenbank}
                     title={a.datenbank ? 'Datenbank-Änderung – bitte in VS Code mit Claude live schalten' : undefined}
-                    onClick={() => { antwortSpeichern(a); if (confirm('Live schalten? Die Änderung geht an den Kunden raus, und er bekommt deine Antwort.')) setze(a, { status: 'live' }, 'Wird live geschaltet'); }}>
+                    onClick={() => { antwortSpeichern(a); if (confirm('Live schalten? Die Änderung geht an den Kunden raus, und er bekommt deine Antwort.')) setze(a, { status: 'live', ...antwortFeld(a) }, 'Wird live geschaltet'); }}>
                     Live schalten
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAendernOffen(a.id)}>Ändern</Button>
@@ -265,11 +333,31 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                     onClick={() => confirm('Umsetzung verwerfen? Der Zweig bleibt auf GitHub, live geht nichts.') && setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
                 </>
               )}
-              {handarbeit && (
-                <Button size="sm" variant="outline"
-                  onClick={() => confirm('Mit Claude in VS Code live geschaltet (inkl. Status „umgesetzt“ beim Kunden)?') && setze(a, { status: 'erledigt', fehler: null }, 'Erledigt')}>
-                  In VS Code live geschaltet
+              {a.status === 'db_freigabe' && (
+                <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                  onClick={() => confirm('Datenbank-Änderung einspielen & live schalten? Tabellen, deren Daten verloren gehen könnten, sichert der Roboter vorher.'
+                    + (/vorhandene Migrationsdatei/i.test(a.db_info ?? '') ? ' Geänderte alte Migrationsdateien spielt er nicht ein – dafür geht nur der Code live.' : ''))
+                    // OK gilt nur für den gezeigten Datenbank-Stand
+                    && setze(a, { status: 'db_live' }, 'Der Roboter spielt ein und schaltet live', { nurWenn: { db_hash: a.db_hash ?? null } })}>
+                  Einspielen & live schalten
                 </Button>
+              )}
+              {handarbeit && (
+                <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                  onClick={() => confirm('Datenbank einspielen & live schalten? Der Roboter prüft vorher selbst (Build, Tests, Durchsicht); verändert die Änderung Bestehendes, fragt er noch einmal.')
+                    && setze(a, { status: 'db_pruefen', fehler: null }, 'Der Roboter prüft, spielt die Datenbank ein und schaltet live')}>
+                  Datenbank einspielen & live schalten
+                </Button>
+              )}
+              {a.yolo && STOPPBAR.includes(a.status) && (
+                <Button size="sm" variant="outline" className="text-red-700"
+                  onClick={() => confirm('YOLO-Auftrag stoppen? Es geht nichts live; schon Umgesetztes bleibt nur im Zweig.')
+                    && setze(a, { status: 'verworfen' }, 'Gestoppt – es geht nichts live', { von: STOPPBAR, nurWenn: { yolo: true } })}>
+                  ⏹ Stopp
+                </Button>
+              )}
+              {a.status === 'db_freigabe' && (
+                <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
               )}
               {(a.status === 'fehler' || a.status === 'wartet') && (
                 <>
@@ -279,11 +367,10 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
               )}
               {a.zweig && <span className="text-[11px] text-muted-foreground self-center">Zweig {a.zweig}</span>}
             </div>
-            {/* Der ganze Verlauf liegt am PC im Projektordner – in VS Code fortsetzbar */}
+            {/* Ein Claude-Verlauf je Kunde am PC – Roboter und Christoph schreiben in denselben */}
             {!!a.sitzungen?.length && (
-              <p className="text-[11px] text-muted-foreground mt-2">
-                Verlauf: {a.sitzungen.length} Claude-Sitzung{a.sitzungen.length > 1 ? 'en' : ''} – in VS Code (verbunden mit epower-pc) den Ordner öffnen → Claude → Sitzungen,
-                oder im Terminal <span className="font-mono select-all">claude --resume {a.sitzungen[a.sitzungen.length - 1]}</span>
+              <p className="text-[11px] text-muted-foreground mt-2" title={`Sitzungen: ${a.sitzungen.join(', ')}`}>
+                Verlauf: VS Code (epower-pc) → Projektordner des Kunden → Claude → „Roboter · {kunde}“
               </p>
             )}
           </Card>

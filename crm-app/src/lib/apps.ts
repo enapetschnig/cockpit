@@ -26,6 +26,7 @@ export const APPS: AppInfo[] = [
   { key: 'birgmann', label: 'Tischlerei Birgmann' },
   { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas' },
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik' },
+  { key: 'holzbau-demo', label: 'Holzbau-Demo' },
 ];
 
 export const APP_LABEL: Record<string, string> =

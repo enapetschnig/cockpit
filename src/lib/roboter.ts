@@ -27,6 +27,11 @@ export interface Auftrag {
   fehler: string | null;
   protokoll: string | null;
   gemeldet: string | null;
+  db_info: string | null; // Klartext: was sich in der Datenbank ändert/geändert hat
+  yolo: boolean; // ohne Freigabe umgesetzt (YOLO-Modus des Kunden)
+  freigegeben_am: Date | null; // gesetzt = Christoph (oder YOLO) hat den Vorschlag freigegeben
+  sitzungen: string[]; // Claude-Sitzungen, in denen der Roboter daran gearbeitet hat
+  ver: string; // Kurz-Prüfsumme von Vorschlag + Datenbank-Stand: ein „Ja“ gilt nur für den gezeigten Stand
   erstellt_am: Date;
   aktualisiert: Date;
 }
@@ -46,11 +51,13 @@ export interface Karte {
 }
 
 const CRM_LINK = "https://app.epowergmbh.at/wuensche#a-";
-const AKTIV = ["analyse", "vorschlag", "aendern", "freigegeben", "in_arbeit", "vorschau", "live", "wartet", "fehler"];
+const AKTIV = ["analyse", "vorschlag", "aendern", "freigegeben", "in_arbeit", "vorschau", "live", "wartet", "fehler", "db_pruefen", "db_freigabe", "db_live"];
 // In diese Aufträge dürfen neue Wünsche desselben Kunden noch dazu (noch nicht freigegeben).
 const OFFEN_FUER_NEUE = ["analyse", "vorschlag", "aendern"];
 // Wie im CRM: erledigt ist ein Wunsch, wenn umgesetzt/abgelehnt/gelöscht oder abgehakt.
 const WUNSCH_ERLEDIGT = ["umgesetzt", "abgelehnt", "geloescht"];
+// Hier läuft ein YOLO-Auftrag ohne Freigabe – „⏹ Stopp“ hält ihn vor Datenbank und Live an.
+export const STOPPBAR = ["freigegeben", "in_arbeit", "db_pruefen", "db_live"];
 
 const STATUS_TEXT: Record<string, string> = {
   analyse: "🔎 Roboter analysiert …",
@@ -65,11 +72,14 @@ const STATUS_TEXT: Record<string, string> = {
   verworfen: "🗑 verworfen",
   wartet: "⏸ wartet auf dich",
   fehler: "⚠️ Fehler",
+  db_pruefen: "🔎 prüft und spielt die Datenbank-Änderung ein …",
+  db_freigabe: "🗄 Datenbank-Änderung braucht dein OK",
+  db_live: "🗄 spielt die Datenbank ein und schaltet live …",
 };
 
 export const kurz = (id: string) => id.slice(0, 8);
 export const esc = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const kuerzen = (s: string | null, n: number) => {
+export const kuerzen = (s: string | null, n: number) => {
   const t = (s || "").trim();
   return t.length > n ? t.slice(0, n - 1) + "…" : t;
 };
@@ -82,8 +92,10 @@ export const ohneMarkdown = (s: string) =>
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/^\s*[-*]\s+/gm, "• ");
 
+const VER = Prisma.sql`left(md5(coalesce(vorschlag, '') || '|' || coalesce(db_hash, '')), 8)`;
 const SPALTEN = Prisma.sql`id::text as id, app_key, wunsch_ids, status, vorschlag, aufwand, risiko, datenbank,
-  antwort_kunde, anmerkung, zweig, vorschau_url, fehler, protokoll, gemeldet, erstellt_am, aktualisiert`;
+  antwort_kunde, anmerkung, zweig, vorschau_url, fehler, protokoll, gemeldet, db_info, yolo, freigegeben_am, sitzungen,
+  ${VER} as ver, erstellt_am, aktualisiert`;
 
 // ── Lesen ──────────────────────────────────────────────────────────────────
 /** app_key → Kundenname (aus dem CRM; Apps ohne Kunde behalten ihren Schlüssel). */
@@ -169,31 +181,50 @@ export async function auftragFuer(ref: { auftrag?: string; kunde?: string }): Pr
   if (!ref.kunde) return { fehler: "Bitte Kunde oder Auftrag angeben." };
   const k = await findeKunde(ref.kunde);
   if (!k.appKey) return { fehler: `Kunde nicht eindeutig. Meintest du: ${(k.kandidaten || []).slice(0, 10).join(", ")}?` };
-  const rang = ["vorschlag", "vorschau", "wartet", "fehler", "analyse", "aendern", "freigegeben", "in_arbeit", "live"];
-  const liste = (await aktiveAuftraege(k.appKey)).sort((x, y) => rang.indexOf(x.status) - rang.indexOf(y.status));
+  const rang = ["vorschlag", "db_freigabe", "vorschau", "wartet", "fehler", "analyse", "aendern", "freigegeben", "in_arbeit", "db_pruefen", "db_live", "live"];
+  const r = (s: string) => (rang.includes(s) ? rang.indexOf(s) : rang.length); // Unbekanntes ans Ende
+  const liste = (await aktiveAuftraege(k.appKey)).sort((x, y) => r(x.status) - r(y.status));
   return liste[0] ? { a: liste[0], kunde: k.name } : { kunde: k.name, fehler: `Für ${k.name} läuft gerade kein Roboter-Auftrag.` };
 }
 
 // ── Steuern (nur erlaubte Übergänge – was der Roboter gerade macht, bleibt unberührt) ──
-async function wechsel(id: string, von: string[], setzen: Prisma.Sql): Promise<boolean> {
+// Jeder Wechsel setzt gemeldet zurück: sonst bliebe ein zweiter Fehler/„wartet“ nach „Nochmal“ stumm.
+async function wechsel(id: string, von: string[], setzen: Prisma.Sql, bedingung: Prisma.Sql = Prisma.empty): Promise<boolean> {
   const n = await prisma.$executeRaw`
-    update crm.roboter_auftraege set ${setzen}, aktualisiert = now() where id = ${id}::uuid and status = any(${von})`;
+    update crm.roboter_auftraege set ${setzen}, gemeldet = null, aktualisiert = now()
+    where id = ${id}::uuid and status = any(${von}) ${bedingung}`;
   return n > 0;
 }
-/** Umgesetzt mit Datenbank-Änderung: live schaltet Christoph mit Claude in VS Code. */
-export const handarbeit = (a: Auftrag) => a.status === "wartet" && a.datenbank && !!a.zweig;
+/** Nur der gezeigte Stand (Vorschlag + Datenbank) – ein altes „Ja“ gibt keinen neuen Vorschlag frei. */
+const nurStand = (ver?: string) => (ver ? Prisma.sql`and ${VER} = ${ver}` : Prisma.empty);
+/** Nur Altaufträge aus Roboter 2.1: umgesetzt, Datenbank sollte von Hand eingespielt werden. */
+export const handarbeit = (a: Auftrag) =>
+  a.status === "wartet" && a.datenbank && !!a.zweig && /bewusst nicht selbst ein/.test(a.fehler ?? "");
 
-export const freigeben = (id: string) => wechsel(id, ["vorschlag"], Prisma.sql`status = 'freigegeben', freigegeben_am = now()`);
+// fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) landete sonst als „ging schief“ im Umsetzen-Prompt.
+export const freigeben = (id: string, ver?: string) =>
+  wechsel(id, ["vorschlag"], Prisma.sql`status = 'freigegeben', freigegeben_am = now(), fehler = null`, nurStand(ver));
+// Überarbeiteter Vorschlag muss neu freigegeben werden (sonst würde „Nochmal“ ihn nach einem Fehler umsetzen).
 export const aendern = (id: string, anmerkung: string) =>
-  wechsel(id, ["vorschlag", "vorschau"], Prisma.sql`status = 'aendern', anmerkung = ${anmerkung}, gemeldet = null`);
+  wechsel(id, ["vorschlag", "vorschau"], Prisma.sql`status = 'aendern', anmerkung = ${anmerkung},
+    freigegeben_am = case when status = 'vorschlag' then null else freigegeben_am end`);
 export const ablehnen = (id: string) => wechsel(id, ["vorschlag"], Prisma.sql`status = 'abgelehnt'`);
-export const verwerfen = (id: string) => wechsel(id, ["vorschlag", "vorschau", "wartet", "fehler"], Prisma.sql`status = 'verworfen'`);
-export const liveSchalten = (id: string) => wechsel(id, ["vorschau"], Prisma.sql`status = 'live'`);
-export const inVsCodeErledigt = (id: string) => wechsel(id, ["wartet"], Prisma.sql`status = 'erledigt', fehler = null`);
+export const verwerfen = (id: string) =>
+  wechsel(id, ["vorschlag", "vorschau", "wartet", "fehler", "db_freigabe"], Prisma.sql`status = 'verworfen'`);
+/** YOLO-Auftrag anhalten: der Roboter prüft vor Datenbank und Live und bricht dann ab. */
+export const stoppen = (id: string) => wechsel(id, STOPPBAR, Prisma.sql`status = 'verworfen'`, Prisma.sql`and yolo`);
+export const liveSchalten = (id: string, ver?: string) => wechsel(id, ["vorschau"], Prisma.sql`status = 'live'`, nurStand(ver));
+/** OK für eine Datenbank-Änderung, die Bestehendes verändert – gilt nur für den gezeigten Stand (db_hash). */
+export const datenbankFreigeben = (id: string, ver?: string) =>
+  wechsel(id, ["db_freigabe"], Prisma.sql`status = 'db_live'`, nurStand(ver));
+/** Altaufträge, die wegen der Datenbank warten: Roboter prüft, spielt ein und schaltet live. */
+export const datenbankEinspielen = (id: string, ver?: string) =>
+  wechsel(id, ["wartet"], Prisma.sql`status = 'db_pruefen', fehler = null`, nurStand(ver));
 export async function nochmal(a: Auftrag): Promise<boolean> {
   if (handarbeit(a)) return false;
-  // Dort weitermachen, wo es hakte (ältere Aufträge: zurück zur Vorschau)
-  const ziel = !a.vorschlag ? "analyse" : a.vorschau_url ? "vorschau" : "freigegeben";
+  // Umsetzen nur, wenn wirklich freigegeben wurde – ein bloß vorhandener Vorschlag reicht nicht
+  // (ältere Aufträge: zurück zur Vorschau).
+  const ziel = a.vorschau_url ? "vorschau" : a.freigegeben_am ? "freigegeben" : "analyse";
   return wechsel(a.id, ["wartet", "fehler"], Prisma.sql`status = ${ziel}`);
 }
 
@@ -201,21 +232,90 @@ export async function nochmal(a: Auftrag): Promise<boolean> {
  * Alle offenen Wünsche eines Kunden an den Roboter: in den offenen Vorschlag
  * (wird neu zusammengefasst) oder als neuer gemeinsamer Auftrag.
  */
-export async function anRoboterGeben(appKey: string): Promise<{ auftrag?: string; neu: number; dazu: boolean }> {
-  const frei = (await offeneWuensche(appKey)).filter((w) => !w.auftrag).map((w) => w.id);
-  if (!frei.length) return { neu: 0, dazu: false };
-  const [offen] = await prisma.$queryRaw<{ id: string }[]>`
-    select id::text as id from crm.roboter_auftraege
+export async function anRoboterGeben(appKey: string): Promise<{ auftrag?: string; neu: number; dazu: boolean; yolo: boolean }> {
+  const freiW = (await offeneWuensche(appKey)).filter((w) => !w.auftrag);
+  const frei = freiW.map((w) => w.id);
+  if (!frei.length) return { neu: 0, dazu: false, yolo: false };
+  const seit = (await yoloSeit()).get(appKey);
+  const [offen] = await prisma.$queryRaw<{ id: string; wunsch_ids: string[] }[]>`
+    select id::text as id, wunsch_ids from crm.roboter_auftraege
     where app_key = ${appKey} and status = any(${OFFEN_FUER_NEUE}) order by erstellt_am desc limit 1`;
   if (offen) {
-    await prisma.$executeRaw`
-      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[], status = 'analyse', gemeldet = null, aktualisiert = now()
-      where id = ${offen.id}::uuid`;
-    return { auftrag: offen.id, neu: frei.length, dazu: true };
+    // Nur solange noch offen – hat der Roboter inzwischen freigegeben/umgesetzt, neuer Auftrag.
+    const n = await prisma.$executeRaw`
+      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[], status = 'analyse', freigegeben_am = null,
+        gemeldet = null, aktualisiert = now()
+      where id = ${offen.id}::uuid and status = any(${OFFEN_FUER_NEUE})`;
+    if (n > 0) {
+      const alle = [...freiW, ...(await wuenscheZu(offen.wunsch_ids))];
+      return { auftrag: offen.id, neu: frei.length, dazu: true, yolo: yoloGreift(seit, alle) };
+    }
   }
   const [n] = await prisma.$queryRaw<{ id: string }[]>`
     insert into crm.roboter_auftraege (app_key, wunsch_ids, status) values (${appKey}, ${frei}::text[], 'analyse') returning id::text as id`;
-  return { auftrag: n.id, neu: frei.length, dazu: false };
+  return { auftrag: n.id, neu: frei.length, dazu: false, yolo: yoloGreift(seit, freiW) };
+}
+
+// ── YOLO-Modus je Kunde ────────────────────────────────────────────────────
+/** Alle angebundenen Apps mit YOLO-Stand (auch die, die noch nie etwas gemeldet haben). */
+export async function yoloListe(): Promise<{ appKey: string; name: string; an: boolean }[]> {
+  const [namen, rows] = await Promise.all([
+    kundenNamen(),
+    prisma.$queryRaw<{ app_key: string; yolo: boolean }[]>`select app_key, yolo from crm.roboter_apps`,
+  ]);
+  const an = new Map(rows.map((r) => [r.app_key, r.yolo]));
+  for (const k of an.keys()) if (!namen.has(k)) namen.set(k, k);
+  return [...namen].map(([appKey, name]) => ({ appKey, name, an: !!an.get(appKey) })).sort((x, y) => x.name.localeCompare(y.name, "de"));
+}
+
+/** Seit wann YOLO je Kunde an ist (roboter_apps.aktualisiert = letztes Umschalten). */
+export async function yoloSeit(): Promise<Map<string, Date>> {
+  const rows = await prisma.$queryRaw<{ app_key: string; aktualisiert: Date }[]>`
+    select app_key, aktualisiert from crm.roboter_apps where yolo`;
+  return new Map(rows.map((r) => [r.app_key, new Date(r.aktualisiert)]));
+}
+/** YOLO greift nur, wenn alle Wünsche nach dem Einschalten kamen – Altwünsche bekommen einen normalen Vorschlag. */
+export const yoloGreift = (seit: Date | undefined, wuensche: { erstellt_am: Date }[]) =>
+  !!seit && wuensche.length > 0 && wuensche.every((w) => new Date(w.erstellt_am) >= seit);
+
+/**
+ * YOLO an/aus. Beim Ausschalten warten noch nicht begonnene YOLO-Aufträge wieder auf die
+ * Freigabe (zurückgegeben, damit man sie zeigen kann); laufende hält der Roboter selbst an.
+ */
+export async function yoloSetzen(appKey: string, an: boolean): Promise<Auftrag[]> {
+  // aktualisiert nur beim echten Umschalten – davon hängt ab, welche Wünsche als „neu“ gelten.
+  await prisma.$executeRaw`
+    insert into crm.roboter_apps as r (app_key, yolo, aktualisiert) values (${appKey}, ${an}, now())
+    on conflict (app_key) do update set yolo = excluded.yolo,
+      aktualisiert = case when r.yolo is distinct from excluded.yolo then now() else r.aktualisiert end`;
+  if (an) return [];
+  // freigegeben_am weg: der Vorschlag ist jetzt nicht mehr freigegeben (wichtig für „Nochmal“).
+  return prisma.$queryRaw<Auftrag[]>`
+    update crm.roboter_auftraege set status = 'vorschlag', yolo = false, freigegeben_am = null, gemeldet = null, aktualisiert = now()
+    where app_key = ${appKey} and yolo and status = 'freigegeben'
+    returning ${SPALTEN}`;
+}
+
+export async function yoloKarte(): Promise<Karte> {
+  const liste = await yoloListe();
+  const aktiv = liste.filter((x) => x.an);
+  const z = [
+    "⚡ <b>YOLO-Modus</b>",
+    "Ist er bei einem Kunden an, setzt der Roboter Wünsche, die <b>ab dann</b> hereinkommen, <b>ohne deine Freigabe</b> sofort um – auch Datenbank-Änderungen (vorher sichert er betroffene Tabellen; Riskantes steht in der Live-Meldung) – und schaltet live. Ältere Wünsche bekommen weiter einen normalen Vorschlag. Die Selbstprüfung (Build, Tests, Durchsicht) läuft trotzdem; besteht sie nicht, geht nichts live.",
+    "",
+    aktiv.length ? `An bei: <b>${aktiv.map((x) => esc(x.name)).join(", ")}</b>` : "Derzeit bei keinem Kunden an.",
+    "<i>Tippe auf einen Kunden zum Umschalten.</i>",
+  ];
+  const buttons: Knopf[][] = liste.map((x) => [{ text: `${x.an ? "⚡ AN" : "○ aus"} · ${kuerzen(x.name, 30)}`, data: `rob:yolo:${x.appKey}:${x.an ? 0 : 1}` }]);
+  return { text: z.join("\n"), buttons };
+}
+
+/** Rückfrage, bevor der Assistent YOLO einschaltet – eingeschaltet wird erst per Knopf. */
+export function yoloBestaetigung(appKey: string, name: string): Karte {
+  return {
+    text: `⚡ YOLO für <b>${esc(name)}</b> einschalten?\nWünsche, die ab jetzt hereinkommen, setzt der Roboter dann <b>ohne deine Freigabe</b> um und schaltet sie live.`,
+    buttons: [[{ text: "⚡ Ja, YOLO an", data: `rob:yolo:${appKey}:1` }, { text: "Abbrechen", data: "rob:x:0" }]],
+  };
 }
 
 /** Frage an den Roboter (Claude am PC im Projektordner – kennt den Code, ändert nichts). */
@@ -230,16 +330,20 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
   const id = a.id;
   const crm: Knopf = { text: "🔗 Im CRM", url: CRM_LINK + id };
   if (bestaetigen) {
-    return [[
-      { text: a.status === "vorschau" ? "🚀 Ja, live schalten" : a.datenbank ? "✅ Ja, freigeben" : "✅ Ja, live schalten", data: `rob:ja:${id}` },
-      { text: "↩︎ Zurück", data: `rob:zur:${id}` },
-    ]];
+    const ja = a.status === "vorschau" ? "🚀 Ja, live schalten" : ["db_freigabe", "wartet"].includes(a.status) ? "🗄 Ja, einspielen & live" : "✅ Ja, live schalten";
+    return [[{ text: ja, data: `rob:ja:${id}:${a.ver}` }, { text: "↩︎ Zurück", data: `rob:zur:${id}` }]];
   }
+  if (a.yolo && STOPPBAR.includes(a.status)) return [[{ text: "⏹ Stopp", data: `rob:stop:${id}` }, crm]];
   switch (a.status) {
     case "vorschlag":
       return [
-        [{ text: a.datenbank ? "✅ Freigeben" : "✅ Freigeben & live", data: `rob:frei:${id}` }, { text: "✏️ Ändern", data: `rob:aend:${id}` }],
+        [{ text: "✅ Freigeben & live", data: `rob:frei:${id}` }, { text: "✏️ Ändern", data: `rob:aend:${id}` }],
         [{ text: "💬 Frage", data: `rob:frage:${id}` }, { text: "❌ Ablehnen", data: `rob:abl:${id}` }, crm],
+      ];
+    case "db_freigabe":
+      return [
+        [{ text: "🗄 Einspielen & live", data: `rob:frei:${id}` }],
+        [{ text: "💬 Frage", data: `rob:frage:${id}` }, { text: "🗑 Verwerfen", data: `rob:verw:${id}` }, crm],
       ];
     case "vorschau":
       return [
@@ -250,7 +354,7 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
     case "fehler":
       return [
         [
-          handarbeit(a) ? { text: "✔️ In VS Code erledigt", data: `rob:vsc:${id}` } : { text: "🔁 Nochmal versuchen", data: `rob:nochmal:${id}` },
+          handarbeit(a) ? { text: "🗄 Datenbank einspielen & live", data: `rob:dbp:${id}` } : { text: "🔁 Nochmal versuchen", data: `rob:nochmal:${id}` },
           { text: "🗑 Verwerfen", data: `rob:verw:${id}` },
         ],
         [{ text: "💬 Frage", data: `rob:frage:${id}` }, crm],
@@ -264,52 +368,90 @@ function knoepfe(a: Auftrag, bestaetigen: boolean): Knopf[][] {
  * Karte eines Auftrags: Wünsche, Vorschlag, Antwort an den Kunden, Knöpfe.
  * Unten steht immer „Auftrag xxxxxxxx“ – darüber ordnet der Bot Antworten zu.
  */
-export function karte(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: { bestaetigen?: boolean; kopf?: string } = {}): Karte {
-  const kopf: string[] = [`🤖 <b>${esc(kunde)}</b> · ${opts.kopf ?? STATUS_TEXT[a.status] ?? a.status}`];
-  const info = [a.aufwand && `Aufwand ${a.aufwand}`, a.risiko && `Risiko ${a.risiko}`, a.datenbank && "⚠️ braucht Datenbank-Änderung"].filter(Boolean);
-  if (info.length) kopf.push(`<i>${esc(info.join(" · "))}</i>`);
-  kopf.push("", `<b>${wuensche.length === 1 ? "Der Wunsch" : `${wuensche.length} Wünsche`}</b>`);
-  wuensche.forEach((w, i) => kopf.push(`${i + 1}. ${esc(kuerzen(w.text.replace(/\s+/g, " "), 200))}${w.melder ? ` <i>– ${esc(w.melder)}</i>` : ""}`));
-
-  const fuss: string[] = [];
-  if (a.protokoll && ["erledigt", "wartet", "fehler", "vorschau"].includes(a.status)) fuss.push("", "<b>Umgesetzt</b>", esc(kuerzen(ohneMarkdown(a.protokoll), 900)));
-  if (a.antwort_kunde && ["vorschlag", "vorschau"].includes(a.status)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, 450))}</i>`);
-  if (a.fehler && ["wartet", "fehler"].includes(a.status)) fuss.push("", `⚠️ ${esc(kuerzen(a.fehler, 600))}`);
-  if (opts.bestaetigen) {
-    fuss.push("", a.status === "vorschau"
-      ? "<b>Wirklich live schalten?</b> Die Änderung geht an den Kunden raus, und er bekommt deine Antwort."
-      : a.datenbank
-        ? "<b>Freigeben?</b> Der Roboter setzt es um. Wegen der Datenbank-Änderung schaltest du es danach mit Claude in VS Code live."
-        : "<b>Wirklich freigeben & live schalten?</b> Der Roboter setzt um, prüft den Build und schaltet selbst live – der Kunde bekommt die Antwort oben.");
-  } else if (["vorschlag", "wartet", "fehler"].includes(a.status)) {
-    fuss.push("", "<i>Fragen oder Änderungen? Einfach auf diese Nachricht antworten.</i>");
+type KartenOpts = { bestaetigen?: boolean; kopf?: string; verlauf?: string | null };
+export function karte(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOpts = {}): Karte {
+  // Telegram erlaubt 4096 Zeichen (auch beim Bearbeiten) – große Aufträge werden knapper gebaut.
+  let text = "";
+  for (const f of [1, 0.5, 0.25]) {
+    text = karteText(a, wuensche, kunde, opts, f);
+    if (text.length <= 4000) break;
   }
-  fuss.push(`<i>Auftrag ${kurz(a.id)}</i>`);
-
-  // Telegram erlaubt 4096 Zeichen – der Vorschlag bekommt, was übrig bleibt.
-  let mitte: string[] = [];
-  if (a.vorschlag && a.status !== "erledigt") {
-    const rest = 3800 - kopf.join("\n").length - fuss.join("\n").length - 60;
-    mitte = ["", "<b>So würde ich es machen</b>", esc(kuerzen(ohneMarkdown(a.vorschlag), Math.max(300, rest)))];
-  }
-  return { text: [...kopf, ...mitte, ...fuss].join("\n"), buttons: knoepfe(a, !!opts.bestaetigen) };
+  return { text, buttons: knoepfe(a, !!opts.bestaetigen) };
 }
 
-export async function karteFuer(a: Auftrag, opts: { bestaetigen?: boolean; kopf?: string } = {}): Promise<Karte> {
-  const [w, namen] = await Promise.all([wuenscheZu(a.wunsch_ids), kundenNamen()]);
-  return karte(a, w, namen.get(a.app_key) ?? a.app_key, opts);
+const MAX_WUENSCHE = 6;
+function karteText(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOpts, f: number): string {
+  const n = (x: number) => Math.round(x * f);
+  const kopf: string[] = [`${a.yolo ? "⚡" : "🤖"} <b>${esc(kuerzen(kunde, 60))}</b> · ${opts.kopf ?? STATUS_TEXT[a.status] ?? a.status}`];
+  const info = [a.yolo && "YOLO-Modus", a.aufwand && `Aufwand ${a.aufwand}`, a.risiko && `Risiko ${a.risiko}`, a.datenbank && "mit Datenbank-Änderung"].filter(Boolean);
+  if (info.length) kopf.push(`<i>${esc(kuerzen(info.join(" · "), 200))}</i>`);
+  kopf.push("", `<b>${wuensche.length === 1 ? "Der Wunsch" : `${wuensche.length} Wünsche`}</b>`);
+  wuensche.slice(0, MAX_WUENSCHE).forEach((w, i) =>
+    kopf.push(`${i + 1}. ${esc(kuerzen(w.text.replace(/\s+/g, " "), n(200)))}${w.melder ? ` <i>– ${esc(kuerzen(w.melder, 40))}</i>` : ""}`));
+  if (wuensche.length > MAX_WUENSCHE) kopf.push(`<i>… und ${wuensche.length - MAX_WUENSCHE} weitere (im CRM)</i>`);
+
+  const fuss: string[] = [];
+  if (a.db_info && ["db_freigabe", "db_live", "erledigt", "wartet", "fehler"].includes(a.status)) {
+    fuss.push("", `<b>Datenbank${a.status === "db_freigabe" ? " – das würde sich ändern" : ""}</b>`, esc(kuerzen(a.db_info, n(900))));
+  }
+  if (a.protokoll && ["erledigt", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) fuss.push("", "<b>Umgesetzt</b>", esc(kuerzen(ohneMarkdown(a.protokoll), n(700))));
+  if (a.antwort_kunde && ["vorschlag", "vorschau"].includes(a.status)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, n(450)))}</i>`);
+  if (a.fehler && ["wartet", "fehler"].includes(a.status)) fuss.push("", `⚠️ ${esc(kuerzen(a.fehler, n(600)))}`);
+  // z. B. „YOLO wurde ausgeschaltet – schon umgesetzt im Zweig …“
+  if (a.fehler && a.status === "vorschlag") fuss.push("", `ℹ️ ${esc(kuerzen(a.fehler, n(400)))}`);
+  if (opts.bestaetigen) {
+    const alteMigrationen = /vorhandene Migrationsdatei/i.test(a.db_info ?? "")
+      ? " Geänderte alte Migrationsdateien spielt er <b>nicht</b> ein – dafür geht nur der Code live." : "";
+    fuss.push("", a.status === "vorschau"
+      ? "<b>Wirklich live schalten?</b> Die Änderung geht an den Kunden raus, und er bekommt deine Antwort."
+      : a.status === "db_freigabe"
+        ? "<b>Wirklich einspielen & live schalten?</b> Tabellen, deren Daten verloren gehen könnten, sichert der Roboter vorher (Schema roboter_sicherung)." + alteMigrationen
+        : a.status === "wartet"
+          ? "<b>Wirklich Datenbank einspielen & live schalten?</b> Der Roboter prüft vorher selbst (Build, Tests, Durchsicht); verändert die Änderung Bestehendes, fragt er dich noch einmal."
+          : "<b>Wirklich freigeben & live schalten?</b> Der Roboter setzt um, prüft selbst (Build, Tests, Durchsicht) und schaltet live – der Kunde bekommt die Antwort oben." +
+            (a.datenbank ? " Neue Tabellen/Spalten spielt er selbst ein; verändert die Datenbank-Änderung Bestehendes, fragt er dich vorher noch einmal." : ""));
+  } else if (["vorschlag", "wartet", "fehler", "db_freigabe"].includes(a.status)) {
+    fuss.push("", "<i>Fragen oder Änderungen? Einfach auf diese Nachricht antworten.</i>");
+  }
+  // Der eine Claude-Verlauf je Kunde – dort kann Christoph selbst weiterschreiben. Name so, wie der Roboter ihn angelegt hat.
+  if (opts.verlauf) fuss.push(`<i>Verlauf: VS Code → Projektordner des Kunden → Claude → „${esc(kuerzen(opts.verlauf, 60))}“</i>`);
+  fuss.push(`<i>Auftrag ${kurz(a.id)}</i>`);
+
+  // Der Vorschlag bekommt, was übrig bleibt.
+  let mitte: string[] = [];
+  if (a.vorschlag && a.status !== "erledigt") {
+    const rest = n(3800) - kopf.join("\n").length - fuss.join("\n").length - 60;
+    mitte = ["", "<b>So würde ich es machen</b>", esc(kuerzen(ohneMarkdown(a.vorschlag), Math.max(n(300), rest)))];
+  }
+  return [...kopf, ...mitte, ...fuss].join("\n");
+}
+
+export async function karteFuer(a: Auftrag, opts: KartenOpts = {}): Promise<Karte> {
+  const [w, namen, [app]] = await Promise.all([
+    wuenscheZu(a.wunsch_ids),
+    kundenNamen(),
+    prisma.$queryRaw<{ sitzung_name: string | null }[]>`select sitzung_name from crm.roboter_apps where app_key = ${a.app_key}`,
+  ]);
+  return karte(a, w, namen.get(a.app_key) ?? a.app_key, { verlauf: app?.sitzung_name, ...opts });
 }
 
 /** Was der Roboter zu einer Stufe meldet (Vorschlag, live, wartet, Fehler). */
 export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
   if (a.status === "vorschlag") return karteFuer(a, { kopf: "🟡 neuer Vorschlag – bitte ansehen" });
-  if (["wartet", "fehler", "vorschau"].includes(a.status)) return karteFuer(a);
+  if (a.status === "freigegeben" && a.yolo) return karteFuer(a, { kopf: "YOLO – wird jetzt ohne Freigabe umgesetzt" });
+  if (["wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) return karteFuer(a);
   if (a.status === "erledigt") {
     const kunde = (await kundenNamen()).get(a.app_key) ?? a.app_key;
+    // Riskantes aus der Datenbank-Prüfung (⚠️-Zeilen) nie wegkürzen – gerade bei YOLO ging es ohne Rückfrage durch.
+    const zeilen = (a.db_info || "").split("\n");
+    const risiken = zeilen.filter((z) => z.trim().startsWith("⚠️")).slice(0, 8);
+    const sonst = zeilen.filter((z) => !z.trim().startsWith("⚠️")).join("\n").trim();
     return {
       text:
-        `✅ <b>${esc(kunde)}</b> ist live.` +
+        `✅ <b>${esc(kunde)}</b> ist live${a.yolo ? " (YOLO)" : ""}.` +
         (a.protokoll ? `\n\n${esc(kuerzen(ohneMarkdown(a.protokoll), 1500))}` : "") +
+        (risiken.length ? `\n\n<b>⚠️ Datenbank – bitte ansehen</b>\n${risiken.map((z) => esc(kuerzen(z.trim(), 300))).join("\n")}` : "") +
+        (sonst ? `\n\n<b>Datenbank</b>\n${esc(kuerzen(sonst, 800))}` : "") +
         (a.fehler ? `\n\n⚠️ ${esc(a.fehler)}` : `\n\n<i>Der Kunde sieht „umgesetzt“ mit deiner Antwort.</i>`) +
         `\n<i>Auftrag ${kurz(a.id)}</i>`,
       buttons: [[{ text: "🔗 Im CRM", url: CRM_LINK + a.id }]],
@@ -320,7 +462,7 @@ export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
 
 /** Übersicht: was wartet auf Christoph, woran arbeitet der Roboter, was ist noch nicht beim Roboter. */
 export async function uebersicht(): Promise<Karte> {
-  const [auftraege, wuensche, namen, puls] = await Promise.all([aktiveAuftraege(), offeneWuensche(), kundenNamen(), roboterPuls()]);
+  const [auftraege, wuensche, namen, puls, seit] = await Promise.all([aktiveAuftraege(), offeneWuensche(), kundenNamen(), roboterPuls(), yoloSeit()]);
   const name = (k: string) => namen.get(k) ?? k;
   const z: string[] = ["🤖 <b>Änderungswünsche</b>"];
   z.push(puls.laeuft ? `<i>Roboter läuft${puls.meldung && puls.meldung !== "bereit" ? ` – ${esc(puls.meldung)}` : ""}</i>` : "<i>⚠️ Roboter am PC antwortet gerade nicht (PC aus?)</i>");
@@ -331,11 +473,13 @@ export async function uebersicht(): Promise<Karte> {
     z.push("", `<b>${titel}</b>`);
     for (const a of liste) {
       z.push(`• ${esc(name(a.app_key))} – ${a.wunsch_ids.length === 1 ? "1 Wunsch" : `${a.wunsch_ids.length} Wünsche`} · ${STATUS_TEXT[a.status] ?? a.status}`);
-      if (knopf) buttons.push([{ text: `📄 ${kuerzen(name(a.app_key), 28)}`, data: `rob:zeig:${a.id}` }]);
+      // YOLO-Aufträge auch hier erreichbar – die Karte hat den Stopp-Knopf.
+      const stoppbar = a.yolo && STOPPBAR.includes(a.status);
+      if (knopf || stoppbar) buttons.push([{ text: `📄 ${kuerzen(name(a.app_key), 28)}${stoppbar ? " (YOLO)" : ""}`, data: `rob:zeig:${a.id}` }]);
     }
   };
-  gruppe("Wartet auf dich", ["vorschlag", "vorschau", "wartet", "fehler"], true);
-  gruppe("Roboter arbeitet", ["analyse", "aendern", "freigegeben", "in_arbeit", "live"], false);
+  gruppe("Wartet auf dich", ["vorschlag", "vorschau", "wartet", "fehler", "db_freigabe"], true);
+  gruppe("Roboter arbeitet", ["analyse", "aendern", "freigegeben", "in_arbeit", "live", "db_pruefen", "db_live"], false);
 
   const ohne = new Map<string, number>();
   for (const w of wuensche) if (!w.auftrag) ohne.set(w.app_key, (ohne.get(w.app_key) ?? 0) + 1);
@@ -343,9 +487,14 @@ export async function uebersicht(): Promise<Karte> {
     z.push("", "<b>Noch nicht beim Roboter</b>");
     for (const [k, n] of ohne) {
       z.push(`• ${esc(name(k))} – ${n === 1 ? "1 Wunsch" : `${n} Wünsche`}`);
-      buttons.push([{ text: `🤖 Vorschlag: ${kuerzen(name(k), 22)} (${n})`, data: `rob:start:${k}` }]);
+      // Wie anRoboterGeben: die Wünsche kommen evtl. zu einem offenen Vorschlag dazu.
+      const offen = auftraege.filter((a) => a.app_key === k && OFFEN_FUER_NEUE.includes(a.status)).pop();
+      const direkt = yoloGreift(seit.get(k), wuensche.filter((w) => w.app_key === k && (!w.auftrag || w.auftrag === offen?.id)));
+      buttons.push([{ text: `${direkt ? "⚡ Umsetzen (YOLO)" : "🤖 Vorschlag"}: ${kuerzen(name(k), 22)} (${n})`, data: `rob:start:${k}` }]);
     }
   }
   if (!auftraege.length && !ohne.size) z.push("", "🎉 Keine offenen Änderungswünsche.");
+  const yolo = (await yoloListe()).filter((x) => x.an);
+  if (yolo.length) z.push("", `⚡ YOLO an bei: ${yolo.map((x) => esc(x.name)).join(", ")} <i>(/yolo)</i>`);
   return { text: z.join("\n"), buttons };
 }
