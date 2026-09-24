@@ -31,6 +31,7 @@ export interface RoboterAuftrag {
   vorschau_url: string | null;
   fehler: string | null;
   protokoll: string | null;
+  sitzungen?: string[];
   erstellt_am: string;
   aktualisiert: string;
 }
@@ -242,6 +243,13 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
               )}
               {a.zweig && <span className="text-[11px] text-muted-foreground self-center">Zweig {a.zweig}</span>}
             </div>
+            {/* Der ganze Verlauf liegt am PC im Projektordner – in VS Code fortsetzbar */}
+            {!!a.sitzungen?.length && (
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Verlauf: {a.sitzungen.length} Claude-Sitzung{a.sitzungen.length > 1 ? 'en' : ''} – in VS Code (verbunden mit epower-pc) den Ordner öffnen → Claude → Sitzungen,
+                oder im Terminal <span className="font-mono select-all">claude --resume {a.sitzungen[a.sitzungen.length - 1]}</span>
+              </p>
+            )}
           </Card>
         );
       })}

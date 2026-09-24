@@ -47,3 +47,6 @@ grant select on crm.roboter_puls to authenticated;
 
 -- Welche Stufe schon per Telegram gemeldet wurde (je Stufe nur einmal; /api/roboter-melden)
 alter table crm.roboter_auftraege add column if not exists gemeldet text;
+
+-- Claude-Sitzungen des Auftrags (älteste zuerst) – in VS Code im Projektordner fortsetzbar
+alter table crm.roboter_auftraege add column if not exists sitzungen text[] not null default '{}';
