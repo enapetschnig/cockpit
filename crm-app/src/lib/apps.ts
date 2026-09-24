@@ -27,6 +27,7 @@ export const APPS: AppInfo[] = [
   { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas' },
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik' },
   { key: 'holzbau-demo', label: 'Holzbau-Demo' },
+  { key: 'steinbrecher', label: 'Holzbau Steinbrecher & Köberl' },
 ];
 
 export const APP_LABEL: Record<string, string> =

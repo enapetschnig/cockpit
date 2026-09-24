@@ -34,6 +34,7 @@ export const APPS: AppInfo[] = [
   { key: 'hofermontageteam', label: 'HT Montageteam Hofer Thomas', projectRef: 'luxnyybspuvzhjcfohbp' },
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik', projectRef: 'xsflcdvorwaufiagvilw' },
   { key: 'holzbau-demo', label: 'Holzbau-Demo', projectRef: 'yernlanmcepfhazzfucj' },
+  { key: 'steinbrecher', label: 'Holzbau Steinbrecher & Köberl', projectRef: 'prdyutjcarsdzdnvlznu' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
