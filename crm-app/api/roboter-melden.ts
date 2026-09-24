@@ -35,7 +35,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   const sb = createClient(url, key, { auth: { persistSession: false }, db: { schema: 'crm' } });
 
   const { data: a } = await sb.from('roboter_auftraege')
-    .select('id, app_key, wunsch_ids, status, vorschau_url, fehler, gemeldet, aktualisiert').eq('id', id).maybeSingle();
+    .select('id, app_key, wunsch_ids, status, vorschau_url, fehler, protokoll, gemeldet, aktualisiert').eq('id', id).maybeSingle();
   if (!a) return res.status(404).json({ error: 'unbekannt' });
   // Nur frische Stände, jede Stufe nur einmal
   if (a.gemeldet === a.status) return res.status(200).json({ ok: true, schon: true });
@@ -47,7 +47,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   const text: Record<string, string> = {
     vorschlag: `🤖 ${wer}: Vorschlag für ${n === 1 ? '1 Wunsch' : `${n} Wünsche`} ist fertig – bitte ansehen:\n${link}`,
     vorschau: `👀 ${wer}: Umsetzung fertig – bitte ansehen.${a.vorschau_url ? `\nVorschau: ${a.vorschau_url}` : ''}\nLive schalten: ${link}`,
-    erledigt: `✅ ${wer}: live. Der Kunde sieht „umgesetzt“ mit deiner Antwort.`,
+    erledigt: `✅ ${wer}: live. Der Kunde sieht „umgesetzt“ mit deiner Antwort.${a.protokoll ? `\n${kurz(a.protokoll, 300)}` : ''}`,
     wartet: `⏸ ${wer}: Der Roboter wartet auf dich – ${kurz(a.fehler, 140)}\n${link}`,
     fehler: `⚠️ ${wer}: Der Roboter kam nicht weiter – ${kurz(a.fehler, 160)}\n${link}`,
   };

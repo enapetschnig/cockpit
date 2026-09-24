@@ -355,7 +355,8 @@ export default function WuenschePage() {
                   {ungesehen ? 'gelesen' : '✓ gelesen'}
                 </Button>
                 {(offen || auftraege.some((x) => x.wunsch_ids.includes(w.id))) && (
-                  <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter} />
+                  <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter}
+                    offeneIds={items.filter((x) => x.app_key === w.app_key && istOffen(x)).map((x) => x.id)} />
                 )}
                 <span className="text-xs text-muted-foreground">
                   {w.status === 'umgesetzt'

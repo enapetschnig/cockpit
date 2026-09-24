@@ -1,6 +1,7 @@
 /**
  * Der Änderungswunsch-Roboter (läuft am PC) legt hier seine Vorschläge ab –
- * Christoph gibt frei, ändert, lehnt ab und schaltet nach der Vorschau live.
+ * ein gemeinsamer Vorschlag je Kunde. Christoph gibt frei, ändert oder lehnt ab;
+ * nach der Freigabe setzt der Roboter um, prüft den Build und schaltet selbst live.
  * Der Roboter liest den Status alle 60 s und macht weiter; hier wird nur
  * der Status gesetzt (Tabelle crm.roboter_auftraege).
  */
@@ -41,7 +42,8 @@ const STATUS: Record<string, { label: string; cls: string; arbeitet?: boolean }>
   vorschlag:   { label: 'Vorschlag zur Freigabe', cls: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
   aendern:     { label: 'Roboter überarbeitet …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
   freigegeben: { label: 'Freigegeben – startet gleich', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
-  in_arbeit:   { label: 'Roboter setzt um …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
+  in_arbeit:   { label: 'Roboter setzt um und schaltet live …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
+  // nur noch bei älteren Aufträgen (vor Roboter 2.0 gab es eine Vorschau vor dem Live-Schalten)
   vorschau:    { label: 'Vorschau bereit', cls: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
   live:        { label: 'Wird live geschaltet …', cls: 'bg-blue-50 text-blue-700 border-blue-200', arbeitet: true },
   erledigt:    { label: '✓ Live', cls: 'bg-green-100 text-green-800 border-green-300' },
@@ -71,14 +73,21 @@ export function useRoboter() {
   return { auftraege, puls, laden };
 }
 
-/** Knopf an einem einzelnen Wunsch: an den Roboter geben – oder zeigen, wo er gerade steht. */
-export function RoboterKnopf({ wunsch, auftraege, onNeu }: {
+// Verworfene oder abgelehnte Aufträge sperren nicht – der Wunsch kann erneut an den Roboter.
+const zaehlt = (x: RoboterAuftrag) => x.status !== 'verworfen' && x.status !== 'abgelehnt';
+
+/**
+ * Knopf an einem einzelnen Wunsch: an den Roboter geben – oder zeigen, wo er gerade steht.
+ * Alle offenen Wünsche desselben Kunden gehen gemeinsam mit; läuft für den Kunden schon
+ * ein Vorschlag (noch nicht freigegeben), kommen sie dort dazu → ein gemeinsamer Vorschlag.
+ */
+export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu }: {
   wunsch: { id: string; app_key: string };
+  offeneIds: string[];
   auftraege: RoboterAuftrag[];
   onNeu: () => void;
 }) {
-  // Verworfene oder abgelehnte Aufträge sperren nicht – der Wunsch kann erneut an den Roboter.
-  const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && x.status !== 'verworfen' && x.status !== 'abgelehnt');
+  const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && zaehlt(x));
   if (a) {
     const st = STATUS[a.status] ?? { label: a.status, cls: '' };
     return (
@@ -87,15 +96,28 @@ export function RoboterKnopf({ wunsch, auftraege, onNeu }: {
       </a>
     );
   }
+  const frei = [...new Set([wunsch.id, ...offeneIds])]
+    .filter((id) => !auftraege.some((x) => zaehlt(x) && x.wunsch_ids.includes(id)));
+  const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key && !x.zweig
+    && ['analyse', 'vorschlag', 'aendern'].includes(x.status));
   const geben = async () => {
-    const { error } = await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: [wunsch.id], status: 'analyse' });
+    const { error } = offenerVorschlag
+      ? await db.from('roboter_auftraege').update({
+        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', gemeldet: null,
+        aktualisiert: new Date().toISOString(),
+      }).eq('id', offenerVorschlag.id)
+      : await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: frei, status: 'analyse' });
     if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
-    toast.success('Übergeben – der Vorschlag kommt in ein paar Minuten');
+    toast.success(offenerVorschlag
+      ? 'Zum offenen Vorschlag dazugegeben – der Roboter fasst alles neu zusammen'
+      : 'Übergeben – der Vorschlag kommt in ein paar Minuten');
     onNeu();
   };
   return (
     <Button size="sm" variant="outline" className="gap-1" onClick={geben}>
-      <Bot className="w-3.5 h-3.5" /> Vorschlag vom Roboter
+      <Bot className="w-3.5 h-3.5" />
+      {offenerVorschlag ? 'Zum Roboter-Vorschlag dazu' : 'Vorschlag vom Roboter'}
+      {frei.length > 1 && ` (${frei.length} Wünsche)`}
     </Button>
   );
 }
@@ -151,8 +173,10 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
       )}
       {sichtbar.map((a) => {
         const st = STATUS[a.status] ?? { label: a.status, cls: '' };
-        // Dort weitermachen, wo es hakte: vor dem Vorschlag, beim Umsetzen oder beim Live-Schalten (dann wieder erst Vorschau).
-        const nochmal = !a.vorschlag ? 'analyse' : !a.vorschau_url ? 'freigegeben' : 'vorschau';
+        // Dort weitermachen, wo es hakte: vor dem Vorschlag oder beim Umsetzen (ältere Aufträge: zurück zur Vorschau).
+        const nochmal = !a.vorschlag ? 'analyse' : a.vorschau_url ? 'vorschau' : 'freigegeben';
+        // Umgesetzt, aber mit Datenbank-Änderung: live schaltet Christoph mit Claude in VS Code.
+        const handarbeit = a.status === 'wartet' && a.datenbank && !!a.zweig;
         return (
           <Card key={a.id} id={`a-${a.id}`} className="p-4 mb-3 scroll-mt-20 border-l-4 border-l-amber-400">
             <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -177,7 +201,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                 {a.vorschlag}
               </div>
             )}
-            {a.protokoll && (a.status === 'vorschau' || a.status === 'erledigt') && (
+            {a.protokoll && ['vorschau', 'erledigt', 'wartet', 'fehler'].includes(a.status) && (
               <div className="rounded-lg border p-3 text-sm whitespace-pre-wrap mb-2">
                 <div className="text-xs font-semibold text-muted-foreground mb-1">Umgesetzt</div>
                 {a.protokoll}
@@ -215,8 +239,14 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
               {a.status === 'vorschlag' && aendernOffen !== a.id && (
                 <>
                   <Button size="sm" className="bg-green-600 hover:bg-green-700"
-                    onClick={() => { antwortSpeichern(a); setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString() }, 'Freigegeben – der Roboter setzt es um'); }}>
-                    Freigeben
+                    onClick={() => {
+                      antwortSpeichern(a);
+                      const frage = a.datenbank
+                        ? 'Freigeben? Der Roboter setzt es um. Weil eine Datenbank-Änderung dabei ist, schaltest du es danach mit Claude in VS Code live.'
+                        : 'Freigeben & live schalten? Der Roboter setzt es um, prüft den Build und schaltet es danach selbst live – der Kunde bekommt deine Antwort.';
+                      if (confirm(frage)) setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString() }, 'Freigegeben – der Roboter setzt es um und schaltet live');
+                    }}>
+                    {a.datenbank ? 'Freigeben' : 'Freigeben & live schalten'}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAendernOffen(a.id)}>Ändern</Button>
                   <Button size="sm" variant="ghost" className="text-muted-foreground"
@@ -235,9 +265,15 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
                     onClick={() => confirm('Umsetzung verwerfen? Der Zweig bleibt auf GitHub, live geht nichts.') && setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
                 </>
               )}
+              {handarbeit && (
+                <Button size="sm" variant="outline"
+                  onClick={() => confirm('Mit Claude in VS Code live geschaltet (inkl. Status „umgesetzt“ beim Kunden)?') && setze(a, { status: 'erledigt', fehler: null }, 'Erledigt')}>
+                  In VS Code live geschaltet
+                </Button>
+              )}
               {(a.status === 'fehler' || a.status === 'wartet') && (
                 <>
-                  <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal, fehler: null }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>
+                  {!handarbeit && <Button size="sm" variant="outline" onClick={() => setze(a, { status: nochmal }, 'Der Roboter versucht es erneut')}>Nochmal versuchen</Button>}
                   <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setze(a, { status: 'verworfen' }, 'Verworfen')}>Verwerfen</Button>
                 </>
               )}
