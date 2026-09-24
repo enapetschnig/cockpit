@@ -30,9 +30,16 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
+/** Knopf unter einer Nachricht: löst einen Rückruf aus (data) oder öffnet einen Link (url). */
+export type TgButton = { text: string; data?: string; url?: string };
+const tastatur = (buttons: TgButton[][]) => ({
+  inline_keyboard: buttons.map((row) => row.map((b) => (b.url ? { text: b.text, url: b.url } : { text: b.text, callback_data: b.data }))),
+});
+
 export async function sendTelegram(
   text: string,
-  opts?: { replyTo?: number; buttons?: { text: string; data: string }[][] }
+  // forceReply: Telegram öffnet direkt das Antwortfeld auf diese Nachricht (z. B. „Was soll anders sein?“)
+  opts?: { replyTo?: number; buttons?: TgButton[][]; forceReply?: string }
 ): Promise<{ ok: boolean; skipped?: boolean; messageId?: number }> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
   const chatId = await getConfig("TELEGRAM_CHAT_ID");
@@ -41,9 +48,11 @@ export async function sendTelegram(
     return { ok: false, skipped: true };
   }
   const chunks = splitForTelegram(text);
-  const replyMarkup = opts?.buttons
-    ? { inline_keyboard: opts.buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) }
-    : undefined;
+  const replyMarkup = opts?.buttons?.length
+    ? tastatur(opts.buttons)
+    : opts?.forceReply !== undefined
+      ? { force_reply: true, input_field_placeholder: opts.forceReply || undefined }
+      : undefined;
 
   let ok = true;
   let messageId: number | undefined;
@@ -123,14 +132,12 @@ export async function tgEditMessage(
   chatId: number | string,
   messageId: number,
   text: string,
-  buttons?: { text: string; data: string }[][]
+  buttons?: TgButton[][]
 ): Promise<void> {
   const token = await getConfig("TELEGRAM_BOT_TOKEN");
   if (!token) return;
   const body: Record<string, unknown> = { chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", disable_web_page_preview: true };
-  if (buttons && buttons.length) {
-    body.reply_markup = { inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) };
-  }
+  if (buttons && buttons.length) body.reply_markup = tastatur(buttons);
   await fetch(`${API(token)}/editMessageText`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

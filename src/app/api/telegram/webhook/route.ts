@@ -8,6 +8,7 @@ import { createEvent } from "@/lib/calendar";
 import { runAssistant, buildReplyDraft } from "@/lib/assistant";
 import { listFollowups } from "@/lib/followups";
 import { queueBeleg, approveAllCollected, retryBeleg, skipBeleg } from "@/lib/bmd/state";
+import * as roboter from "@/lib/roboter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -16,7 +17,7 @@ interface TgMessage {
   text?: string;
   chat?: { id: number };
   voice?: { file_id: string };
-  reply_to_message?: { message_id: number };
+  reply_to_message?: { message_id: number; text?: string };
 }
 interface TgCallback {
   id: string;
@@ -44,7 +45,10 @@ const HELP = [
   "• <b>/offen</b> – offene Aufgaben & Follow-ups zum Abhaken",
   "• Trag mir Donnerstag 14 Uhr einen Termin mit Müller ein",
   "• Was ist von Pachlinger offen?",
+  "• <b>/wuensche</b> – Änderungswünsche der Kunden & was der Roboter macht",
+  "• Fass mir die Wünsche von Schafferhofer zusammen",
   "",
+  "🤖 Vorschläge vom Roboter kommen hierher – freigeben, ändern oder einfach auf die Nachricht antworten und fragen.",
   "📅 Termine trage ich direkt in den Google-Kalender ein.",
   "Antworte direkt auf eine Mail-Benachrichtigung (Text oder 🎤 Sprache) – ich formuliere die Antwort, du sendest per Klick.",
 ].join("\n");
@@ -153,6 +157,11 @@ async function handleMessage(msg: TgMessage) {
     await sendOpenOverview();
     return;
   }
+  if (text.startsWith("/wuensche") || text.startsWith("/wünsche") || text.startsWith("/roboter")) {
+    const u = await roboter.uebersicht();
+    await sendTelegram(u.text, u.buttons.length ? { buttons: u.buttons } : undefined);
+    return;
+  }
 
   // Anweisung aus Text oder Sprachnachricht
   let instruction = text.trim();
@@ -167,14 +176,38 @@ async function handleMessage(msg: TgMessage) {
   }
   if (!instruction) return;
 
+  // Antwort auf eine Roboter-Nachricht? Die tragen unten „Auftrag xxxxxxxx“.
+  const bezug = msg.reply_to_message?.text || "";
+  // die letzte Fundstelle – weiter oben könnte ein Wunschtext „Auftrag 12345678“ enthalten
+  const ref = [...bezug.matchAll(/Auftrag ([0-9a-f]{8})\b/g)].pop()?.[1];
+  const auftrag = ref ? await roboter.ladeAuftrag(ref) : null;
+  if (auftrag && bezug.startsWith("✏️")) {
+    const ok = await roboter.aendern(auftrag.id, instruction);
+    await sendTelegram(ok
+      ? "✏️ Alles klar – der Roboter überarbeitet den Vorschlag und meldet sich mit dem neuen Stand."
+      : `Das geht gerade nicht mehr (Status: ${esc(auftrag.status)}). /wuensche zeigt den aktuellen Stand.`);
+    return;
+  }
+  if (auftrag && bezug.startsWith("💬 Was möchtest")) {
+    await roboterFrage(auftrag.app_key, auftrag.id, instruction);
+    return;
+  }
+
   // Kontext: Antwort auf eine bestimmte Mail-Benachrichtigung?
   let replyEmailId: string | undefined;
-  if (msg.reply_to_message?.message_id) {
+  if (msg.reply_to_message?.message_id && !auftrag) {
     const e = await prisma.email.findFirst({ where: { telegramMsgId: String(msg.reply_to_message.message_id) } });
     if (e) replyEmailId = e.id;
   }
 
-  const result = await runAssistant(instruction, { replyEmailId });
+  const result = await runAssistant(instruction, { replyEmailId, roboterAuftrag: auftrag?.id });
+
+  if (result.roboterKarten?.length) {
+    const intro = stripMd(result.reply || "").trim();
+    if (intro) await sendTelegram(esc(intro));
+    for (const k of result.roboterKarten) await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
+    return;
+  }
 
   if (result.openOverview) {
     const intro = stripMd(result.reply || "").trim();
@@ -221,7 +254,89 @@ async function handleMessage(msg: TgMessage) {
   }
 }
 
+/** Frage an den Roboter am PC – die Antwort kommt über /api/roboter/melden. */
+async function roboterFrage(appKey: string, auftragId: string | null, frage: string) {
+  await roboter.frageStellen(appKey, auftragId, frage);
+  const p = await roboter.roboterPuls();
+  await sendTelegram(p.laeuft
+    ? "💬 Die Frage ist beim Roboter – er schaut im Code nach. Die Antwort kommt in 1–3 Minuten."
+    : "💬 Frage notiert. Der Roboter am PC antwortet gerade nicht (PC aus?) – die Antwort kommt, sobald er wieder läuft.");
+}
+
+/** Knöpfe unter Roboter-Nachrichten: rob:<aktion>:<auftrag-id | app_key> */
+async function roboterKnopf(cb: TgCallback) {
+  const [, aktion, ref] = (cb.data || "").split(":");
+  const bearbeite = async (k: roboter.Karte) => {
+    if (cb.message) await tgEditMessage(cb.message.chat.id, cb.message.message_id, k.text, k.buttons);
+  };
+
+  if (aktion === "start") {
+    const r = await roboter.anRoboterGeben(ref);
+    await tgAnswerCallback(cb.id, r.neu ? "✓ An den Roboter übergeben" : "Nichts Neues");
+    await sendTelegram(!r.neu
+      ? "Für diesen Kunden liegen keine offenen Wünsche mehr ohne Roboter-Auftrag."
+      : r.dazu
+        ? `🤖 ${r.neu === 1 ? "1 Wunsch kommt" : `${r.neu} Wünsche kommen`} zum offenen Vorschlag dazu – der Roboter fasst alles neu zusammen.`
+        : `🤖 ${r.neu === 1 ? "1 Wunsch ist" : `${r.neu} Wünsche sind`} beim Roboter – der gemeinsame Vorschlag kommt in ein paar Minuten.`);
+    return;
+  }
+
+  const a = await roboter.ladeAuftrag(ref);
+  if (!a) {
+    await tgAnswerCallback(cb.id, "Nicht mehr verfügbar");
+    return;
+  }
+  const kunde = (await roboter.kundenNamen()).get(a.app_key) ?? a.app_key;
+  // Nach einer Änderung die Karte neu laden – zeigt dann den neuen Stand statt der alten Knöpfe.
+  const danach = async (hinweis: string, ok: boolean) => {
+    await tgAnswerCallback(cb.id, ok ? hinweis : "Geht nicht mehr – der Stand hat sich geändert");
+    const jetzt = await roboter.ladeAuftrag(a.id);
+    if (jetzt) await bearbeite(await roboter.karteFuer(jetzt));
+  };
+
+  switch (aktion) {
+    case "zeig": {
+      await tgAnswerCallback(cb.id);
+      const k = await roboter.karteFuer(a);
+      await sendTelegram(k.text, { buttons: k.buttons });
+      return;
+    }
+    case "zur":
+      await tgAnswerCallback(cb.id);
+      await bearbeite(await roboter.karteFuer(a));
+      return;
+    case "frei": // erst nachfragen – Freigeben schaltet live
+      if (a.status !== "vorschlag" && !(a.status === "vorschau" && !a.datenbank)) return danach("", false);
+      await tgAnswerCallback(cb.id);
+      await bearbeite(await roboter.karteFuer(a, { bestaetigen: true }));
+      return;
+    case "ja": {
+      const ok = a.status === "vorschlag" ? await roboter.freigeben(a.id)
+        : a.status === "vorschau" && !a.datenbank ? await roboter.liveSchalten(a.id) : false;
+      return danach(a.status === "vorschau" ? "🚀 Wird live geschaltet" : "✅ Freigegeben – der Roboter legt los", ok);
+    }
+    case "aend":
+      await tgAnswerCallback(cb.id);
+      await sendTelegram(`✏️ Was soll beim Vorschlag für <b>${esc(kunde)}</b> anders sein? Antworte auf diese Nachricht (Text oder 🎤).\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Was soll anders sein?" });
+      return;
+    case "frage":
+      await tgAnswerCallback(cb.id);
+      await sendTelegram(`💬 Was möchtest du zum Auftrag für <b>${esc(kunde)}</b> wissen? Der Roboter schaut im Code nach.\n<i>Auftrag ${roboter.kurz(a.id)}</i>`, { forceReply: "Deine Frage an den Roboter" });
+      return;
+    case "abl":
+      return danach("❌ Abgelehnt – am Code ändert sich nichts", await roboter.ablehnen(a.id));
+    case "verw":
+      return danach("🗑 Verworfen", await roboter.verwerfen(a.id));
+    case "nochmal":
+      return danach("🔁 Der Roboter versucht es erneut", await roboter.nochmal(a));
+    case "vsc":
+      return danach("✔️ Als erledigt markiert", await roboter.inVsCodeErledigt(a.id));
+  }
+  await tgAnswerCallback(cb.id);
+}
+
 async function handleCallback(cb: TgCallback) {
+  if (cb.data?.startsWith("rob:")) return roboterKnopf(cb);
   const [action, id] = (cb.data || "").split(":");
 
   // Komplett neue Mail (PendingEmail)

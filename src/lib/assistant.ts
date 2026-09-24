@@ -11,6 +11,7 @@ import { listEvents, createEvent, deleteEvent } from "./calendar";
 import { getThreadContext } from "./gmail";
 import { listFollowups } from "./followups";
 import { ASSISTANT_PERSONA } from "./persona";
+import * as roboter from "./roboter";
 
 async function memoryContext(): Promise<string> {
   const ms = await prisma.memory.findMany({ orderBy: { updatedAt: "desc" }, take: 25 });
@@ -22,6 +23,167 @@ export interface AssistantResult {
   draftedFor?: { emailId: string; text: string; fromName: string; toAddr: string; fromEmail: string; account: string; subject: string };
   newEmail?: { pendingId: string; account: string; fromEmail: string; toAddr: string; toName?: string; subject: string; body: string };
   openOverview?: boolean; // Telegram soll die abhakbare Offen-Liste mit Knöpfen senden
+  roboterKarten?: roboter.Karte[]; // Roboter-Übersicht/-Aufträge mit Knöpfen, nach der Antwort senden
+}
+
+// ── Änderungswünsche & Roboter ─────────────────────────────────────────────
+const ROBOTER_REF = {
+  kunde: { type: "string", description: "Kundenname, z. B. 'Schafferhofer'" },
+  auftrag: { type: "string", description: "Auftragsnummer (8 Zeichen), falls bekannt" },
+} as const;
+
+const ROBOTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "roboter_uebersicht",
+      description:
+        "Zeigt dem Nutzer alle offenen Änderungswünsche aus den Kunden-Apps und was der Roboter gerade macht – mit Knöpfen (Vorschlag ansehen, Wünsche an den Roboter geben). Für 'was ist bei den Wünschen offen', 'was macht der Roboter', 'gibt es neue Änderungswünsche'.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_details",
+      description:
+        "Liefert DIR alle Details zu den Änderungswünschen eines Kunden: Wünsche im Wortlaut, Vorschlag des Roboters (wie er es umsetzen würde), Aufwand, Risiko, Status, Antwort an den Kunden, Fehler. Nutze das zum Zusammenfassen und um Fragen dazu zu beantworten.",
+      parameters: { type: "object", properties: { ...ROBOTER_REF } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_auftrag_zeigen",
+      description: "Schickt dem Nutzer die Karte eines Roboter-Auftrags mit Knöpfen (Freigeben & live, Ändern, Frage, Ablehnen).",
+      parameters: { type: "object", properties: { ...ROBOTER_REF } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_vorschlag_anfordern",
+      description:
+        "Gibt ALLE offenen Änderungswünsche eines Kunden an den Roboter: er schreibt EINEN gemeinsamen Lösungsvorschlag (kommt in ein paar Minuten per Telegram). Läuft für den Kunden schon ein Vorschlag, kommen die Wünsche dazu und er fasst neu zusammen.",
+      parameters: { type: "object", properties: { kunde: ROBOTER_REF.kunde }, required: ["kunde"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_freigeben",
+      description:
+        "Wenn der Nutzer einen Vorschlag umsetzen lassen will ('passt', 'mach das', 'setz um', 'gib frei', 'starte'). Schickt eine Bestätigungs-Karte – umgesetzt und live geschaltet wird erst, wenn er dort den Knopf drückt. Nur auf ausdrücklichen Wunsch des Nutzers.",
+      parameters: { type: "object", properties: { ...ROBOTER_REF } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_aendern",
+      description: "Der Nutzer will den Vorschlag anders haben: der Roboter überarbeitet ihn mit dieser Anmerkung und schickt einen neuen Vorschlag.",
+      parameters: {
+        type: "object",
+        properties: { ...ROBOTER_REF, anmerkung: { type: "string", description: "was anders sein soll – in den Worten des Nutzers" } },
+        required: ["anmerkung"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_ablehnen",
+      description: "Lehnt einen Vorschlag ab (am Code ändert sich nichts). Nur auf ausdrücklichen Wunsch.",
+      parameters: { type: "object", properties: { ...ROBOTER_REF } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_nochmal",
+      description: "Lässt den Roboter einen hängengebliebenen oder fehlgeschlagenen Auftrag erneut versuchen.",
+      parameters: { type: "object", properties: { ...ROBOTER_REF } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "roboter_frage",
+      description:
+        "Stellt dem Roboter (Claude am PC, kennt den kompletten Code der App) eine Frage – z. B. wie genau er etwas umsetzen würde, welche Seiten betroffen sind, wie etwas in der App heute funktioniert. Die Antwort kommt in 1–3 Minuten als eigene Nachricht. Nutze das für alles, was der Vorschlag nicht beantwortet oder den Code betrifft – rate nie.",
+      parameters: { type: "object", properties: { ...ROBOTER_REF, frage: { type: "string" } }, required: ["frage"] },
+    },
+  },
+];
+
+/** Führt ein Roboter-Tool aus; Karten für Telegram landen in `karten`. */
+async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Promise<unknown> {
+  if (name === "roboter_uebersicht") {
+    karten.push(await roboter.uebersicht());
+    return { ok: true, hinweis: "Die Übersicht mit Knöpfen wird direkt angezeigt – antworte nur ganz knapp oder gar nicht." };
+  }
+  if (name === "roboter_vorschlag_anfordern") {
+    const k = await roboter.findeKunde(a.kunde || "");
+    if (!k.appKey) return { error: `Kunde nicht eindeutig. Meintest du: ${(k.kandidaten || []).slice(0, 10).join(", ")}?` };
+    const r = await roboter.anRoboterGeben(k.appKey);
+    if (!r.neu) return { ok: false, kunde: k.name, hinweis: "Keine offenen Wünsche ohne Roboter-Auftrag – evtl. läuft schon einer (roboter_details)." };
+    return { ok: true, kunde: k.name, wuensche: r.neu, zum_offenen_vorschlag_dazu: r.dazu, hinweis: "Vorschlag kommt in ein paar Minuten per Telegram." };
+  }
+  if (name === "roboter_frage" && !a.auftrag) {
+    // Frage zur App, auch ohne laufenden Auftrag
+    const k = await roboter.findeKunde(a.kunde || "");
+    if (!k.appKey) return { error: `Kunde nicht eindeutig. Meintest du: ${(k.kandidaten || []).slice(0, 10).join(", ")}?` };
+    const laufend = (await roboter.auftragFuer({ kunde: a.kunde })).a;
+    await roboter.frageStellen(k.appKey, laufend?.id ?? null, a.frage || "");
+    return { ok: true, hinweis: "Frage ist beim Roboter, Antwort kommt in 1–3 Minuten als eigene Nachricht." };
+  }
+
+  const { a: auftrag, kunde, fehler } = await roboter.auftragFuer({ auftrag: a.auftrag, kunde: a.kunde });
+  if (!auftrag) {
+    if (name === "roboter_details" && a.kunde) {
+      const k = await roboter.findeKunde(a.kunde);
+      if (k.appKey) return { kunde: k.name, laufender_auftrag: null, offene_wuensche: (await roboter.offeneWuensche(k.appKey)).map((w) => ({ art: w.art, text: w.text, melder: w.melder, am: w.erstellt_am })) };
+    }
+    return { error: fehler };
+  }
+  switch (name) {
+    case "roboter_details": {
+      const [w, offen] = await Promise.all([roboter.wuenscheZu(auftrag.wunsch_ids), roboter.offeneWuensche(auftrag.app_key)]);
+      return {
+        kunde,
+        auftrag: roboter.kurz(auftrag.id),
+        status: auftrag.status,
+        wuensche: w.map((x) => ({ art: x.art, text: x.text, melder: x.melder, am: x.erstellt_am })),
+        vorschlag: auftrag.vorschlag,
+        aufwand: auftrag.aufwand,
+        risiko: auftrag.risiko,
+        braucht_datenbank_aenderung: auftrag.datenbank,
+        antwort_an_kunden: auftrag.antwort_kunde,
+        umgesetzt: auftrag.protokoll,
+        fehler: auftrag.fehler,
+        weitere_offene_wuensche_ohne_auftrag: offen.filter((x) => !x.auftrag).map((x) => x.text),
+      };
+    }
+    case "roboter_auftrag_zeigen":
+      karten.push(await roboter.karteFuer(auftrag));
+      return { ok: true, hinweis: "Die Karte mit Knöpfen wird direkt angezeigt – antworte nur knapp." };
+    case "roboter_freigeben":
+      if (auftrag.status !== "vorschlag") return { error: `Geht nur bei einem fertigen Vorschlag – Status ist '${auftrag.status}'.` };
+      karten.push(await roboter.karteFuer(auftrag, { bestaetigen: true }));
+      return { ok: true, hinweis: "Bestätigungs-Karte wird angezeigt – freigegeben ist erst nach dem Knopfdruck. Sag ihm das kurz." };
+    case "roboter_aendern": {
+      const ok = await roboter.aendern(auftrag.id, a.anmerkung || "");
+      return ok ? { ok: true, hinweis: "Der Roboter überarbeitet den Vorschlag und meldet sich." } : { error: `Geht gerade nicht – Status ist '${auftrag.status}'.` };
+    }
+    case "roboter_ablehnen":
+      return (await roboter.ablehnen(auftrag.id)) ? { ok: true } : { error: `Geht nur bei einem Vorschlag – Status ist '${auftrag.status}'.` };
+    case "roboter_nochmal":
+      return (await roboter.nochmal(auftrag)) ? { ok: true } : { error: `Geht nur, wenn er wartet oder einen Fehler hatte – Status ist '${auftrag.status}'.` };
+    case "roboter_frage":
+      await roboter.frageStellen(auftrag.app_key, auftrag.id, a.frage || "");
+      return { ok: true, hinweis: "Frage ist beim Roboter, Antwort kommt in 1–3 Minuten als eigene Nachricht." };
+  }
+  return { error: "unbekanntes Tool" };
 }
 
 const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -243,6 +405,10 @@ interface Args {
   min_hours?: number;
   until?: string;
   when?: string;
+  kunde?: string;
+  auftrag?: string;
+  anmerkung?: string;
+  frage?: string;
 }
 
 function parseLabels(s: string): string[] {
@@ -496,7 +662,7 @@ async function doDraftNew(a: Args): Promise<{ result: unknown; newEmail?: Assist
   };
 }
 
-export async function runAssistant(userText: string, context?: { replyEmailId?: string }): Promise<AssistantResult> {
+export async function runAssistant(userText: string, context?: { replyEmailId?: string; roboterAuftrag?: string }): Promise<AssistantResult> {
   const apiKey = await getConfig("OPENAI_API_KEY");
   if (!apiKey) return { reply: "OpenAI-Key fehlt – ich kann gerade nicht antworten." };
   const model = (await getConfig("ASSISTANT_MODEL")) || (await getConfig("OPENAI_MODEL")) || "gpt-4o-mini";
@@ -505,6 +671,22 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
   let drafted: AssistantResult["draftedFor"];
   let newEmail: AssistantResult["newEmail"];
   let openOverview = false;
+  const roboterKarten: roboter.Karte[] = [];
+  // Antwortet er auf eine Roboter-Nachricht, bekommt der Assistent den Auftrag mit.
+  let roboterKontext = "";
+  if (context?.roboterAuftrag) {
+    const a = await roboter.ladeAuftrag(context.roboterAuftrag);
+    if (a) {
+      const [w, namen] = await Promise.all([roboter.wuenscheZu(a.wunsch_ids), roboter.kundenNamen()]);
+      roboterKontext =
+        `Der Nutzer antwortet auf die Telegram-Nachricht zum Roboter-Auftrag ${roboter.kurz(a.id)} (Kunde ${namen.get(a.app_key) ?? a.app_key}, Status ${a.status}). ` +
+        `Beziehe 'das', 'es', 'passt', 'mach' usw. auf diesen Auftrag und nutze bei den roboter_*-Tools auftrag='${roboter.kurz(a.id)}'.\n` +
+        `Wünsche:\n${w.map((x, i) => `${i + 1}) ${x.text}`).join("\n")}\n` +
+        (a.vorschlag ? `Vorschlag des Roboters:\n${a.vorschlag}\n` : "") +
+        (a.antwort_kunde ? `Geplante Antwort an den Kunden: ${a.antwort_kunde}\n` : "") +
+        (a.fehler ? `Fehler/Hinweis: ${a.fehler}\n` : "");
+    }
+  }
   const today = new Intl.DateTimeFormat("de-AT", { timeZone: "Europe/Vienna", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   // Exakte Datums-Tabelle der nächsten 14 Tage (Wiener Zeit) – damit relative Angaben
   // ('morgen', 'Donnerstag', 'nächste Woche') zuverlässig auf das richtige YYYY-MM-DD treffen.
@@ -547,8 +729,16 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
         "Wenn der Nutzer offene Dinge sehen oder abhaken will, rufe show_open_overview auf (zeigt eine abhakbare Liste mit Knöpfen). Aus einer offenen Aufgabe einen Termin machen: create_event anlegen UND die Aufgabe mit complete_todo abhaken. " +
         "Nutze für alle Zeitpunkte (start/end/until/when) AUSSCHLIESSLICH diese exakte Datums-Tabelle (Wiener Zeit), niemals selbst rechnen:\n" +
         dateHints +
-        "\nFormat 'YYYY-MM-DDTHH:MM:SS'. Beispiel: 'morgen 15 Uhr' → nimm das Datum hinter 'Morgen =' und hänge 'T15:00:00' an.",
+        "\nFormat 'YYYY-MM-DDTHH:MM:SS'. Beispiel: 'morgen 15 Uhr' → nimm das Datum hinter 'Morgen =' und hänge 'T15:00:00' an." +
+        "\n\nÄNDERUNGSWÜNSCHE & ROBOTER: Die Kunden (Handwerksbetriebe) melden in ihren Apps Änderungswünsche und Fehler. Der Roboter (Claude am Windows-PC, kennt den Code jeder App) " +
+        "fasst je Kunde ALLE offenen Wünsche zu EINEM Vorschlag zusammen. Nach der Freigabe setzt er um, prüft den Build und schaltet selbst live – der Kunde sieht dann 'umgesetzt' mit der Antwort. " +
+        "Braucht es eine Datenbank-Änderung, hält er vor dem Live-Schalten an. Du steuerst das mit den roboter_*-Tools: " +
+        "Zusammenfassen → roboter_details, dann in eigenen Worten je Kunde kurz: was will der Kunde, wie würde der Roboter es lösen, Aufwand/Risiko. " +
+        "Umsetzen lassen → roboter_freigeben (er bestätigt per Knopf). Anmerkungen zum Vorschlag → roboter_aendern. " +
+        "Technische Fragen, die der Vorschlag nicht beantwortet → roboter_frage (rate nie, wie der Code aussieht). " +
+        "Wünsche ohne Vorschlag → roboter_vorschlag_anfordern. Überblick → roboter_uebersicht.",
     },
+    ...(roboterKontext ? [{ role: "system" as const, content: roboterKontext }] : []),
     ...(convState
       ? [{ role: "system" as const, content: `Arbeits-Kontext der letzten Nachricht (für Bezüge wie 'die zweite', 'ordne die zu', 'antworte ihm'):\n${convState}` }]
       : []),
@@ -563,7 +753,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
 
   let finalReply = "";
   for (let i = 0; i < 6; i++) {
-    const resp = await client.chat.completions.create({ model, temperature: 0.2, messages, tools: TOOLS });
+    const resp = await client.chat.completions.create({ model, temperature: 0.2, messages, tools: [...TOOLS, ...ROBOTER_TOOLS] });
     const m = resp.choices[0]?.message;
     if (!m) break;
     messages.push(m);
@@ -586,6 +776,8 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
         } else if (tc.function.name === "show_open_overview") {
           openOverview = true;
           result = { ok: true, hinweis: "Die abhakbare Liste mit Knöpfen wird dem Nutzer direkt angezeigt – fasse dich kurz oder antworte nur knapp." };
+        } else if (tc.function.name.startsWith("roboter_")) {
+          result = await roboterTool(tc.function.name, args, roboterKarten);
         } else {
           result = await runTool(tc.function.name, args);
         }
@@ -603,11 +795,11 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
     }
   }
 
-  if (!finalReply && !drafted && !newEmail) finalReply = "Das habe ich nicht ganz verstanden – formulier es bitte anders.";
+  if (!finalReply && !drafted && !newEmail && !roboterKarten.length) finalReply = "Das habe ich nicht ganz verstanden – formulier es bitte anders.";
 
   // Gedächtnis aktualisieren + auf die letzten 40 Einträge begrenzen
   await prisma.botMessage.create({ data: { role: "user", content: userText.slice(0, 2000) } });
-  await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : newEmail ? "[Neue Mail vorbereitet]" : finalReply).slice(0, 2000) } });
+  await prisma.botMessage.create({ data: { role: "assistant", content: (drafted ? "[Antwort-Entwurf vorbereitet]" : newEmail ? "[Neue Mail vorbereitet]" : finalReply || (roboterKarten.length ? "[Roboter-Karte mit Knöpfen gezeigt]" : "")).slice(0, 2000) } });
   const old = await prisma.botMessage.findMany({ orderBy: { createdAt: "desc" }, skip: 40, select: { id: true } });
   if (old.length) await prisma.botMessage.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
 
@@ -620,7 +812,7 @@ export async function runAssistant(userText: string, context?: { replyEmailId?: 
     await prisma.setting.upsert({ where: { key: "CONV_STATE" }, create: { key: "CONV_STATE", value: v }, update: { value: v } });
   }
 
-  return { reply: finalReply, draftedFor: drafted, newEmail, openOverview };
+  return { reply: finalReply, draftedFor: drafted, newEmail, openOverview, roboterKarten };
 }
 
 /** Bereitet einen Antwort-Entwurf für eine Mail vor (für den Telegram-„Antwort"-Knopf). */

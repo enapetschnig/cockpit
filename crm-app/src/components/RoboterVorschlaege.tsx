@@ -98,7 +98,7 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu }: {
   }
   const frei = [...new Set([wunsch.id, ...offeneIds])]
     .filter((id) => !auftraege.some((x) => zaehlt(x) && x.wunsch_ids.includes(id)));
-  const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key && !x.zweig
+  const offenerVorschlag = auftraege.find((x) => x.app_key === wunsch.app_key
     && ['analyse', 'vorschlag', 'aendern'].includes(x.status));
   const geben = async () => {
     const { error } = offenerVorschlag
