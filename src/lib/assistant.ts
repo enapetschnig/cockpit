@@ -168,11 +168,10 @@ async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Prom
       return { ok: true, kunde: k.name, hinweis: "Bestätigungs-Karte wird angezeigt – YOLO ist erst nach dem Knopfdruck an. Sag ihm das kurz." };
     }
     const zurueck = await roboter.yoloSetzen(k.appKey, false);
-    for (const x of zurueck) karten.push(await roboter.karteFuer(x, { kopf: "🟡 YOLO aus – wartet auf deine Freigabe" }));
     return {
       ok: true, kunde: k.name, yolo: false,
-      hinweis: "YOLO ist aus – wieder mit Freigabe. Laufende YOLO-Umsetzungen gehen nicht mehr live, sondern kommen als Vorschlag." +
-        (zurueck.length ? ` ${zurueck.length} noch nicht begonnene(r) Auftrag/Aufträge warten wieder auf die Freigabe (Karte wird angezeigt).` : ""),
+      hinweis: "YOLO ist aus – wieder mit Freigabe. Laufende YOLO-Umsetzungen gehen nicht mehr live, sondern kommen als fertige Lösung zum Freigeben." +
+        (zurueck.length ? ` ${zurueck.length} noch nicht begonnene(r) Auftrag/Aufträge bereitet der Roboter jetzt fertig vor – dann kommt die fertige Lösung.` : ""),
     };
   }
   if (name === "roboter_vorschlag_anfordern") {

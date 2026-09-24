@@ -131,12 +131,13 @@ export default function WuenschePage() {
     if (error) { toast.error('Konnte nicht gespeichert werden'); ladeYolo(); return; }
     ladeYolo();
     if (an) return toast.success(`⚡ YOLO für ${name} an`);
-    // YOLO aus: noch nicht begonnene YOLO-Aufträge warten wieder auf die Freigabe (laufende hält der Roboter selbst an).
+    // YOLO aus: noch nicht begonnene YOLO-Aufträge bereitet der Roboter jetzt fertig vor – dann kommt die fertige Lösung
+    // zum Freigeben (laufende hält er selbst an).
     const { data: zurueck } = await db.from('roboter_auftraege')
-      .update({ status: 'vorschlag', yolo: false, freigegeben_am: null, gemeldet: null, aktualisiert: new Date().toISOString() })
+      .update({ status: 'vorbereiten', yolo: false, freigegeben_am: null, gemeldet: null, aktualisiert: new Date().toISOString() })
       .eq('app_key', key).eq('yolo', true).eq('status', 'freigegeben').is('zweig', null).select('id');   // begonnene macht der Roboter selbst richtig
     const n = zurueck?.length ?? 0;
-    toast.success(`YOLO für ${name} aus${n ? ` – ${n === 1 ? '1 Auftrag wartet' : `${n} Aufträge warten`} wieder auf deine Freigabe` : ''}`);
+    toast.success(`YOLO für ${name} aus${n ? ` – ${n === 1 ? '1 Auftrag bereitet' : `${n} Aufträge bereitet`} der Roboter jetzt fertig vor, dann kommt die Lösung` : ''}`);
     ladenRoboter();
   }
   // Meldungen kommen jederzeit herein – alle 60 s nachsehen.

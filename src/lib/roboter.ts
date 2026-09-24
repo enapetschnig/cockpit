@@ -248,7 +248,7 @@ export const VOR_KUNDE_TELEGRAM = 2400;
 export const freigeben = (id: string, ver?: string) =>
   wechsel(id, ["vorschlag"], Prisma.sql`status = 'freigegeben', freigegeben_am = now(), fehler = null,
     versuche = 0, naechster_versuch = null, wartet_seit = null,
-    vor_kunde_ok_am = case when vor_kunde is not null then now() else vor_kunde_ok_am end`, nurStand(ver));
+    vor_kunde_ok_am = case when vor_kunde is not null and geprueft is not null then now() else vor_kunde_ok_am end`, nurStand(ver));
 // Überarbeiteter Vorschlag muss neu freigegeben werden (sonst würde „Nochmal“ ihn nach einem Fehler umsetzen).
 export const aendern = (id: string, anmerkung: string) =>
   wechsel(id, ["vorschlag", "vorschau"], Prisma.sql`status = 'aendern', anmerkung = ${anmerkung}, geprueft = null, versuche = 0,
@@ -337,9 +337,10 @@ export async function yoloSetzen(appKey: string, an: boolean): Promise<Auftrag[]
     on conflict (app_key) do update set yolo = excluded.yolo,
       aktualisiert = case when r.yolo is distinct from excluded.yolo then now() else r.aktualisiert end`;
   if (an) return [];
-  // freigegeben_am weg: der Vorschlag ist jetzt nicht mehr freigegeben (wichtig für „Nochmal“).
+  // freigegeben_am weg: nicht mehr freigegeben. Noch nicht begonnene Aufträge bereitet der Roboter jetzt fertig vor
+  // (umsetzen und prüfen) – die fertige Lösung kommt dann als eine Nachricht, wie ohne YOLO.
   return prisma.$queryRaw<Auftrag[]>`
-    update crm.roboter_auftraege set status = 'vorschlag', yolo = false, freigegeben_am = null, gemeldet = null, aktualisiert = now()
+    update crm.roboter_auftraege set status = 'vorbereiten', yolo = false, freigegeben_am = null, gemeldet = null, aktualisiert = now()
     where app_key = ${appKey} and yolo and status = 'freigegeben' and zweig is null
     returning ${SPALTEN}`;
 }
@@ -484,7 +485,8 @@ function karteText(a: Auftrag, wuensche: Wunsch[], kunde: string, opts: KartenOp
   if (a.db_info && (fertig || ["db_freigabe", "db_live", "erledigt", "wartet", "fehler"].includes(a.status))) {
     fuss.push("", `<b>Datenbank${a.status === "db_freigabe" ? " – das würde sich ändern" : ""}</b>`, esc(kuerzen(a.db_info, n(900))));
   }
-  if (fertig && a.vor_kunde) fuss.push("", "<b>🧾 Dafür brauche ich noch von dir</b>", esc(a.vor_kunde));
+  if (fertig && a.vor_kunde) fuss.push("", "<b>🧾 Dafür brauche ich noch von dir</b>", esc(a.vor_kunde),
+    "<i>„Passt“ heißt: das ist erledigt (oder geht ohne) – der Kunde bekommt die Antwort dann gleich nach dem Live-Schalten.</i>");
   if (a.protokoll && ["erledigt", "wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) fuss.push("", "<b>Umgesetzt</b>", esc(kuerzen(ohneMarkdown(a.protokoll), n(700))));
   const vk = vorDemKunden(a);
   if (a.antwort_kunde && (["vorschlag", "vorschau"].includes(a.status) || vk)) fuss.push("", "<b>Antwort an den Kunden</b>", `<i>${esc(kuerzen(a.antwort_kunde, n(450)))}</i>`);

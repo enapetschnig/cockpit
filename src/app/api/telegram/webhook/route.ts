@@ -379,13 +379,9 @@ async function roboterKnopf(cb: TgCallback) {
     await tgAnswerCallback(cb.id, an
       ? "⚡ YOLO an – Wünsche, die ab jetzt kommen, gehen ohne Freigabe live"
       : zurueck.length
-        ? `YOLO aus – ${zurueck.length === 1 ? "1 Auftrag wartet" : `${zurueck.length} Aufträge warten`} wieder auf deine Freigabe`
+        ? `YOLO aus – ${zurueck.length === 1 ? "1 Auftrag bereitet" : `${zurueck.length} Aufträge bereitet`} der Roboter jetzt fertig vor, dann kommt die Lösung`
         : "YOLO aus – wieder mit Freigabe");
     await bearbeite(await roboter.yoloKarte());
-    for (const a of zurueck) {
-      const k = await roboter.karteFuer(a, { kopf: "🟡 YOLO aus – wartet auf deine Freigabe" });
-      await sendTelegram(k.text, { buttons: k.buttons });
-    }
     return;
   }
 

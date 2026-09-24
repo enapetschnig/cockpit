@@ -215,7 +215,8 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
     }
     // fehler leeren: ein alter Hinweis (z. B. „YOLO wurde ausgeschaltet“) käme sonst als „ging schief“ in den Umsetzen-Prompt.
     setze(a, { status: 'freigegeben', freigegeben_am: new Date().toISOString(), fehler: null, versuche: 0, naechster_versuch: null, wartet_seit: null,
-      ...(a.vor_kunde ? { vor_kunde_ok_am: new Date().toISOString() } : {}), ...antwortFeld(a) },
+      // „Passt“ bestätigt die Liste nur bei einer fertigen Lösung – nur dort wird sie gezeigt.
+      ...(a.vor_kunde && a.geprueft ? { vor_kunde_ok_am: new Date().toISOString() } : {}), ...antwortFeld(a) },
       a.geprueft ? 'Passt – der Roboter schaltet es jetzt live' : 'Freigegeben – der Roboter setzt es um und schaltet live',
       { nurWenn: { geprueft: a.geprueft ?? null, db_hash: a.db_hash ?? null, vor_kunde: a.vor_kunde ?? null } });
   };
@@ -283,7 +284,7 @@ export function RoboterVorschlaege({ auftraege, puls, laden, texte }: {
             )}
             {fertig && a.vor_kunde && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm whitespace-pre-wrap mb-2">
-                <div className="text-xs font-semibold text-amber-800 mb-1">🧾 Dafür brauche ich noch von dir</div>
+                <div className="text-xs font-semibold text-amber-800 mb-1">🧾 Dafür brauche ich noch von dir – „Passt“ heißt: ist erledigt (oder geht ohne)</div>
                 {a.vor_kunde}
               </div>
             )}
