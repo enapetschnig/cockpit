@@ -9,7 +9,9 @@
  * Fragen (crm.roboter_fragen) alle 15 s.
  */
 import { Prisma } from "@prisma/client";
+import OpenAI from "openai";
 import { prisma } from "./db";
+import { getConfig } from "./config";
 
 export interface Auftrag {
   id: string;
@@ -276,32 +278,70 @@ export async function nochmal(a: Auftrag): Promise<boolean> {
 }
 
 /**
- * Alle offenen Wünsche eines Kunden an den Roboter: in den offenen Vorschlag
- * (wird neu zusammengefasst) oder als neuer gemeinsamer Auftrag.
+ * Christoph: „setz um“ (▶️, Antwort auf die Wunsch-Nachricht, Assistent, CRM). Roboter 3: alle offenen Wünsche des
+ * Kunden in EINEN Auftrag, gleich freigegeben – der Roboter setzt sie im Projekt-Verlauf um wie in VS Code.
+ * zusatz: Christophs Worte dazu („ja, und mach noch …“) – kommen wörtlich in den Auftrag. Wartet schon ein noch nicht
+ * begonnener Auftrag des Kunden, kommt alles dort hinein.
  */
-export async function anRoboterGeben(appKey: string): Promise<{ auftrag?: string; neu: number; dazu: boolean; yolo: boolean }> {
-  const freiW = (await offeneWuensche(appKey)).filter((w) => !w.auftrag);
-  const frei = freiW.map((w) => w.id);
-  if (!frei.length) return { neu: 0, dazu: false, yolo: false };
-  const seit = (await yoloSeit()).get(appKey);
-  const [offen] = await prisma.$queryRaw<{ id: string; wunsch_ids: string[] }[]>`
-    select id::text as id, wunsch_ids from crm.roboter_auftraege
-    where app_key = ${appKey} and status = any(${OFFEN_FUER_NEUE}) order by erstellt_am desc limit 1`;
-  if (offen) {
-    // Nur solange noch offen – hat der Roboter inzwischen freigegeben/umgesetzt, neuer Auftrag.
-    const n = await prisma.$executeRaw`
-      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[], status = 'analyse', freigegeben_am = null, geprueft = null,
-        versuche = 0, naechster_versuch = null,
-        gemeldet = null, aktualisiert = now()
-      where id = ${offen.id}::uuid and status = any(${OFFEN_FUER_NEUE})`;
-    if (n > 0) {
-      const alle = [...freiW, ...(await wuenscheZu(offen.wunsch_ids))];
-      return { auftrag: offen.id, neu: frei.length, dazu: true, yolo: yoloGreift(seit, alle) };
-    }
+export async function anRoboterGeben(appKey: string, zusatz = ""): Promise<{ auftrag?: string; neu: number; dazu: boolean }> {
+  const frei = (await offeneWuensche(appKey)).filter((w) => !w.auftrag).map((w) => w.id);
+  let notiz = zusatz.trim() || null;
+  if (!frei.length && !notiz) return { neu: 0, dazu: false };
+  // Liegt zu diesen Wünschen schon Arbeit in einem Zweig (alter, verworfener Auftrag)? Dann soll er darauf aufbauen.
+  if (frei.length) {
+    const [alt] = await prisma.$queryRaw<{ zweig: string }[]>`
+      select zweig from crm.roboter_auftraege where app_key = ${appKey} and zweig is not null and wunsch_ids && ${frei}::text[]
+        and status in ('verworfen', 'fehler') order by aktualisiert desc limit 1`;
+    if (alt) notiz = [notiz, `Dazu gibt es schon Arbeit im Zweig ${alt.zweig} – schau sie dir an und übernimm, was passt.`].filter(Boolean).join("\n");
   }
-  const [n] = await prisma.$queryRaw<{ id: string }[]>`
-    insert into crm.roboter_auftraege (app_key, wunsch_ids, status) values (${appKey}, ${frei}::text[], 'analyse') returning id::text as id`;
-  return { auftrag: n.id, neu: frei.length, dazu: false, yolo: yoloGreift(seit, freiW) };
+  const [offen] = await prisma.$queryRaw<{ id: string }[]>`
+    select id::text as id from crm.roboter_auftraege where app_key = ${appKey} and status = 'freigegeben' order by erstellt_am desc limit 1`;
+  if (offen) {
+    const n = await prisma.$executeRaw`
+      update crm.roboter_auftraege set wunsch_ids = wunsch_ids || ${frei}::text[],
+        anmerkung = case when ${notiz}::text is null then anmerkung else concat_ws(E'\n', anmerkung, ${notiz}::text) end, aktualisiert = now()
+      where id = ${offen.id}::uuid and status = 'freigegeben'`;
+    if (n > 0) return { auftrag: offen.id, neu: frei.length, dazu: true };
+  }
+  const [neu] = await prisma.$queryRaw<{ id: string }[]>`
+    insert into crm.roboter_auftraege (app_key, wunsch_ids, status, freigegeben_am, anmerkung)
+    values (${appKey}, ${frei}::text[], 'freigegeben', now(), ${notiz}) returning id::text as id`;
+  return { auftrag: neu.id, neu: frei.length, dazu: false };
+}
+
+/** Telegram-Nachricht zu einem neuen Wunsch aus einer Kunden-App: „Soll ich das umsetzen?“ (YOLO: macht er gleich). */
+export async function wunschMeldung(id: string): Promise<Karte | null> {
+  const [w] = await prisma.$queryRaw<{ app_key: string; art: string; text: string; melder: string | null }[]>`
+    select app_key, art, text, melder from crm.app_wuensche where id = ${id} and erstellt_am > now() - interval '30 minutes'`;
+  if (!w) return null;
+  const kunde = (await kundenNamen()).get(w.app_key) ?? w.app_key;
+  const yolo = (await yoloSeit()).has(w.app_key);
+  const kopf = `🛠 <b>${esc(kunde)}</b> – ${w.art === "fehler" ? "Fehlermeldung" : "neuer Wunsch"}${w.melder ? ` von ${esc(w.melder)}` : ""}:\n„${esc(kuerzen(w.text, 700))}“`;
+  // Fuß „Projekt …“: eine Antwort auf diese Nachricht landet beim richtigen Kunden.
+  if (yolo) return { text: `${kopf}\n\n⚡ YOLO – ich setze es gleich um und melde mich, wenn es live ist.\n<i>Projekt ${w.app_key}</i>`, buttons: [] };
+  return {
+    text: `${kopf}\n\nSoll ich das umsetzen? ▶️ tippen oder einfach antworten (z. B. „ja, und mach noch …“).\n<i>Projekt ${w.app_key}</i>`,
+    buttons: [[{ text: "▶️ Umsetzen", data: `rob:start:${w.app_key}` }]],
+  };
+}
+
+/** Christophs Antwort auf „Soll ich das umsetzen?“ verstehen: machen (evtl. mit Zusatz), nicht, oder eine Frage. */
+export async function antwortVerstehen(text: string): Promise<{ aktion: "umsetzen" | "nicht" | "frage"; zusatz: boolean }> {
+  if (istJa(text)) return { aktion: "umsetzen", zusatz: false };
+  const apiKey = await getConfig("OPENAI_API_KEY");
+  if (!apiKey) return { aktion: "frage", zusatz: false };
+  try {
+    const r = await new OpenAI({ apiKey }).chat.completions.create({
+      model: "gpt-4o-mini", temperature: 0, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "Der Roboter hat Christoph gefragt, ob er einen Änderungswunsch aus einer Kunden-App umsetzen soll. Ordne seine Antwort ein. Antworte als JSON {\"aktion\": \"umsetzen\"|\"nicht\"|\"frage\", \"zusatz\": true|false}. umsetzen = er will, dass es gemacht wird (auch „ja, aber …“, „mach, und ergänz noch …“, „bitte so, aber …“). zusatz = true, wenn er dabei etwas ergänzt oder anders haben will. nicht = nein, später, nicht jetzt, lass. frage = er fragt etwas oder will erst etwas wissen." },
+        { role: "user", content: text },
+      ],
+    });
+    const j = JSON.parse(r.choices[0]?.message?.content || "{}");
+    const aktion = ["umsetzen", "nicht", "frage"].includes(j.aktion) ? j.aktion : "frage";
+    return { aktion, zusatz: !!j.zusatz };
+  } catch { return { aktion: "frage", zusatz: false }; }
 }
 
 // ── YOLO-Modus je Kunde ────────────────────────────────────────────────────
@@ -540,23 +580,25 @@ export async function karteFuer(a: Auftrag, opts: KartenOpts = {}): Promise<Kart
 export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
   // Christoph (24.09.2026): „die Nachricht nur, wenn er die Lösung schon parat hat – ich sage nur noch ja passt“.
   if (a.status === "vorschlag") return karteFuer(a, { kopf: a.geprueft ? "🟢 Lösung fertig und geprüft – passt?" : "🟡 neuer Vorschlag – bitte ansehen" });
-  if (["wartet", "fehler", "vorschau", "db_freigabe"].includes(a.status)) return karteFuer(a);
+  if (["vorschau", "db_freigabe"].includes(a.status)) return karteFuer(a);
+  // Roboter 3: eine Zeile – live, Frage oder ging nicht. Antworten auf die Nachricht landen beim Roboter (Fuß „Auftrag …“).
+  const kunde = esc((await kundenNamen()).get(a.app_key) ?? a.app_key);
+  const fuss = `<i>Auftrag ${kurz(a.id)}</i>`;
+  const crm: Knopf = { text: "🔗 Im CRM", url: CRM_LINK + a.id };
   if (a.status === "erledigt") {
-    const kunde = (await kundenNamen()).get(a.app_key) ?? a.app_key;
-    // Riskantes aus der Datenbank-Prüfung (⚠️-Zeilen) nie wegkürzen – gerade bei YOLO ging es ohne Rückfrage durch.
-    const zeilen = (a.db_info || "").split("\n");
-    const risiken = zeilen.filter((z) => z.trim().startsWith("⚠️")).slice(0, 8);
-    const sonst = zeilen.filter((z) => !z.trim().startsWith("⚠️")).join("\n").trim();
     return {
-      text:
-        `✅ <b>${esc(kunde)}</b> ist live${a.yolo ? " (YOLO)" : ""}.` +
-        (a.protokoll ? `\n\n${esc(kuerzen(ohneMarkdown(a.protokoll), 1500))}` : "") +
-        (risiken.length ? `\n\n<b>⚠️ Datenbank – bitte ansehen</b>\n${risiken.map((z) => esc(kuerzen(z.trim(), 300))).join("\n")}` : "") +
-        (sonst ? `\n\n<b>Datenbank</b>\n${esc(kuerzen(sonst, 800))}` : "") +
-        (a.fehler ? `\n\n⚠️ ${esc(a.fehler)}` : `\n\n<i>Der Kunde sieht „umgesetzt“ mit deiner Antwort.</i>`) +
-        `\n<i>Auftrag ${kurz(a.id)}</i>`,
-      buttons: [[{ text: "🔗 Im CRM", url: CRM_LINK + a.id }]],
-      leise: true, // nur zur Info – kommt ohne Ton
+      text: `✅ <b>${kunde}</b> ist live${a.protokoll ? `: ${esc(kuerzen(ohneMarkdown(a.protokoll), 600))}` : "."}` +
+        (a.wunsch_ids.length ? (a.fehler ? `\n⚠️ ${esc(a.fehler)}` : "\n<i>Der Kunde hat die Antwort.</i>") : "") + `\n${fuss}`,
+      buttons: [[crm]],
+    };
+  }
+  if (a.status === "wartet") {
+    return { text: `❓ <b>${kunde}</b>: ${esc(kuerzen(a.fehler, 1500))}\n\n<i>Antworte einfach auf diese Nachricht.</i>\n${fuss}`, buttons: [[{ text: "🗑 Verwerfen", data: `rob:verw:${a.id}` }, crm]] };
+  }
+  if (a.status === "fehler") {
+    return {
+      text: `⚠️ <b>${kunde}</b>: ${esc(kuerzen(a.fehler, 800))}\n\n<i>Antworte, wenn du mir etwas dazu sagen willst.</i>\n${fuss}`,
+      buttons: [[{ text: "🔁 Nochmal", data: `rob:nochmal:${a.id}` }, { text: "🗑 Verwerfen", data: `rob:verw:${a.id}` }], [crm]],
     };
   }
   return null;

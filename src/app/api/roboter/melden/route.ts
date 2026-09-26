@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendTelegram } from "@/lib/telegram";
-import { esc, karteFuer, kundenNamen, ladeAuftrag, meldungFuerAuftrag, ohneMarkdown, type Auftrag } from "@/lib/roboter";
+import { esc, karteFuer, kundenNamen, ladeAuftrag, meldungFuerAuftrag, ohneMarkdown, wunschMeldung, type Auftrag } from "@/lib/roboter";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * Texte verschicken. Jede Stufe geht genau einmal raus, nur frische Stände.
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string };
+  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string };
+
+  // Neuer Wunsch aus einer Kunden-App (CRM-Eingang): „Soll ich das umsetzen?“ – Text baut das Cockpit aus der Datenbank.
+  if (typeof b.wunsch === "string" && b.wunsch.length <= 80) {
+    const k = await wunschMeldung(b.wunsch);
+    if (!k) return NextResponse.json({ ok: true, nichts: true });
+    const r = await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
+    return r.ok ? NextResponse.json({ ok: true }) : NextResponse.json({ ok: false }, { status: 502 });
+  }
 
   if (b.frage && UUID.test(b.frage)) {
     // Erst beanspruchen, dann senden – doppelte Aufrufe schicken nichts doppelt.

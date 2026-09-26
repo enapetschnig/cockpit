@@ -125,40 +125,29 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
   // YOLO an → alles geht ohne Freigabe live (auch ältere Wünsche).
   const alle = [...(offenerVorschlag?.wunsch_ids ?? []), ...frei];
   const direkt = !!yoloSeit && alle.length > 0;
+  // Roboter 3: „Umsetzen“ heißt umsetzen – alles offene des Kunden in einen Auftrag, gleich freigegeben.
   const geben = async () => {
-    if (direkt && !confirm('YOLO ist an: Der Roboter setzt das OHNE deine Freigabe um und schaltet live. Weiter?')) return;
-    if (offenerVorschlag) {
-      // Nur solange der Vorschlag noch offen ist und niemand inzwischen Wünsche angehängt hat.
-      const { data, error } = await db.from('roboter_auftraege').update({
-        // neue Wünsche → neu analysieren, umsetzen und prüfen; die bisher geprüfte Lösung gilt nicht mehr
-        wunsch_ids: [...offenerVorschlag.wunsch_ids, ...frei], status: 'analyse', freigegeben_am: null, gemeldet: null, geprueft: null,
-        versuche: 0, naechster_versuch: null,
-        aktualisiert: new Date().toISOString(),
-      }).eq('id', offenerVorschlag.id).in('status', OFFEN_FUER_NEUE)
-        .contains('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids)).containedBy('wunsch_ids', pgArray(offenerVorschlag.wunsch_ids))
-        .select('id');
+    const wartend = auftraege.find((x) => x.app_key === wunsch.app_key && x.status === 'freigegeben');
+    if (wartend) {
+      const { data, error } = await db.from('roboter_auftraege').update({ wunsch_ids: [...wartend.wunsch_ids, ...frei], aktualisiert: new Date().toISOString() })
+        .eq('id', wartend.id).eq('status', 'freigegeben').select('id');
       if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
       if (!data?.length) { toast.error('Der Stand hat sich geändert – neu geladen, bitte nochmal'); return onNeu(); }
     } else {
-      // Frisch nachsehen: hat der Roboter die Wünsche inzwischen selbst gesammelt? Sonst stecken sie in zwei Aufträgen.
       const { data: schon } = await db.from('roboter_auftraege').select('id')
         .overlaps('wunsch_ids', pgArray(frei)).not('status', 'in', '(verworfen,abgelehnt)').limit(1);
-      if (schon?.length) { toast.error('Der Roboter hat die Wünsche inzwischen selbst übernommen – neu geladen'); return onNeu(); }
-      const { error } = await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: frei, status: 'analyse' });
+      if (schon?.length) { toast.error('Der Roboter hat die Wünsche schon – neu geladen'); return onNeu(); }
+      const { error } = await db.from('roboter_auftraege').insert({ app_key: wunsch.app_key, wunsch_ids: frei, status: 'freigegeben', freigegeben_am: new Date().toISOString() });
       if (error) return toast.error('Konnte nicht an den Roboter übergeben werden');
     }
-    toast.success(direkt
-      ? '⚡ YOLO: Der Roboter setzt es ohne Freigabe um und schaltet live'
-      : offenerVorschlag
-        ? 'Zum offenen Vorschlag dazugegeben – der Roboter fasst alles neu zusammen'
-        : 'Übergeben – der Vorschlag kommt in ein paar Minuten');
+    toast.success('▶️ Der Roboter setzt es um – du bekommst Bescheid, wenn es live ist');
     onNeu();
   };
   return (
     <Button size="sm" variant="outline" className="gap-1" onClick={geben}
-      title={direkt ? 'YOLO: ohne Freigabe umsetzen und live schalten' : undefined}>
+      title={offenerVorschlag ? 'Kommt zu den anderen Wünschen dieses Kunden dazu' : undefined}>
       <Bot className="w-3.5 h-3.5" />
-      {direkt ? '⚡ Umsetzen (YOLO)' : offenerVorschlag ? 'Zum Roboter-Vorschlag dazu' : 'Vorschlag vom Roboter'}
+      {direkt ? '⚡ Umsetzen (YOLO)' : '▶️ Umsetzen'}
       {frei.length > 1 && ` (${frei.length} Wünsche)`}
     </Button>
   );

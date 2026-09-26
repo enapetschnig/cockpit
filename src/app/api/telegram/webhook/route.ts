@@ -241,8 +241,23 @@ async function handleMessage(msg: TgMessage) {
       : "Das geht gerade nicht mehr – der Stand hat sich geändert. /wuensche zeigt den aktuellen.");
     return;
   }
-  // Antworten auf Roboter-Nachrichten gehen direkt an den Roboter (Claude im Projekt-Verlauf) –
-  // er antwortet selbst und kann den Vorschlag überarbeiten, freigeben oder einen Auftrag anlegen.
+  // Antwort auf „🛠 neuer Wunsch – soll ich das umsetzen?“: machen (seine Worte kommen wörtlich in den Auftrag),
+  // liegen lassen, oder – bei einer Frage – an den Roboter.
+  if (!auftrag && projekt && bezug.startsWith("🛠")) {
+    const v = await roboter.antwortVerstehen(instruction);
+    if (v.aktion === "umsetzen") {
+      const r = await roboter.anRoboterGeben(projekt, v.zusatz ? instruction : "");
+      await sendTelegram(r.neu || r.dazu || v.zusatz
+        ? `▶️ Mach ich${v.zusatz ? " – mit deinem Zusatz" : ""}. Du bekommst eine Zeile, wenn es live ist.`
+        : "Da liegt nichts Offenes mehr – schon erledigt oder schon in Arbeit.");
+      return;
+    }
+    if (v.aktion === "nicht") {
+      await sendTelegram("👍 Bleibt liegen. Sag einfach Bescheid, wenn ich es machen soll.");
+      return;
+    }
+  }
+  // Antworten auf Roboter-Nachrichten gehen direkt an den Roboter (Claude im Projekt-Verlauf).
   if (projekt) {
     // Ohne Auftrag im Fuß (Start-Nachricht des Gesprächs, Antwort ohne Auftrag): den Auftrag des laufenden Gesprächs nehmen.
     const g0 = auftrag ? null : await roboter.gespraech(true);
@@ -387,15 +402,11 @@ async function roboterKnopf(cb: TgCallback) {
 
   if (aktion === "start") {
     const r = await roboter.anRoboterGeben(ref);
-    await tgAnswerCallback(cb.id, r.neu ? "✓ An den Roboter übergeben" : "Nichts Neues");
-    const wuensche = r.neu === 1 ? "1 Wunsch" : `${r.neu} Wünsche`;
-    await sendTelegram(!r.neu
-      ? "Für diesen Kunden liegen keine offenen Wünsche mehr ohne Roboter-Auftrag."
-      : r.yolo
-        ? `⚡ ${wuensche} beim Roboter – YOLO: er setzt ${r.dazu ? "alles" : "sie"} <b>ohne Freigabe</b> um und schaltet live. Du bekommst Bescheid (⏹ Stopp auf der Karte).`
-        : r.dazu
-          ? `🤖 ${r.neu === 1 ? "1 Wunsch kommt" : `${r.neu} Wünsche kommen`} zum offenen Vorschlag dazu – der Roboter fasst alles neu zusammen.`
-          : `🤖 ${r.neu === 1 ? "1 Wunsch ist" : `${r.neu} Wünsche sind`} beim Roboter – der gemeinsame Vorschlag kommt in ein paar Minuten.`);
+    await tgAnswerCallback(cb.id, r.neu ? "▶️ Mach ich" : "Nichts Offenes");
+    const kunde = (await roboter.kundenNamen()).get(ref) ?? ref;
+    await sendTelegram(r.neu
+      ? `▶️ Mach ich – ${r.neu === 1 ? "1 Wunsch" : `${r.neu} Wünsche`} von ${esc(kunde)}. Du bekommst eine Zeile, wenn es live ist.`
+      : "Da liegt nichts Offenes mehr – schon erledigt oder schon in Arbeit.");
     return;
   }
 

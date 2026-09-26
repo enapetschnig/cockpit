@@ -109,8 +109,15 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     // `x-kein-ping: 1` unterdrückt ihn zusätzlich: beim Nachtragen der
     // Altmeldungen einer frisch angebundenen App will niemand 20 Telegrams.
     if (felder.status === 'neu' && kopf(req, 'x-kein-ping') !== '1') {
-      const anfang = text.length > 160 ? text.slice(0, 160) + ' …' : text;
-      await sendTelegram(`🛠 ${appLabel(appKey)}: ${ART_LABEL[felder.art] ?? felder.art} — ${anfang}`);
+      // Über das Cockpit (Telegram-Bot mit Knöpfen): „Soll ich das umsetzen?“ + ▶️ – Christophs Antwort geht an den Roboter.
+      // Klappt das nicht, wenigstens die einfache Zeile wie bisher.
+      const r = await fetch('https://cockpit-flax-tau.vercel.app/api/roboter/melden', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wunsch: id }),
+      }).catch(() => null);
+      if (!r?.ok) {
+        const anfang = text.length > 160 ? text.slice(0, 160) + ' …' : text;
+        await sendTelegram(`🛠 ${appLabel(appKey)}: ${ART_LABEL[felder.art] ?? felder.art} — ${anfang}`);
+      }
     }
   }
 

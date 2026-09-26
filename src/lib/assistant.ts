@@ -66,8 +66,8 @@ const ROBOTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "roboter_vorschlag_anfordern",
       description:
-        "Gibt ALLE offenen Änderungswünsche eines Kunden an den Roboter: er schreibt EINEN gemeinsamen Lösungsvorschlag (kommt in ein paar Minuten per Telegram). Läuft für den Kunden schon ein Vorschlag, kommen die Wünsche dazu und er fasst neu zusammen. Ausnahme YOLO-Kunde: dann setzt er ohne Freigabe sofort um und schaltet live (das Ergebnis sagt es dir – gib es so weiter). Nur auf ausdrücklichen Wunsch des Nutzers, nicht zum bloßen Zusammenfassen.",
-      parameters: { type: "object", properties: { kunde: ROBOTER_REF.kunde }, required: ["kunde"] },
+        "Lässt den Roboter ALLE offenen Änderungswünsche eines Kunden jetzt umsetzen ('setz Schafferhofer um', 'mach die Wünsche von …'): er macht alles selbst wie in VS Code (Code, Datenbank, live) und meldet sich mit einer Zeile. anmerkung: was der Nutzer zusätzlich oder anders will, in seinen Worten. Nur auf ausdrücklichen Wunsch des Nutzers.",
+      parameters: { type: "object", properties: { kunde: ROBOTER_REF.kunde, anmerkung: { type: "string", description: "Zusatz des Nutzers, wörtlich" } }, required: ["kunde"] },
     },
   },
   {
@@ -177,14 +177,9 @@ async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Prom
   if (name === "roboter_vorschlag_anfordern") {
     const k = await roboter.findeKunde(a.kunde || "");
     if (!k.appKey) return { error: `Kunde nicht eindeutig. Meintest du: ${(k.kandidaten || []).slice(0, 10).join(", ")}?` };
-    const r = await roboter.anRoboterGeben(k.appKey);
-    if (!r.neu) return { ok: false, kunde: k.name, hinweis: "Keine offenen Wünsche ohne Roboter-Auftrag – evtl. läuft schon einer (roboter_details)." };
-    return {
-      ok: true, kunde: k.name, wuensche: r.neu, zum_offenen_vorschlag_dazu: r.dazu, yolo: r.yolo,
-      hinweis: r.yolo
-        ? "YOLO: Der Roboter setzt das OHNE Freigabe um und schaltet live – der Nutzer bekommt Bescheid und kann auf der Karte stoppen."
-        : "Vorschlag kommt in ein paar Minuten per Telegram.",
-    };
+    const r = await roboter.anRoboterGeben(k.appKey, a.anmerkung || "");
+    if (!r.neu && !r.dazu && !a.anmerkung) return { ok: false, kunde: k.name, hinweis: "Keine offenen Wünsche – schon erledigt oder schon in Arbeit." };
+    return { ok: true, kunde: k.name, wuensche: r.neu, hinweis: "Der Roboter setzt es jetzt um (wie in VS Code) und meldet sich mit einer Zeile, wenn es live ist." };
   }
   if (name === "roboter_frage" && !a.auftrag) {
     // Frage zur App, auch ohne laufenden Auftrag
