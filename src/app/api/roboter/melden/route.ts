@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendTelegram } from "@/lib/telegram";
+import { besprechungMeldung } from "@/lib/besprechungen";
 import { esc, karteFuer, kundenNamen, ladeAuftrag, meldungFuerAuftrag, ohneMarkdown, wunschMeldung, type Auftrag } from "@/lib/roboter";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,24 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * Texte verschicken. Jede Stufe geht genau einmal raus, nur frische Stände.
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string };
+  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string };
+
+  // Neue Besprechung aus Plaud (PC, werkzeuge/plaud): „🎙 … abgelegt“ bzw. „❓ zu wem gehört die?“ – genau einmal.
+  if (b.besprechung && UUID.test(b.besprechung)) {
+    const k = await besprechungMeldung(b.besprechung);
+    if (!k) return NextResponse.json({ ok: true, nichts: true });
+    const r = await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
+    if (!r.ok) {
+      await prisma.$executeRaw`update crm.besprechungen set gemeldet = null where id = ${b.besprechung}::uuid`;
+      return NextResponse.json({ ok: false }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+  // Plaud-Anmeldung am PC abgelaufen (höchstens einmal am Tag vom PC gemeldet) – fester Text.
+  if (b.plaud === "anmeldung") {
+    await sendTelegram("⚠️ Plaud: die Anmeldung am PC ist abgelaufen – Besprechungen kommen gerade nicht ins CRM. Sag mir kurz Bescheid, dann melde ich dich neu an.");
+    return NextResponse.json({ ok: true });
+  }
 
   // Neuer Wunsch aus einer Kunden-App (CRM-Eingang): „Soll ich das umsetzen?“ – Text baut das Cockpit aus der Datenbank.
   if (typeof b.wunsch === "string" && b.wunsch.length <= 80) {

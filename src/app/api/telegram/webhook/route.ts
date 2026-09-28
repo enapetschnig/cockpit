@@ -9,6 +9,7 @@ import { runAssistant, buildReplyDraft } from "@/lib/assistant";
 import { listFollowups } from "@/lib/followups";
 import { queueBeleg, approveAllCollected, retryBeleg, skipBeleg } from "@/lib/bmd/state";
 import * as roboter from "@/lib/roboter";
+import { besprechungKnopf, besprechungsRef, zuordnenPerText } from "@/lib/besprechungen";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -211,6 +212,13 @@ async function handleMessage(msg: TgMessage) {
     : null;
   // Antwort auf eine Roboter-Nachricht? Die tragen unten „Auftrag xxxxxxxx“ bzw. „Projekt <app>“.
   const bezug = mail ? "" : msg.reply_to_message?.text || "";
+  // Antwort auf „❓ Besprechung … zu wem gehört die?“ → Name zuordnen.
+  const besp = besprechungsRef(bezug);
+  if (besp && bezug.startsWith("❓ Besprechung")) {
+    const k = await zuordnenPerText(besp, instruction);
+    await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
+    return;
+  }
   // die letzte Fundstelle – weiter oben könnte ein Wunschtext „Auftrag 12345678“ enthalten
   const ref = [...bezug.matchAll(/Auftrag ([0-9a-f]{8})\b/g)].pop()?.[1];
   const auftrag = ref ? await roboter.ladeAuftrag(ref) : null;
@@ -488,6 +496,13 @@ async function roboterKnopf(cb: TgCallback) {
 
 async function handleCallback(cb: TgCallback) {
   if (cb.data?.startsWith("rob:")) return roboterKnopf(cb);
+  if (cb.data?.startsWith("bsp:")) {
+    const k = await besprechungKnopf(cb.data);
+    await tgAnswerCallback(cb.id);
+    const ok = cb.message ? await tgEditMessage(cb.message.chat.id, cb.message.message_id, k.text, k.buttons) : false;
+    if (!ok) await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
+    return;
+  }
   const [action, id] = (cb.data || "").split(":");
 
   // Komplett neue Mail (PendingEmail)

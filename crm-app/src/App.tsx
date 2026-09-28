@@ -21,6 +21,7 @@ import KassabuchPage from "./pages/KassabuchPage";
 import ArchivPage from "./pages/ArchivPage";
 import FirmaPage from "./pages/FirmaPage";
 import WuenschePage from './pages/WuenschePage';
+import BesprechungenPage from './pages/BesprechungenPage';
 import VertraegePage from './pages/VertraegePage';
 import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
@@ -146,6 +147,7 @@ const App = () => (
           <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
           <Route path="/wuensche" element={<ProtectedRoute><WuenschePage /></ProtectedRoute>} />
+          <Route path="/besprechungen" element={<ProtectedRoute><BesprechungenPage /></ProtectedRoute>} />
           <Route path="/vertraege" element={<ProtectedRoute><VertraegePage /></ProtectedRoute>} />
           <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
           <Route path="/wartung" element={<ProtectedRoute><WartungPage /></ProtectedRoute>} />

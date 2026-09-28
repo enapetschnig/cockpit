@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/hooks/useBilling';
+import { BesprechungenBei } from '@/components/Besprechungen';
 import { customerLabel, type Customer } from '@/types/billing';
 import { APPS } from '@/lib/apps';
 import { Search, Plus, FileText, Receipt, Mail, Phone } from 'lucide-react';
@@ -74,7 +75,7 @@ export default function KundenPage() {
       </main>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{edit?.id ? 'Kunde bearbeiten' : 'Neuer Kunde'}</DialogTitle></DialogHeader>
           {edit && (
             <div className="grid sm:grid-cols-2 gap-2">
@@ -104,6 +105,7 @@ export default function KundenPage() {
                 </p>
               </div>
               <Button className="sm:col-span-2" onClick={async () => { await save(edit); setEdit(null); }}>Speichern</Button>
+              {edit.id && <div className="sm:col-span-2"><BesprechungenBei customerId={edit.id} leadId={edit.lead_id} /></div>}
             </div>
           )}
         </DialogContent>

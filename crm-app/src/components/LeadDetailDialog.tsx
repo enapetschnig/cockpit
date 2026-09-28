@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { BesprechungenBei } from '@/components/Besprechungen';
 import {
   Dialog,
   DialogContent,
@@ -508,6 +509,8 @@ export function LeadDetailDialog({
           <TabsContent value="history" className="mt-4">
             <ScrollArea className="h-[400px] pr-4">
               <div className="space-y-4">
+                {/* Besprechungen aus Plaud (automatisch zugeordnet) */}
+                <BesprechungenBei leadId={lead.id} />
                 {/* Kontakthistorie - oben, sofort sichtbar */}
                 <div className="space-y-3">
                   {lead.contactLogs.slice().reverse().map((log) => (
