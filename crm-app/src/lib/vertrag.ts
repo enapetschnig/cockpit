@@ -160,10 +160,10 @@ export function vertragsText(v: Partial<Contract>, a: Anbieter): VertragsText {
       `Ab Übergabe der Zugänge sind Weiterentwicklung und Support für ${monate === 12 ? 'ein Jahr' : `${monate} Monate`} im Preis enthalten: ` +
       `neue Funktionen und Anpassungen, wenn sich die Abläufe im Betrieb ändern, sowie persönliche Hilfe bei Fragen – ohne Zusatzkosten. ` +
       (wartung > 0
-        ? `\n\nAb dem zweiten Jahr läuft ein Wartungsvertrag um ${eurLang(wartung)} netto im Monat, das sind ${eurLang(round2(wartung * 12))} netto im Jahr, jährlich im Voraus verrechnet. ` +
+        ? `\n\nAb dem zweiten Jahr kann optional ein Wartungsvertrag um ${eurLang(wartung)} netto im Monat abgeschlossen werden, das sind ${eurLang(round2(wartung * 12))} netto im Jahr, jährlich im Voraus verrechnet. ` +
           `Darin enthalten sind das Hosting und der Betrieb der Software sowie die laufende Umsetzung von Änderungen und neuen Wünschen – die Betreuung geht also einfach weiter. ` +
-          `Der Wartungsvertrag verlängert sich jeweils um ein Jahr und kann bis einen Monat vor Ablauf gekündigt werden; die Software bleibt auch danach nutzbar.`
-        : `Danach kann die Betreuung auf Wunsch verlängert werden; die Software bleibt auch ohne Verlängerung uneingeschränkt nutzbar.`),
+          `Der Wartungsvertrag verlängert sich jeweils um ein Jahr und kann bis einen Monat vor Ablauf gekündigt werden.`
+        : `Danach kann die Betreuung auf Wunsch verlängert werden.`),
   });
 
   abschnitte.push({
