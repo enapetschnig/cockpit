@@ -8,6 +8,7 @@
  * verschickt wird es von Hand aus dem CRM.
  */
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,7 +18,7 @@ import { VertragAnsicht, signerZuUnterschrift } from '@/components/VertragAnsich
 import { buildContractPdf, contractFileName } from '@/lib/contractPdf';
 import type { Contract, Signer, VertragsText } from '@/lib/vertrag';
 import { EPOWER_LOGO } from '@/lib/logoData';
-import { ArrowDown, Check, Download, FileSignature, Loader2 } from 'lucide-react';
+import { ArrowDown, Check, Download, FileSignature, Loader2, Smartphone } from 'lucide-react';
 
 type Oeffentlich = Pick<Contract, 'id' | 'number' | 'status' | 'party_company' | 'party_name' | 'party_email'
   | 'text_frozen' | 'text_hash' | 'our_signature' | 'our_signed_name' | 'our_signed_at' | 'signers'>;
@@ -42,6 +43,34 @@ export default function Unterschreiben() {
     io.observe(signBox);
     return () => io.disconnect();
   }, [signBox]);
+
+  // Am PC: QR-Code, damit man dieselbe Seite am Handy öffnet und dort mit dem Finger unterschreibt.
+  const [handyQr, setHandyQr] = useState<string | null>(null);
+  const amPc = typeof window !== 'undefined' && window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 768;
+  useEffect(() => {
+    if (!amPc) return;
+    QRCode.toDataURL(window.location.href, { errorCorrectionLevel: 'M', margin: 1, width: 200 }).then(setHandyQr).catch(() => setHandyQr(null));
+  }, [amPc, token]);
+
+  // Unterschreibt jemand am Handy, zeigt die offene Seite am PC das gleich an.
+  const offenAmPc = !!v && v.status !== 'signed';
+  useEffect(() => {
+    if (!offenAmPc || !amPc) return;
+    const t = setInterval(async () => {
+      if (document.hidden || busy !== null) return;
+      const r = await fetch(`/api/vertrag?token=${encodeURIComponent(token)}`).catch(() => null);
+      const d = r?.ok ? await r.json().catch(() => null) : null;
+      const s: Signer[] | undefined = d?.vertrag?.signers;
+      if (!s?.length) return;
+      setV((x) => {
+        if (!x) return x;
+        const vorher = x.signers.filter((y) => !!y.signature).length;
+        if (s.filter((y) => !!y.signature).length === vorher && d.vertrag.status === x.status) return x;
+        return { ...x, status: d.vertrag.status, signers: s };
+      });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [offenAmPc, amPc, token, busy]);
 
   useEffect(() => {
     document.title = 'Vertrag unterschreiben – ePower GmbH';
@@ -147,6 +176,15 @@ export default function Unterschreiben() {
               Mit dem Finger oder der Maus – wie auf Papier.
               {v.signers.length > 1 && ' Jeder Unterzeichner hat sein eigenes Feld und kann auch später über denselben Link unterschreiben.'}
             </p>
+            {handyQr && (
+              <div className="flex items-center gap-4 rounded-xl border border-dashed p-3 mb-4">
+                <img src={handyQr} alt="QR-Code zum Unterschreiben am Handy" className="w-28 h-28 shrink-0" />
+                <div className="text-sm">
+                  <div className="font-semibold flex items-center gap-1.5"><Smartphone className="w-4 h-4" /> Lieber am Handy unterschreiben?</div>
+                  <p className="text-muted-foreground mt-1">QR-Code mit der Handy-Kamera scannen – der Vertrag öffnet sich dort, und Sie unterschreiben mit dem Finger. Diese Seite aktualisiert sich danach von selbst.</p>
+                </div>
+              </div>
+            )}
             {offen.map(({ s, i }) => (
               <div key={i} className={'rounded-xl border p-4 ' + (offen.length > 1 ? 'mb-4' : '')}>
                 {v.signers.length > 1 && <div className="text-xs font-semibold text-muted-foreground mb-2">Unterzeichner {i + 1}{s.rolle ? ` · ${s.rolle}` : ''}</div>}
