@@ -35,6 +35,7 @@ export const APPS: AppInfo[] = [
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik', projectRef: 'xsflcdvorwaufiagvilw' },
   { key: 'holzbau-demo', label: 'Holzbau-Demo', projectRef: 'yernlanmcepfhazzfucj' },
   { key: 'steinbrecher', label: 'Holzbau Steinbrecher & Köberl', projectRef: 'prdyutjcarsdzdnvlznu' },
+  { key: '3dscanimholzbau', label: '3D-SCAN im Holzbau (Netzker)', projectRef: 'zmpjhstslooexuxmkqlg' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

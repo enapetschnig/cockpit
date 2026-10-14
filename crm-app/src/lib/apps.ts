@@ -28,6 +28,7 @@ export const APPS: AppInfo[] = [
   { key: 'doerflinger', label: 'Dörflinger Wasser- und Heizungstechnik' },
   { key: 'holzbau-demo', label: 'Holzbau-Demo' },
   { key: 'steinbrecher', label: 'Holzbau Steinbrecher & Köberl' },
+  { key: '3dscanimholzbau', label: '3D-SCAN im Holzbau (Netzker)' },
 ];
 
 export const APP_LABEL: Record<string, string> =
