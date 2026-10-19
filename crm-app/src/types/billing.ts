@@ -1,7 +1,7 @@
 // Buchhaltung: Angebote, Rechnungen (inkl. Teil-/Schlussrechnung), Kunden, Artikel, Kassabuch
 
 export type DocKind = 'offer' | 'invoice' | 'partial_invoice' | 'final_invoice' | 'credit_note';
-export type DocStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'paid' | 'partly_paid' | 'overdue' | 'cancelled';
+export type DocStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'paid' | 'partly_paid' | 'overdue' | 'cancelled' | 'archived';
 
 export const DOC_KIND_LABEL: Record<DocKind, string> = {
   offer: 'Angebot',
@@ -20,6 +20,7 @@ export const DOC_STATUS_LABEL: Record<DocStatus, string> = {
   partly_paid: 'Teilweise bezahlt',
   overdue: 'Überfällig',
   cancelled: 'Storniert',
+  archived: 'Archiviert',
 };
 
 export interface Customer {

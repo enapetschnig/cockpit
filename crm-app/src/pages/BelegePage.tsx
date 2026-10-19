@@ -6,9 +6,17 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useDocuments } from '@/hooks/useBilling';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
 import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, openAmount, type BillingDocument, type DocKind, type DocStatus } from '@/types/billing';
-import { FileText, Plus, Search, Receipt, Link2, Wallet } from 'lucide-react';
+import { FileText, Plus, Search, Receipt, Link2, Wallet, Check, Archive, RotateCcw } from 'lucide-react';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = supabase as any;
+
+/** Angebote: offen = noch nicht entschieden. Angenommen/abgelehnt/archiviert zählen nicht mehr zur offenen Summe. */
+const ANGEBOT_ERLEDIGT = ['accepted', 'rejected', 'cancelled', 'archived'];
 
 const STATUS_STYLE: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -19,6 +27,7 @@ const STATUS_STYLE: Record<string, string> = {
   partly_paid: 'bg-amber-100 text-amber-700',
   overdue: 'bg-red-100 text-red-700',
   cancelled: 'bg-muted text-muted-foreground line-through',
+  archived: 'bg-muted text-muted-foreground',
 };
 
 export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
@@ -28,8 +37,27 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   const [sp, setSp] = useSearchParams();
   const [q, setQ] = useState('');
   // Alle Belege zuerst – auf „offen" kommt man über die Kacheln in der Buchhaltung (?f=offen).
-  const initial = (sp.get('f') as 'offen' | 'overdue' | 'alle') || 'alle';
-  const [view, setView] = useState<'offen' | 'overdue' | 'alle'>(initial);
+  type Ansicht = 'offen' | 'overdue' | 'alle' | 'angenommen' | 'archiv';
+  const initial = (sp.get('f') as Ansicht) || (mode === 'offer' ? 'offen' : 'alle');
+  const [view, setView] = useState<Ansicht>(initial);
+  const istOffen = (d: { status: string }) =>
+    mode === 'offer' ? !ANGEBOT_ERLEDIGT.includes(d.status) : !['paid', 'cancelled', 'rejected'].includes(d.status);
+  const ansichten: [Ansicht, string][] = mode === 'offer'
+    ? [['offen', 'Offen'], ['angenommen', 'Angenommen'], ['archiv', 'Archiv'], ['alle', 'Alle']]
+    : [['offen', 'Offen'], ['overdue', 'Überfällig'], ['alle', 'Alle']];
+  const passt = (d: BillingDocument, v: Ansicht) =>
+    v === 'alle' ? true : v === 'offen' ? istOffen(d) : v === 'overdue' ? isOverdue(d)
+      : v === 'angenommen' ? d.status === 'accepted' : ['archived', 'rejected', 'cancelled'].includes(d.status);
+  const [busy, setBusy] = useState<string | null>(null);
+  /** Angebot als angenommen / archiviert markieren – oder wieder öffnen. */
+  const angebotStatus = async (d: BillingDocument, neu: DocStatus) => {
+    setBusy(d.id);
+    const { error } = await db.from('documents').update({ status: neu }).eq('id', d.id);
+    setBusy(null);
+    if (error) { toast.error('Ging nicht: ' + error.message); return; }
+    toast.success(neu === 'accepted' ? `${d.number || 'Angebot'} angenommen` : neu === 'archived' ? `${d.number || 'Angebot'} archiviert` : `${d.number || 'Angebot'} wieder offen`);
+    reload();
+  };
   const [status, setStatus] = useState<DocStatus | 'alle'>('alle');
   const navigate = useNavigate();
   const isOverdue = (d: { status: string; due_date: string | null }) =>
@@ -39,8 +67,7 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     return documents.filter((d) => {
-      if (view === 'offen' && ['paid', 'cancelled', 'rejected'].includes(d.status)) return false;
-      if (view === 'overdue' && !isOverdue(d)) return false;
+      if (!passt(d, view)) return false;
       if (status !== 'alle' && d.status !== status) return false;
       if (!s) return true;
       return [d.number, d.recipient_name, d.recipient_company, d.title]
@@ -49,13 +76,19 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
   }, [documents, q, status, view]);
 
   const sum = useMemo(() => {
-    const open = list.filter((d) => !['paid', 'cancelled', 'rejected'].includes(d.status));
+    const open = list.filter(istOffen);
+    // Angebote: die offene Summe immer über ALLE Angebote – egal, welcher Reiter gerade offen ist.
+    const alleOffen = documents.filter(istOffen);
     return {
       total: list.reduce((a, d) => a + Number(d.gross || 0), 0),
-      open: open.reduce((a, d) => a + openAmount(d), 0),
+      open: open.reduce((a, d) => a + (mode === 'offer' ? Number(d.gross || 0) : openAmount(d)), 0),
       openCount: open.length,
+      angebotOffen: alleOffen.reduce((a, d) => a + Number(d.gross || 0), 0),
+      angebotOffenNetto: alleOffen.reduce((a, d) => a + Number(d.net || 0), 0),
+      angebotOffenAnzahl: alleOffen.length,
+      angenommen: documents.filter((d) => d.status === 'accepted').reduce((a, d) => a + Number(d.gross || 0), 0),
     };
-  }, [list]);
+  }, [list, documents]);
 
   const title = mode === 'offer' ? 'Angebote' : 'Rechnungen';
 
@@ -69,7 +102,9 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
               {mode === 'offer' ? <FileText className="w-6 h-6" /> : <Receipt className="w-6 h-6" />} {title}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {list.length} {title} · offen {eur(sum.open)} ({sum.openCount}) · gesamt {eur(sum.total)}
+              {mode === 'offer'
+                ? <>Offen <b className="text-foreground">{eur(sum.angebotOffenNetto)} netto</b> ({eur(sum.angebotOffen)} brutto, {sum.angebotOffenAnzahl} Angebote) · angenommen {eur(sum.angenommen)}</>
+                : <>{list.length} {title} · offen {eur(sum.open)} ({sum.openCount}) · gesamt {eur(sum.total)}</>}
             </p>
           </div>
           <Button onClick={() => navigate(`/beleg/neu?kind=${mode === 'offer' ? 'offer' : 'invoice'}`)} className="gap-2">
@@ -82,10 +117,8 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
             <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
             <Input className="pl-9" placeholder="Nummer, Kunde, Titel …" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          {([['offen', 'Offen'], ['overdue', 'Überfällig'], ['alle', 'Alle']] as const).map(([v, label]) => {
-            const n = v === 'alle' ? documents.length
-              : v === 'offen' ? documents.filter((d) => !['paid', 'cancelled', 'rejected'].includes(d.status)).length
-              : documents.filter(isOverdue).length;
+          {ansichten.map(([v, label]) => {
+            const n = documents.filter((d) => passt(d, v)).length;
             return (
               <Button key={v} size="sm" variant={view === v ? 'secondary' : 'outline'}
                 onClick={() => { setView(v); setStatus('alle'); setSp(v === 'alle' ? {} : { f: v }); }}>
@@ -106,7 +139,9 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
               // sagen, sonst wirkt sie kaputt („mir wird keine Rechnung angezeigt").
               <>
                 <p className="mb-3">
-                  {view === 'offen' ? `Keine offenen ${title} – alles bezahlt. 🎉`
+                  {view === 'offen' ? (mode === 'offer' ? 'Keine offenen Angebote.' : `Keine offenen ${title} – alles bezahlt. 🎉`)
+                    : view === 'angenommen' ? 'Noch kein Angebot als angenommen markiert.'
+                    : view === 'archiv' ? 'Im Archiv liegt nichts.'
                     : view === 'overdue' ? `Nichts überfällig.`
                     : `Keine ${title} passen zu dieser Suche.`}
                 </p>
@@ -162,6 +197,23 @@ export default function BelegePage({ mode }: { mode: 'offer' | 'invoice' }) {
                   <span className={`text-[11px] font-semibold px-2 py-1 rounded-md shrink-0 ${STATUS_STYLE[d.status] || ''}`}>
                     {DOC_STATUS_LABEL[d.status] || d.status}
                   </span>
+                  {mode === 'offer' && (istOffen(d) ? (
+                    <div className="flex gap-1 shrink-0">
+                      <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" title="Als angenommen markieren" disabled={busy === d.id}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); angebotStatus(d, 'accepted'); }}>
+                        <Check className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Angenommen</span>
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" title="Ins Archiv – zählt nicht mehr zu offen" disabled={busy === d.id}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); angebotStatus(d, 'archived'); }}>
+                        <Archive className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Archiv</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs shrink-0" title="Wieder als offen führen" disabled={busy === d.id}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); angebotStatus(d, 'draft'); }}>
+                      <RotateCcw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Wieder offen</span>
+                    </Button>
+                  ))}
                   {mode === 'invoice' && !['paid', 'cancelled', 'rejected'].includes(d.status) && d.kind !== 'credit_note' && (
                     <Button size="sm" variant="outline" className="h-7 gap-1 text-xs shrink-0" title="Zahlung erfassen"
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZahlung(d); }}>

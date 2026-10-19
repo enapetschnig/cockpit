@@ -233,6 +233,11 @@ export default function BelegEditor() {
     } else if (isNew && merged.projekt_id && (merged.kind === 'partial_invoice' || merged.kind === 'final_invoice')) {
       await db.from('documents').update({ rest_faellig_am: null }).eq('projekt_id', merged.projekt_id).neq('id', newId);
     }
+    // Rechnung aus einem Angebot gemacht → das Angebot ist angenommen (zählt nicht mehr zu den offenen Angeboten).
+    if (isNew && merged.kind !== 'offer' && merged.source_document) {
+      await db.from('documents').update({ status: 'accepted' })
+        .eq('id', merged.source_document).eq('kind', 'offer').in('status', ['draft', 'sent']);
+    }
     if (isNew) navigate(`/beleg/${newId}`, { replace: true });
     else { setDoc((d) => ({ ...d, ...extra })); reload(); }
     return newId;
