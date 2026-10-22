@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useDocuments, useCompanySettings } from '@/hooks/useBilling';
-import { markPaid, repeatForNextMonth, sendReminder } from '@/hooks/useDocumentActions';
+import { markPaid, repeatForNextMonth } from '@/hooks/useDocumentActions';
 import { ZahlungDialog } from '@/components/billing/ZahlungDialog';
 import { DOC_KIND_LABEL, DOC_STATUS_LABEL, eur, fmtDate, openAmount, type BillingDocument } from '@/types/billing';
 import {
@@ -102,8 +102,8 @@ export default function BuchhaltungPage() {
           <Wallet className="w-3 h-3" /> Teilzahlung
         </Button>
         <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
-          onClick={async (e) => { e.preventDefault(); await sendReminder(d, settings, 1); reload(); }}>
-          <BellRing className="w-3 h-3" /> erinnern
+          onClick={(e) => { e.preventDefault(); navigate(`/mahnwesen?beleg=${d.id}`); }}>
+          <BellRing className="w-3 h-3" /> mahnen
         </Button>
         <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs"
           onClick={async (e) => { e.preventDefault(); const id = await repeatForNextMonth(d, settings); if (id) navigate(`/beleg/${id}`); }}>

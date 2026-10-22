@@ -20,7 +20,7 @@ import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 import {
   Zap, LayoutGrid, Wallet, FileText, Receipt, Users, MessageSquare,
   MoreHorizontal, BarChart3, BookOpen, Archive, Package, Tag, Settings,
-  ExternalLink, LogOut, TrendingUp, Megaphone, FileSignature, Wrench, Mic,
+  ExternalLink, LogOut, TrendingUp, Megaphone, FileSignature, Wrench, Mic, FileWarning,
 } from 'lucide-react';
 
 const HAUPT = [
@@ -42,6 +42,7 @@ const MEHR: { titel: string; eintraege: { to: string; label: string; icon: typeo
     { to: '/auftragsvolumen', label: 'Auftragsvolumen', icon: TrendingUp },
   ] },
   { titel: 'Buchhaltung', eintraege: [
+    { to: '/mahnwesen', label: 'Mahnwesen', icon: FileWarning },
     { to: '/kassabuch', label: 'Kassabuch', icon: BookOpen },
     { to: '/archiv', label: 'Archiv', icon: Archive },
     { to: '/export', label: 'Export für den Steuerberater', icon: Package },

@@ -68,8 +68,12 @@ export function buildDocumentPdf(
   items: DocumentItem[],
   s: CompanySettings | null,
   qrDataUrl?: string | null,
+  /** An ein bestehendes PDF anhängen (z. B. hinter eine Mahnung) statt ein neues zu beginnen. */
+  anhaengenAn?: jsPDF,
 ): jsPDF {
-  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pdf = anhaengenAn ?? new jsPDF({ unit: 'mm', format: 'a4' });
+  if (anhaengenAn) pdf.addPage();
+  const erste = pdf.getNumberOfPages();
   const W = pdf.internal.pageSize.getWidth();   // 210
   const H = pdf.internal.pageSize.getHeight();  // 297
   const ML = 10;            // linker Rand wie im Original
@@ -388,12 +392,12 @@ export function buildDocumentPdf(
 
   // ── 12) Fußzeile mit Seitenzahl ──
   const pages = pdf.getNumberOfPages();
-  for (let p = 1; p <= pages; p++) {
+  for (let p = erste; p <= pages; p++) {
     pdf.setPage(p);
     pdf.setDrawColor(...LINE); pdf.setLineWidth(0.2);
     pdf.line(ML, H - 18, RX, H - 18);
     setF(8);
-    pdf.text(`Seite ${p} / ${pages}`, W / 2, H - 13, { align: 'center' });
+    pdf.text(`Seite ${p - erste + 1} / ${pages - erste + 1}`, W / 2, H - 13, { align: 'center' });
   }
   return pdf;
 }

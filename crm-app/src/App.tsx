@@ -22,6 +22,7 @@ import ArchivPage from "./pages/ArchivPage";
 import FirmaPage from "./pages/FirmaPage";
 import WuenschePage from './pages/WuenschePage';
 import BesprechungenPage from './pages/BesprechungenPage';
+import MahnwesenPage from './pages/MahnwesenPage';
 import VertraegePage from './pages/VertraegePage';
 import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
@@ -148,6 +149,7 @@ const App = () => (
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
           <Route path="/wuensche" element={<ProtectedRoute><WuenschePage /></ProtectedRoute>} />
           <Route path="/besprechungen" element={<ProtectedRoute><BesprechungenPage /></ProtectedRoute>} />
+          <Route path="/mahnwesen" element={<ProtectedRoute><MahnwesenPage /></ProtectedRoute>} />
           <Route path="/vertraege" element={<ProtectedRoute><VertraegePage /></ProtectedRoute>} />
           <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
           <Route path="/wartung" element={<ProtectedRoute><WartungPage /></ProtectedRoute>} />
