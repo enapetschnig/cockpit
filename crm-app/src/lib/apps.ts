@@ -29,6 +29,7 @@ export const APPS: AppInfo[] = [
   { key: 'holzbau-demo', label: 'Holzbau-Demo' },
   { key: 'steinbrecher', label: 'Holzbau Steinbrecher & Köberl' },
   { key: '3dscanimholzbau', label: '3D-SCAN im Holzbau (Netzker)' },
+  { key: 'gaggl', label: 'Thomas Gaggl Metallbau' },
 ];
 
 export const APP_LABEL: Record<string, string> =
