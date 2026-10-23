@@ -284,11 +284,20 @@ export function buildDocumentPdf(
       : [`abzüglich bereits verrechneter Anzahlungen: ${money(dNet)} netto / ${money(dVat)} USt`];
     ty += 1;
     for (const z of abzug) { for (const l of pdf.splitTextToSize(z, RX - ML) as string[]) { pdf.text(l, ML, ty); ty += 4.6; } }
-    if (zeilen.length > 1) {
-      setF(9, 'bold');
-      pdf.text(`Anzahlungen gesamt: ${money(dNet)} netto + ${money(dVat)} USt = ${money(round2(dNet + dVat))}`, ML, ty);
-      ty += 4.6;
-    }
+    // Abzug und Restbetrag in denselben Spalten wie die USt-Aufstellung – damit die USt
+    // des zu zahlenden Betrags ausgewiesen ist (§ 11 UStG, für den Steuerberater).
+    const reihe = (label: string, n: number, v: number, fett = false) => {
+      setF(9, fett ? 'bold' : 'normal');
+      pdf.text(label, ML, ty);
+      pdf.text(money(n), ML + 148, ty, { align: 'right' });
+      pdf.text(money(v), ML + 172, ty, { align: 'right' });
+      pdf.text(money(round2(n + v)), X_SUM, ty, { align: 'right' });
+      ty += 4.8;
+    };
+    ty += 1;
+    reihe(zeilen.length > 1 ? 'abzüglich Anzahlungen gesamt' : 'abzüglich Anzahlung', -dNet, -dVat);
+    ty -= 2.6; hr(ty); ty += 4.2;
+    reihe('Restbetrag', t.net, t.vat, true);
     ty += 1.4;
   }
 
