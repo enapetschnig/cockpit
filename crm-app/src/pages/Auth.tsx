@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { sichererPfad } from '@/lib/sichererPfad';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,8 +11,7 @@ import { toast } from 'sonner';
 const Auth = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const rawNext = searchParams.get('next');
-  const next = rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
+  const next = sichererPfad(searchParams.get('next'));
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

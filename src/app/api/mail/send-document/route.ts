@@ -25,39 +25,27 @@ function cors(origin: string | null): Record<string, string> {
   };
 }
 
-/** Zeitkonstanter Vergleich – ein Angreifer soll aus der Antwortzeit nichts lernen. */
-function secretGleich(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 export async function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: cors(req.headers.get("origin")) });
 }
 
-// POST { to, subject, text, fileName?, pdfBase64? } – Auth via Supabase-Access-Token
+// POST { to, subject, text, fileName?, pdfBase64? } – nur mit der Supabase-Sitzung des Inhabers.
+// (Früher ging es auch per gemeinsamem Geheimnis ohne Login – das nutzte niemand mehr und hätte
+// jedem mit dem Geheimnis erlaubt, im Namen von ePower Mails zu verschicken.)
 export async function POST(req: Request) {
   const h = cors(req.headers.get("origin"));
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  // Server-zu-Server (z. B. das CRM schickt einen unterschriebenen Vertrag):
-  // statt einer Nutzersitzung reicht das gemeinsame Geheimnis im Header.
-  const secret = process.env.MAIL_SHARED_SECRET;
-  const viaSecret = !!secret && secretGleich(req.headers.get("x-mail-secret") || "", secret);
-  if (!token && !viaSecret) return NextResponse.json({ ok: false, error: "Nicht angemeldet" }, { status: 401, headers: h });
+  if (!token) return NextResponse.json({ ok: false, error: "Nicht angemeldet" }, { status: 401, headers: h });
 
-  if (!viaSecret) {
-    // Token gegen dasselbe Supabase-Projekt prüfen
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !anon) return NextResponse.json({ ok: false, error: "Supabase nicht konfiguriert" }, { status: 500, headers: h });
-    const sb = createClient(url, anon, { auth: { persistSession: false } });
-    const { data: { user }, error } = await sb.auth.getUser(token);
-    if (error || !user) return NextResponse.json({ ok: false, error: "Ungültige Sitzung" }, { status: 401, headers: h });
-    // Das Supabase-Projekt teilen sich mehrere Apps – über das Gmail des Inhabers versendet nur er selbst.
-    if (!istInhaber(user.id)) return NextResponse.json({ ok: false, error: "Kein Zugriff" }, { status: 403, headers: h });
-  }
+  // Token gegen dasselbe Supabase-Projekt prüfen
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return NextResponse.json({ ok: false, error: "Supabase nicht konfiguriert" }, { status: 500, headers: h });
+  const sb = createClient(url, anon, { auth: { persistSession: false } });
+  const { data: { user }, error } = await sb.auth.getUser(token);
+  if (error || !user) return NextResponse.json({ ok: false, error: "Ungültige Sitzung" }, { status: 401, headers: h });
+  // Das Supabase-Projekt teilen sich mehrere Apps – über das Gmail des Inhabers versendet nur er selbst.
+  if (!istInhaber(user.id)) return NextResponse.json({ ok: false, error: "Kein Zugriff" }, { status: 403, headers: h });
 
   const b = (await req.json().catch(() => ({}))) as {
     to?: string; subject?: string; text?: string; fileName?: string; pdfBase64?: string;
@@ -78,6 +66,8 @@ export async function POST(req: Request) {
       fileName: b.fileName,
       pdfBase64: b.pdfBase64,
     });
+    // Jeder Versand im Log – ohne Inhalt, Empfänger nur mit Domain.
+    console.info("[mail/send-document] gesendet", { an: to.replace(/^[^@]*/, "***"), anhang: !!b.pdfBase64 });
     return NextResponse.json({ ok: true, to: res.to }, { headers: h });
   } catch (e) {
     // Details nur ins Log – die rohe Gmail-Meldung (Konto, Token-Zustand …) geht den Aufrufer nichts an.

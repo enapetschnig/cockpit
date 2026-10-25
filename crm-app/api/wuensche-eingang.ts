@@ -7,7 +7,7 @@
  * Nur `gesehen_am` und `customer_id` bleiben unangetastet, das sind eigene Vermerke.
  */
 import { createClient } from '@supabase/supabase-js';
-import { appInfo, appLabel, secretGleich, sendTelegram } from './_apps.js';
+import { appInfo, appLabel, INHABER_IDS, secretGleich, sendTelegram } from './_apps.js';
 
 // Vercels Node-Runtime übergibt Node-Objekte (kein Web-Request).
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown }
@@ -115,7 +115,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     }
   } else {
     // Erster Eingang: Kunde einmalig über den app_key zuordnen.
-    const { data: kunde } = await sb.from('customers').select('id').eq('app_key', appKey).maybeSingle();
+    const { data: kunde } = await sb.from('customers').select('id').eq('app_key', appKey).in('user_id', INHABER_IDS).maybeSingle();
     const { error } = await sb.from('app_wuensche').insert({ id, ...felder, customer_id: kunde?.id ?? null });
     if (error) {
       console.error('[wuensche-eingang] Anlegen fehlgeschlagen:', error);

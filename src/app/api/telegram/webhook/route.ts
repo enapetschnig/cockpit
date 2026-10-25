@@ -415,6 +415,21 @@ async function roboterKnopf(cb: TgCallback) {
     return;
   }
 
+  if (aktion === "vor") {
+    // rob:vor:<id> – Christophs OK zu genau dem Auftrag, den ihm der Assistent auf der Karte gezeigt hat
+    const r = await roboter.vorschlagAusfuehren(ref);
+    if (!r) {
+      await tgAnswerCallback(cb.id, "Nicht mehr gültig – bitte neu anfragen");
+      return;
+    }
+    await tgAnswerCallback(cb.id, "▶️ Mach ich");
+    const kunde = (await roboter.kundenNamen()).get(r.appKey) ?? r.appKey;
+    const text = `▶️ Mach ich – ${esc(kunde)}. Du bekommst eine Zeile, wenn es live ist.`;
+    const ok = cb.message ? await tgEditMessage(cb.message.chat.id, cb.message.message_id, text) : false;
+    if (!ok) await sendTelegram(text);
+    return;
+  }
+
   if (aktion === "start") {
     const r = await roboter.anRoboterGeben(ref);
     await tgAnswerCallback(cb.id, r.neu ? "▶️ Mach ich" : "Nichts Offenes");

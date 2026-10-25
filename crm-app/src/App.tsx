@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { sichererPfad } from "@/lib/sichererPfad";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import StatisticsPage from "./pages/StatisticsPage";
@@ -39,8 +40,6 @@ function BelegSeite() {
   return <BelegEditor key={id} />;
 }
 
-/** Nur interne Pfade – kein Sprung auf fremde Seiten über ?next=. */
-const sichererPfad = (p: string | null) => (p && p.startsWith('/') && !p.startsWith('//') ? p : '/');
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();

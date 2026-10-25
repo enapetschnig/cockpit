@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { INHABER_USER_IDS } from "@/lib/inhaber";
 import { esc } from "@/lib/roboter";
 import type { TgButton } from "@/lib/telegram";
 
@@ -75,15 +76,18 @@ export async function zuordnenPerText(ref: string, text: string): Promise<Karte>
     return { text: "👍 Als privat abgelegt – taucht beim Kunden nicht auf.", buttons: [] };
   }
   const muster = `%${t.replace(/[%_\\]/g, "")}%`;
+  // Nur CRM-Daten des Inhabers – andere Konten im geteilten Projekt zählen nicht.
+  const ids = [...INHABER_USER_IDS];
   const treffer = await prisma.$queryRaw<{ art: "k" | "l"; id: string; name: string }[]>`
     (select 'k' as art, id::text as id,
        concat_ws(' · ', nullif(company_name, ''), nullif(trim(concat_ws(' ', first_name, last_name)), ''), city) as name
      from crm.customers
-     where company_name ilike ${muster} or concat_ws(' ', first_name, last_name) ilike ${muster} or concat_ws(' ', last_name, first_name) ilike ${muster}
+     where user_id::text = any(${ids}::text[])
+       and (company_name ilike ${muster} or concat_ws(' ', first_name, last_name) ilike ${muster} or concat_ws(' ', last_name, first_name) ilike ${muster})
      limit 6)
     union all
     (select 'l', id::text, concat_ws(' · ', nullif(company_name, ''), full_name, 'Lead')
-     from crm.leads where company_name ilike ${muster} or full_name ilike ${muster} limit 6)`;
+     from crm.leads where user_id::text = any(${ids}::text[]) and (company_name ilike ${muster} or full_name ilike ${muster}) limit 6)`;
   if (treffer.length === 1) return zuordnen(b.id, treffer[0].art, treffer[0].id);
   if (!treffer.length) return { text: `Zu „${esc(t)}“ finde ich im CRM niemanden. Schreib den Firmen- oder Nachnamen, wie er im CRM steht.\n${fuss(b.id)}`, buttons: [] };
   return {

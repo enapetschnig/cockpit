@@ -30,7 +30,8 @@ export type Rolle = "admin" | "customer" | "none";
 
 /** Rolle eines angemeldeten Supabase-Users (app_metadata kann nur der Service-Role-Key setzen). */
 export function rolleVon(user: { id: string; app_metadata?: unknown }): Rolle {
-  if ((user.app_metadata as { role?: unknown } | null | undefined)?.role === "customer") return "customer";
+  // Inhaber zuerst – ein versehentlich gesetztes role="customer" darf ihn nie aussperren.
   if (istInhaber(user.id)) return "admin";
+  if ((user.app_metadata as { role?: unknown } | null | undefined)?.role === "customer") return "customer";
   return "none";
 }

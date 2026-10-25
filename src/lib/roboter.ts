@@ -10,8 +10,10 @@
  */
 import { Prisma } from "@prisma/client";
 import OpenAI from "openai";
+import { randomBytes } from "crypto";
 import { prisma } from "./db";
 import { getConfig } from "./config";
+import { INHABER_USER_IDS } from "./inhaber";
 
 export interface Auftrag {
   id: string;
@@ -116,7 +118,7 @@ const SPALTEN = Prisma.sql`id::text as id, app_key, wunsch_ids, status, vorschla
 export async function kundenNamen(): Promise<Map<string, string>> {
   const rows = await prisma.$queryRaw<{ app_key: string; name: string | null }[]>`
     select app_key, coalesce(nullif(trim(company_name), ''), nullif(trim(coalesce(first_name, '') || ' ' || coalesce(last_name, '')), '')) as name
-    from crm.customers where app_key is not null
+    from crm.customers where app_key is not null and user_id::text = any(${[...INHABER_USER_IDS]}::text[])
     union all
     select distinct app_key, null from crm.app_wuensche where app_key is not null`;
   const m = new Map<string, string>();
@@ -405,6 +407,43 @@ export function yoloBestaetigung(appKey: string, name: string): Karte {
     text: `⚡ YOLO für <b>${esc(name)}</b> einschalten?\nWünsche, die ab jetzt hereinkommen, setzt der Roboter dann <b>ohne deine Freigabe</b> um und schaltet sie live.`,
     buttons: [[{ text: "⚡ Ja, YOLO an", data: `rob:yolo:${appKey}:1` }, { text: "Abbrechen", data: "rob:x:0" }]],
   };
+}
+
+const VORSCHLAG = "ROBVOR:";
+
+/**
+ * Rückfrage, bevor der Assistent dem Roboter Arbeit gibt – der Auftrag entsteht erst per Knopf.
+ * Kunde und Anmerkung kann der Assistent aus einer Mail oder einem Kundentext haben; deshalb sieht
+ * Christoph genau das auf der Karte, bevor irgendetwas freigegeben ist.
+ */
+export async function vorschlagBestaetigung(appKey: string, name: string, anmerkung: string): Promise<Karte> {
+  const zusatz = anmerkung.trim().slice(0, 2000);
+  if (!zusatz) {
+    return {
+      text: `▶️ Offene Wünsche von <b>${esc(name)}</b> jetzt an den Roboter geben?`,
+      buttons: [[{ text: "▶️ Ja, umsetzen", data: `rob:start:${appKey}` }, { text: "Abbrechen", data: "rob:x:0" }]],
+    };
+  }
+  await prisma.setting.deleteMany({ where: { key: { startsWith: VORSCHLAG }, updatedAt: { lt: new Date(Date.now() - 86400_000) } } });
+  const id = randomBytes(6).toString("hex");
+  await prisma.setting.create({ data: { key: VORSCHLAG + id, value: JSON.stringify({ appKey, zusatz }) } });
+  return {
+    text: `▶️ Soll der Roboter bei <b>${esc(name)}</b> das umsetzen?\n„${esc(kuerzen(zusatz, 700))}“\n<i>Er bekommt den Auftrag erst nach deinem Knopfdruck.</i>`,
+    buttons: [[{ text: "▶️ Ja, umsetzen", data: `rob:vor:${id}` }, { text: "Abbrechen", data: "rob:x:0" }]],
+  };
+}
+
+/** Knopf „Ja, umsetzen“ einer vorschlagBestaetigung – gilt genau einmal und höchstens einen Tag. */
+export async function vorschlagAusfuehren(id: string): Promise<{ appKey: string; neu: number } | null> {
+  if (!/^[0-9a-f]{12}$/.test(id)) return null;
+  const key = VORSCHLAG + id;
+  const row = await prisma.setting.findUnique({ where: { key } });
+  if (!row) return null;
+  const { count } = await prisma.setting.deleteMany({ where: { key } });
+  if (!count || row.updatedAt < new Date(Date.now() - 86400_000)) return null;
+  const { appKey, zusatz } = JSON.parse(row.value) as { appKey: string; zusatz: string };
+  const r = await anRoboterGeben(appKey, zusatz);
+  return { appKey, neu: r.neu };
 }
 
 /** Frage an den Roboter (Claude am PC im Projektordner – kennt den Code, ändert nichts). */

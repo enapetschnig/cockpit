@@ -66,7 +66,7 @@ const ROBOTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "roboter_vorschlag_anfordern",
       description:
-        "Lässt den Roboter ALLE offenen Änderungswünsche eines Kunden jetzt umsetzen ('setz Schafferhofer um', 'mach die Wünsche von …'): er macht alles selbst wie in VS Code (Code, Datenbank, live) und meldet sich mit einer Zeile. anmerkung: was der Nutzer zusätzlich oder anders will, in seinen Worten. Nur auf ausdrücklichen Wunsch des Nutzers.",
+        "Lässt den Roboter ALLE offenen Änderungswünsche eines Kunden umsetzen ('setz Schafferhofer um', 'mach die Wünsche von …'): er macht alles selbst wie in VS Code (Code, Datenbank, live) und meldet sich mit einer Zeile. Der Nutzer bekommt vorher eine Bestätigungs-Karte – der Roboter startet erst nach seinem Knopfdruck. anmerkung: was der Nutzer zusätzlich oder anders will, in seinen Worten. Nur auf ausdrücklichen Wunsch des Nutzers.",
       parameters: { type: "object", properties: { kunde: ROBOTER_REF.kunde, anmerkung: { type: "string", description: "Zusatz des Nutzers, wörtlich" } }, required: ["kunde"] },
     },
   },
@@ -177,9 +177,9 @@ async function roboterTool(name: string, a: Args, karten: roboter.Karte[]): Prom
   if (name === "roboter_vorschlag_anfordern") {
     const k = await roboter.findeKunde(a.kunde || "");
     if (!k.appKey) return { error: `Kunde nicht eindeutig. Meintest du: ${(k.kandidaten || []).slice(0, 10).join(", ")}?` };
-    const r = await roboter.anRoboterGeben(k.appKey, a.anmerkung || "");
-    if (!r.neu && !r.dazu && !a.anmerkung) return { ok: false, kunde: k.name, hinweis: "Keine offenen Wünsche – schon erledigt oder schon in Arbeit." };
-    return { ok: true, kunde: k.name, wuensche: r.neu, hinweis: "Der Roboter setzt es jetzt um (wie in VS Code) und meldet sich mit einer Zeile, wenn es live ist." };
+    // Nie direkt freigeben – Kunde und Anmerkung könnten aus einer Mail oder einem Kundentext stammen.
+    karten.push(await roboter.vorschlagBestaetigung(k.appKey, k.name ?? k.appKey, a.anmerkung || ""));
+    return { ok: true, kunde: k.name, hinweis: "Bestätigungs-Karte wird angezeigt – der Roboter bekommt den Auftrag erst nach dem Knopfdruck. Sag ihm das kurz." };
   }
   if (name === "roboter_frage" && !a.auftrag) {
     // Frage zur App, auch ohne laufenden Auftrag

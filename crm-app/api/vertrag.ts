@@ -13,7 +13,7 @@
  * Telegram die Erinnerung, es im CRM mit „Dem Kunden senden" selbst zu schicken.
  */
 import { createClient } from '@supabase/supabase-js';
-import { sendTelegram } from './_apps.js';
+import { INHABER_IDS, sendTelegram } from './_apps.js';
 import type { Signer } from '../src/lib/vertrag';
 
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown; query?: Record<string, string | string[] | undefined> }
@@ -41,7 +41,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const q = req.query?.token;
     const token = (Array.isArray(q) ? q[0] : q) ?? '';
     if (!TOKEN_RE.test(token)) return res.status(400).json({ error: 'Ungültiger Link' });
-    const { data: v } = await db.from('contracts').select(OEFFENTLICH).eq('token', token).maybeSingle();
+    // Nur Verträge des Inhabers – ein anderes Konto im geteilten Projekt darf hier nie etwas ausliefern.
+    const { data: v } = await db.from('contracts').select(OEFFENTLICH).eq('token', token).in('user_id', INHABER_IDS).maybeSingle();
     if (!v || !['signed_by_us', 'signed'].includes(v.status)) return res.status(404).json({ error: 'Dieser Link ist nicht (mehr) gültig.' });
     // Abgelaufen gilt in jedem Stand – auch ein fertiger Vertrag ist über den alten Link nicht mehr abrufbar.
     if (v.token_expires_at && new Date(v.token_expires_at) < new Date()) {
@@ -67,7 +68,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig) || sig.length < 150) return res.status(400).json({ error: 'Unterschrift fehlt' });
     if (sig.length > 400_000) return res.status(413).json({ error: 'Unterschrift zu groß' });
 
-    const { data: v } = await db.from('contracts').select('*').eq('token', token).maybeSingle();
+    const { data: v } = await db.from('contracts').select('*').eq('token', token).in('user_id', INHABER_IDS).maybeSingle();
     if (!v) return res.status(404).json({ error: 'Dieser Link ist nicht (mehr) gültig.' });
     if (v.token_expires_at && new Date(v.token_expires_at) < new Date()) return res.status(410).json({ error: 'Dieser Link ist abgelaufen.' });
     if (v.status === 'signed') return res.status(409).json({ error: 'Dieser Vertrag ist bereits von allen unterschrieben.' });
