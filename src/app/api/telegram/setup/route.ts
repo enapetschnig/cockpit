@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getConfig, clearConfigCache } from "@/lib/config";
+import { getConfig, setConfig } from "@/lib/config";
 import { tgSetWebhook } from "@/lib/telegram";
 import crypto from "crypto";
 
@@ -23,12 +22,7 @@ export async function POST(req: Request) {
   let secret = await getConfig("TELEGRAM_WEBHOOK_SECRET");
   if (!secret) {
     secret = crypto.randomBytes(16).toString("hex");
-    await prisma.setting.upsert({
-      where: { key: "TELEGRAM_WEBHOOK_SECRET" },
-      create: { key: "TELEGRAM_WEBHOOK_SECRET", value: secret },
-      update: { value: secret },
-    });
-    clearConfigCache();
+    await setConfig("TELEGRAM_WEBHOOK_SECRET", secret); // über die Config → landet verschlüsselt in der DB
   }
 
   const res = await tgSetWebhook(url, secret);

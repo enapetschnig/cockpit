@@ -5,11 +5,11 @@
  * App-eigenen Edge Function `wunsch-datei` eine signierte URL (1 h gültig) und
  * leiten dorthin weiter – abgesichert über dasselbe gemeinsame Geheimnis.
  *
- * Zugriff nur mit gültigem Supabase-Login. Das Token kommt als Query-Parameter,
- * weil <img> und <audio> keine eigenen Header mitschicken können.
+ * Zugriff nur mit gültigem Supabase-Login des Inhabers. Das Token kommt als
+ * Query-Parameter, weil <img> und <audio> keine eigenen Header mitschicken können.
  */
 import { createClient } from '@supabase/supabase-js';
-import { appInfo } from './_apps.js';
+import { appInfo, istInhaber } from './_apps.js';
 
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; query: Record<string, string | string[] | undefined> }
 interface Res { status(c: number): Res; json(b: unknown): void; setHeader(n: string, v: string): void; end(): void }
@@ -27,6 +27,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   if (!token) return res.status(401).json({ error: 'nicht angemeldet' });
   const { data: userData } = await createClient(url, anon, { auth: { persistSession: false } }).auth.getUser(token);
   if (!userData?.user) return res.status(401).json({ error: 'nicht angemeldet' });
+  if (!istInhaber(userData.user.id)) return res.status(403).json({ error: 'kein Zugriff' });
 
   const id = eins(req.query.id);
   const art = eins(req.query.art) === 'audio' ? 'audio' : 'bild';
@@ -46,8 +47,12 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   }
   if (!pfad) return res.status(404).json({ error: 'keine Datei hinterlegt' });
 
+  // Nach außen nur allgemeine Meldungen – die Einzelheiten stehen im Vercel-Log.
   const app = appInfo(w.app_key);
-  if (!app) return res.status(400).json({ error: `App "${w.app_key}" ist nicht hinterlegt` });
+  if (!app) {
+    console.error('[wuensche-datei] App nicht in _apps.ts hinterlegt:', w.app_key);
+    return res.status(404).json({ error: 'Datei nicht verfügbar' });
+  }
 
   try {
     const antwort = await fetch(`https://${app.projectRef}.supabase.co/functions/v1/wunsch-datei`, {
@@ -55,13 +60,20 @@ export default async function handler(req: Req, res: Res): Promise<void> {
       headers: { 'Content-Type': 'application/json', 'x-cockpit-secret': secret },
       body: JSON.stringify({ pfad }),
     });
-    if (!antwort.ok) return res.status(502).json({ error: `App antwortet ${antwort.status}` });
+    if (!antwort.ok) {
+      console.error(`[wuensche-datei] ${app.key}: wunsch-datei antwortet ${antwort.status}`, (await antwort.text().catch(() => '')).slice(0, 200));
+      return res.status(502).json({ error: 'Datei konnte nicht geladen werden' });
+    }
     const { url: signiert } = (await antwort.json()) as { url?: string };
-    if (!signiert) return res.status(502).json({ error: 'App lieferte keine URL' });
+    if (!signiert) {
+      console.error(`[wuensche-datei] ${app.key}: wunsch-datei lieferte keine URL`);
+      return res.status(502).json({ error: 'Datei konnte nicht geladen werden' });
+    }
     res.setHeader('Location', signiert);
     res.setHeader('Cache-Control', 'private, max-age=0, no-store');
     res.status(307).end();
   } catch (e) {
-    return res.status(502).json({ error: e instanceof Error ? e.message : 'App nicht erreichbar' });
+    console.error(`[wuensche-datei] ${app.key}: App nicht erreichbar`, e);
+    return res.status(502).json({ error: 'Datei konnte nicht geladen werden' });
   }
 }

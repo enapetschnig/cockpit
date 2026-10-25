@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { sendTelegram } from "@/lib/telegram";
 import { besprechungMeldung } from "@/lib/besprechungen";
@@ -7,6 +8,25 @@ import { esc, karteFuer, kundenNamen, ladeAuftrag, meldungFuerAuftrag, ohneMarkd
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Einmal-Marken für Meldungen ohne eigene „gemeldet“-Spalte (Wunsch, Plaud) – in der Setting-Tabelle,
+// der Primärschlüssel macht das Beanspruchen atomar. Nach 2 Tagen aufgeräumt (Wünsche zählen nur 30 Min).
+const MARKE = "GEMELDET:";
+
+/** true = dieser Aufruf hat die Marke gesetzt und darf melden; false = schon gemeldet. */
+async function beanspruchen(key: string): Promise<boolean> {
+  await prisma.setting.deleteMany({ where: { key: { startsWith: MARKE }, updatedAt: { lt: new Date(Date.now() - 2 * 86400_000) } } });
+  try {
+    await prisma.setting.create({ data: { key, value: new Date().toISOString() } });
+    return true;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return false;
+    throw e;
+  }
+}
+
+/** Nicht angekommen → Marke wieder freigeben, damit ein erneuter Aufruf meldet. */
+const freigeben = (key: string) => prisma.setting.deleteMany({ where: { key } }).catch(() => {});
 
 /**
  * Telegram-Meldungen des Änderungswunsch-Roboters (läuft am PC, öffentlich erreichbar).
@@ -31,17 +51,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   // Plaud-Anmeldung am PC abgelaufen (höchstens einmal am Tag vom PC gemeldet) – fester Text.
+  // Auch hier höchstens einmal am Tag (Wiener Datum) – der Endpunkt ist öffentlich.
   if (b.plaud === "anmeldung") {
-    await sendTelegram("⚠️ Plaud: die Anmeldung am PC ist abgelaufen – Besprechungen kommen gerade nicht ins CRM. Sag mir kurz Bescheid, dann melde ich dich neu an.");
+    const key = MARKE + "plaud:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
+    if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
+    const r = await sendTelegram("⚠️ Plaud: die Anmeldung am PC ist abgelaufen – Besprechungen kommen gerade nicht ins CRM. Sag mir kurz Bescheid, dann melde ich dich neu an.");
+    if (!r.ok) await freigeben(key);
     return NextResponse.json({ ok: true });
   }
 
   // Neuer Wunsch aus einer Kunden-App (CRM-Eingang): „Soll ich das umsetzen?“ – Text baut das Cockpit aus der Datenbank.
+  // Jeder Wunsch genau einmal – sonst könnte jeder, der eine Wunsch-ID kennt, 30 Minuten lang Telegrams auslösen.
   if (typeof b.wunsch === "string" && b.wunsch.length <= 80) {
     const k = await wunschMeldung(b.wunsch);
     if (!k) return NextResponse.json({ ok: true, nichts: true });
+    // Erst prüfen, ob es den frischen Wunsch gibt, dann beanspruchen – fremde IDs legen keine Marken an.
+    const key = MARKE + "wunsch:" + b.wunsch;
+    if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
     const r = await sendTelegram(k.text, k.buttons.length ? { buttons: k.buttons } : undefined);
-    return r.ok ? NextResponse.json({ ok: true }) : NextResponse.json({ ok: false }, { status: 502 });
+    if (!r.ok) {
+      await freigeben(key);
+      return NextResponse.json({ ok: false }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
   if (b.frage && UUID.test(b.frage)) {

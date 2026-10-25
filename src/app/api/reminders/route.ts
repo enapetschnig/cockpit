@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendTelegram } from "@/lib/telegram";
@@ -6,12 +7,21 @@ import { listEvents } from "@/lib/calendar";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// Wird alle paar Minuten vom Cron aufgerufen; erinnert ~20 Min vor einem Termin (einmal pro Termin).
-export async function GET(req: Request) {
-  const url = new URL(req.url);
+/**
+ * Cron-Schlüssel NUR per Header "Authorization: Bearer <CRON_SECRET>" (kein ?key= – der landet in
+ * Logs), zeitkonstant verglichen. Ohne CRON_SECRET bleibt die Route zu (die Middleware lässt sie durch).
+ */
+function cronErlaubt(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization") === `Bearer ${secret}` || url.searchParams.get("key") === secret;
-  if (secret && !auth) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!secret) return false;
+  const h = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(h(req.headers.get("authorization") || ""), h(`Bearer ${secret}`));
+}
+
+// Wird alle 5 Min von Supabase pg_cron (Job „cockpit-reminders“) aufgerufen; erinnert ~20 Min vor
+// einem Termin (einmal pro Termin).
+export async function GET(req: Request) {
+  if (!cronErlaubt(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   return NextResponse.json(await runReminders());
 }
 

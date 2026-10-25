@@ -1,13 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("hallo@epowergmbh.at");
+  // Kein vorbelegtes Konto: hallo@epowergmbh.at ist ein eigenes Supabase-Konto ohne Cockpit-Zugriff.
+  const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Von der Middleware hierher geschickt: angemeldet, aber dieses Konto hat keinen Zugriff.
+  // Nur in diesem Browser abmelden (scope "local") – sonst flöge man auch aus den anderen Apps
+  // desselben Supabase-Projekts (z. B. dem CRM). Ohne Abmelden käme man von hier nie weg.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("kein_zugriff")) return;
+    setErr("Kein Zugriff – dieses Konto ist für das Cockpit nicht freigeschaltet.");
+    window.history.replaceState(null, "", "/login");
+    supabaseBrowser().auth.signOut({ scope: "local" }).catch(() => {});
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,8 +46,8 @@ export default function LoginPage() {
       <form onSubmit={submit} style={{ width: "100%", maxWidth: 360, background: "#fff", border: "1px solid #ece8e0", borderRadius: 16, padding: 24 }}>
         <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 2 }}>ePower Cockpit</div>
         <div style={{ color: "#6b6358", fontSize: 14, marginBottom: 8 }}>Bitte anmelden</div>
-        <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" style={inp} />
-        <input type="password" autoComplete="current-password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Passwort" style={inp} />
+        <input type="email" autoComplete="username" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" style={inp} />
+        <input type="password" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Passwort" style={inp} />
         {err && <div style={{ color: "#c0392b", fontSize: 13, marginTop: 10 }}>{err}</div>}
         <button type="submit" disabled={busy || !pw} style={{ width: "100%", marginTop: 14, padding: "11px 16px", borderRadius: 10, border: "none", background: "#2f6df0", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", opacity: busy || !pw ? 0.6 : 1 }}>
           {busy ? "Anmelden …" : "Anmelden"}

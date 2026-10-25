@@ -3,17 +3,19 @@
  * (inkl. Rolle aus app_metadata) und prüft den Mandanten-Zugriff auf ein Werbekonto.
  *
  * Rollen: "admin" (= ePower-Inhaber, sieht alles) | "customer" (sieht nur eigene Konten).
- * Fehlende Rolle wird als admin behandelt (Bestandskonto des Inhabers).
+ * Admin ist NUR, wer in der Inhaber-Liste steht (lib/inhaber.ts) – jedes andere Konto im
+ * geteilten Supabase-Projekt gilt hier als nicht angemeldet.
  */
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { AdAccount, Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { rolleVon, type Rolle } from "./inhaber";
 
 export interface SessionUser {
   userId: string;
   email: string | null;
-  role: "admin" | "customer";
+  role: Exclude<Rolle, "none">;
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -32,7 +34,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  const role = (user.app_metadata as { role?: string } | undefined)?.role === "customer" ? "customer" : "admin";
+  const role = rolleVon(user);
+  // Weder Inhaber noch Kunde (z. B. Konto einer anderen App) → wie nicht angemeldet: kein Zugriff.
+  if (role === "none") return null;
   return { userId: user.id, email: user.email ?? null, role };
 }
 

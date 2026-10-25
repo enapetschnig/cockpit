@@ -52,6 +52,15 @@ export function secretGleich(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/**
+ * Wer über die Endpunkte mit Dienst-Schlüssel (service role) an Kundendaten darf:
+ * nur der Inhaber. Ein gültiger Supabase-Login allein reicht nicht – sonst sähe
+ * jedes Konto im Projekt die Dateien aller Kunden-Apps. Mehrere IDs mit Komma trennen.
+ */
+const INHABER = (process.env.INHABER_USER_IDS || '83edc9c7-26a7-4f56-8806-cdfe253b9751')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+export const istInhaber = (userId: string | undefined): boolean => !!userId && INHABER.includes(userId.toLowerCase());
+
 /** Telegram-Push. Ohne Konfiguration wird nur geloggt – der Eingang darf daran nie scheitern. */
 export async function sendTelegram(text: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
@@ -28,6 +29,12 @@ interface TgCallback {
 
 function esc(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Zeitkonstanter Vergleich – auch bei unterschiedlicher Länge (beide Seiten erst gehasht). */
+function gleich(a: string, b: string): boolean {
+  const h = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(h(a), h(b));
 }
 
 // Markdown entfernen (Telegram zeigt **/# sonst wörtlich an)
@@ -108,7 +115,7 @@ export async function POST(req: Request) {
   const chatId = await getConfig("TELEGRAM_CHAT_ID");
   // Nicht ladbar (z. B. Datenbank kurz weg) → nichts durchlassen; Telegram stellt später erneut zu.
   if (!secret || !chatId) return NextResponse.json({ ok: false }, { status: 503 });
-  if (req.headers.get("x-telegram-bot-api-secret-token") !== secret) {
+  if (!gleich(req.headers.get("x-telegram-bot-api-secret-token") || "", secret)) {
     return NextResponse.json({ ok: true });
   }
 

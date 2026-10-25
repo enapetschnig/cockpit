@@ -13,6 +13,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { encryptToken } from "../src/lib/adsCrypto";
 import { clearConfigCache } from "../src/lib/config";
+import { verschluesseln } from "../src/lib/geheimnis";
 import { testConnection, syncCampaigns } from "../src/lib/meta";
 
 const prisma = new PrismaClient();
@@ -42,7 +43,7 @@ async function main() {
   // 1) Token-Schlüssel sicherstellen
   let key = await prisma.setting.findUnique({ where: { key: "ADS_TOKEN_KEY" } });
   if (!key?.value) {
-    const generated = randomBytes(32).toString("hex");
+    const generated = verschluesseln(randomBytes(32).toString("hex")); // geheimer Key → verschlüsselt (siehe config.ts)
     key = await prisma.setting.upsert({
       where: { key: "ADS_TOKEN_KEY" },
       create: { key: "ADS_TOKEN_KEY", value: generated },

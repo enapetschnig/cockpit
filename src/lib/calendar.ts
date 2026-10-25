@@ -5,6 +5,7 @@
 import { google } from "googleapis";
 import { prisma } from "./db";
 import { getConfig } from "./config";
+import { refreshTokenOf } from "./gmail";
 
 export type Account = "firma" | "privat";
 const TZ = "Europe/Vienna";
@@ -15,7 +16,7 @@ async function calendarClient(account: Account) {
   const [clientId, clientSecret] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET")]);
   if (!clientId || !clientSecret) throw new Error("Google-Zugangsdaten fehlen.");
   const o = new google.auth.OAuth2(clientId, clientSecret);
-  o.setCredentials({ refresh_token: acc.refreshToken });
+  o.setCredentials({ refresh_token: refreshTokenOf(acc) }); // DB-Wert ist verschlüsselt
   return google.calendar({ version: "v3", auth: o });
 }
 

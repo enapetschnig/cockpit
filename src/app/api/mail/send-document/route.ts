@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendMailWithPdf } from "@/lib/gmail";
+import { istInhaber } from "@/lib/inhaber";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -54,6 +55,8 @@ export async function POST(req: Request) {
     const sb = createClient(url, anon, { auth: { persistSession: false } });
     const { data: { user }, error } = await sb.auth.getUser(token);
     if (error || !user) return NextResponse.json({ ok: false, error: "Ungültige Sitzung" }, { status: 401, headers: h });
+    // Das Supabase-Projekt teilen sich mehrere Apps – über das Gmail des Inhabers versendet nur er selbst.
+    if (!istInhaber(user.id)) return NextResponse.json({ ok: false, error: "Kein Zugriff" }, { status: 403, headers: h });
   }
 
   const b = (await req.json().catch(() => ({}))) as {
@@ -77,8 +80,10 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true, to: res.to }, { headers: h });
   } catch (e) {
+    // Details nur ins Log – die rohe Gmail-Meldung (Konto, Token-Zustand …) geht den Aufrufer nichts an.
+    console.error("[mail/send-document]", e);
     return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
+      { ok: false, error: "Mail konnte nicht gesendet werden (Details im Cockpit-Log)." },
       { status: 200, headers: h },
     );
   }

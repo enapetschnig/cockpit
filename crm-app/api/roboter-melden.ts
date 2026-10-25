@@ -19,6 +19,19 @@ const kurz = (t: string | null, n: number) => {
   const s = (t || '').replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 };
+/**
+ * Der Vorschau-Link kommt aus der Datenbank – in Christophs Telegram nur, wenn er
+ * wirklich auf eine Vercel-Vorschau zeigt (https, *.vercel.app, ohne Zugangsdaten).
+ */
+const vorschauLink = (v: string | null): string | null => {
+  if (!v) return null;
+  try {
+    const u = new URL(v);
+    if (u.protocol === 'https:' && !u.username && !u.password && u.hostname.endsWith('.vercel.app')) return u.href;
+  } catch { /* unten verworfen */ }
+  console.warn('[roboter-melden] Vorschau-Link verworfen:', v.slice(0, 200));
+  return null;
+};
 
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method !== 'POST') return res.status(405).json({ error: 'nur POST' });
@@ -44,9 +57,10 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   const wer = appLabel(a.app_key);
   const n = (a.wunsch_ids || []).length;
   const link = LINK + a.id;
+  const vorschau = a.status === 'vorschau' ? vorschauLink(a.vorschau_url) : null;
   const text: Record<string, string> = {
     vorschlag: `🤖 ${wer}: Vorschlag für ${n === 1 ? '1 Wunsch' : `${n} Wünsche`} ist fertig – bitte ansehen:\n${link}`,
-    vorschau: `👀 ${wer}: Umsetzung fertig – bitte ansehen.${a.vorschau_url ? `\nVorschau: ${a.vorschau_url}` : ''}\nLive schalten: ${link}`,
+    vorschau: `👀 ${wer}: Umsetzung fertig – bitte ansehen.${vorschau ? `\nVorschau: ${vorschau}` : ''}\nLive schalten: ${link}`,
     erledigt: `✅ ${wer}: live. Der Kunde sieht „umgesetzt“ mit deiner Antwort.${a.protokoll ? `\n${kurz(a.protokoll, 300)}` : ''}`,
     wartet: `⏸ ${wer}: Der Roboter wartet auf dich – ${kurz(a.fehler, 140)}\n${link}`,
     fehler: `⚠️ ${wer}: Der Roboter kam nicht weiter – ${kurz(a.fehler, 160)}\n${link}`,

@@ -7,7 +7,7 @@
  * Nur `gesehen_am` und `customer_id` bleiben unangetastet, das sind eigene Vermerke.
  */
 import { createClient } from '@supabase/supabase-js';
-import { appLabel, secretGleich, sendTelegram } from './_apps.js';
+import { appInfo, appLabel, secretGleich, sendTelegram } from './_apps.js';
 
 // Vercels Node-Runtime übergibt Node-Objekte (kein Web-Request).
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown }
@@ -50,6 +50,12 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   }
   const appKey = kopf(req, 'x-app-key').trim();
   if (!appKey) return res.status(400).json({ error: 'x-app-key fehlt' });
+  // Nur angebundene Apps (Liste in _apps.ts) – keine Meldungen unter erfundenen Schlüsseln.
+  // Neue App: ERST dort eintragen, dann den Trigger scharf schalten.
+  if (!appInfo(appKey)) {
+    console.error('[wuensche-eingang] unbekannte App:', appKey.slice(0, 80));
+    return res.status(400).json({ error: 'unbekannte App' });
+  }
 
   // Vercel parst JSON-Bodies selbst; als Absicherung auch Strings annehmen.
   let b: Payload = {};
@@ -83,9 +89,14 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   };
 
   const { data: vorhanden } = await sb.from('app_wuensche')
-    .select('id, status, antwort').eq('id', id).maybeSingle();
+    .select('id, app_key, status, antwort').eq('id', id).maybeSingle();
 
   if (vorhanden) {
+    // Eine Meldung gehört genau einer App – keine darf die einer anderen überschreiben.
+    if (vorhanden.app_key !== appKey) {
+      console.error(`[wuensche-eingang] ${appKey} wollte Meldung ${id.slice(0, 80)} von ${vorhanden.app_key} überschreiben`);
+      return res.status(409).json({ error: 'Meldung konnte nicht gespeichert werden' });
+    }
     // Update – customer_id bleibt unangetastet.
     //
     // Ausnahme bei `gesehen_am` und `erledigt_am`: Wird die Meldung in der App
@@ -97,13 +108,19 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const bearbeitet = felder.status !== vorhanden.status
       || (felder.antwort ?? '') !== (vorhanden.antwort ?? '');
     const { error } = await sb.from('app_wuensche')
-      .update(bearbeitet ? { ...felder, gesehen_am: null, erledigt_am: null } : felder).eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
+      .update(bearbeitet ? { ...felder, gesehen_am: null, erledigt_am: null } : felder).eq('id', id).eq('app_key', appKey);
+    if (error) {
+      console.error('[wuensche-eingang] Update fehlgeschlagen:', error);
+      return res.status(500).json({ error: 'Meldung konnte nicht gespeichert werden' });
+    }
   } else {
     // Erster Eingang: Kunde einmalig über den app_key zuordnen.
     const { data: kunde } = await sb.from('customers').select('id').eq('app_key', appKey).maybeSingle();
     const { error } = await sb.from('app_wuensche').insert({ id, ...felder, customer_id: kunde?.id ?? null });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      console.error('[wuensche-eingang] Anlegen fehlgeschlagen:', error);
+      return res.status(500).json({ error: 'Meldung konnte nicht gespeichert werden' });
+    }
 
     // Push nur beim erstmaligen Eingang mit Status "neu" – Updates pingen nicht.
     // `x-kein-ping: 1` unterdrückt ihn zusätzlich: beim Nachtragen der

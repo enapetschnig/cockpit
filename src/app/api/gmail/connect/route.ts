@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUrl, isGmailConfigured, type Account } from "@/lib/gmail";
+import { getAuthUrl, isGmailConfigured, OAUTH_NONCE_COOKIE, OAUTH_NONCE_COOKIE_OPTIONS, type Account } from "@/lib/gmail";
+import { randomBytes } from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -17,5 +18,9 @@ export async function GET(req: NextRequest) {
   }
   // Redirect-URI aus der aktuellen Adresse ableiten (localhost ODER Vercel-URL) – kein Env nötig.
   const redirectUri = new URL("/api/gmail/callback", req.nextUrl.origin).toString();
-  return NextResponse.redirect(await getAuthUrl(account as Account, redirectUri));
+  // Nonce gegen Login-CSRF: steht im state UND im Cookie – ein fremder Google-Code passt so nie dazu.
+  const nonce = randomBytes(16).toString("hex");
+  const res = NextResponse.redirect(await getAuthUrl(account as Account, redirectUri, nonce));
+  res.cookies.set(OAUTH_NONCE_COOKIE, nonce, OAUTH_NONCE_COOKIE_OPTIONS);
+  return res;
 }

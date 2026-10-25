@@ -43,7 +43,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     if (!TOKEN_RE.test(token)) return res.status(400).json({ error: 'Ungültiger Link' });
     const { data: v } = await db.from('contracts').select(OEFFENTLICH).eq('token', token).maybeSingle();
     if (!v || !['signed_by_us', 'signed'].includes(v.status)) return res.status(404).json({ error: 'Dieser Link ist nicht (mehr) gültig.' });
-    if (v.status === 'signed_by_us' && v.token_expires_at && new Date(v.token_expires_at) < new Date()) {
+    // Abgelaufen gilt in jedem Stand – auch ein fertiger Vertrag ist über den alten Link nicht mehr abrufbar.
+    if (v.token_expires_at && new Date(v.token_expires_at) < new Date()) {
       return res.status(410).json({ error: 'Dieser Link ist abgelaufen. Bitte melden Sie sich bei uns, wir senden Ihnen einen neuen.' });
     }
     return res.status(200).json({ vertrag: { ...v, signers: publik((v.signers as Signer[]) || []) } });
@@ -68,9 +69,9 @@ export default async function handler(req: Req, res: Res): Promise<void> {
 
     const { data: v } = await db.from('contracts').select('*').eq('token', token).maybeSingle();
     if (!v) return res.status(404).json({ error: 'Dieser Link ist nicht (mehr) gültig.' });
+    if (v.token_expires_at && new Date(v.token_expires_at) < new Date()) return res.status(410).json({ error: 'Dieser Link ist abgelaufen.' });
     if (v.status === 'signed') return res.status(409).json({ error: 'Dieser Vertrag ist bereits von allen unterschrieben.' });
     if (v.status !== 'signed_by_us') return res.status(404).json({ error: 'Dieser Link ist nicht (mehr) gültig.' });
-    if (v.token_expires_at && new Date(v.token_expires_at) < new Date()) return res.status(410).json({ error: 'Dieser Link ist abgelaufen.' });
 
     const signers: Signer[] = Array.isArray(v.signers) && v.signers.length ? v.signers : [{ name: '', signature: null, signed_at: null }];
     if (slot < 0 || slot >= signers.length) return res.status(400).json({ error: 'Unbekannter Unterzeichner' });

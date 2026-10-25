@@ -35,10 +35,26 @@ function isPdf(mime: string, filename: string): boolean {
   return /pdf/i.test(mime) || /\.pdf$/i.test(filename);
 }
 
-/** Findet einen direkten Stripe-Rechnungs-PDF-Link (…/pdf) im Mailtext. */
+/**
+ * Findet einen direkten Stripe-Rechnungs-PDF-Link (…/pdf) im Mailtext. Der Link wird serverseitig
+ * geladen – darum per new URL() geprüft: nur https und ein echter Stripe-Host (nicht etwa
+ * "https://evil.tld/?x=pay.stripe.com/invoice/…/pdf").
+ */
 export function extractStripePdfLink(body: string): string | null {
-  const m = body.match(/https:\/\/[^\s"'<>()]*(?:pay\.stripe\.com\/invoice|stripe\.com\/[^\s"'<>()]*receipts)[^\s"'<>()]*\/pdf[^\s"'<>()]*/i);
-  return m ? m[0] : null;
+  for (const roh of body.match(/https:\/\/[^\s"'<>()]+/gi) ?? []) {
+    let u: URL;
+    try {
+      u = new URL(roh);
+    } catch {
+      continue;
+    }
+    const host = u.hostname.toLowerCase();
+    if (u.protocol !== "https:" || u.port || u.username || u.password) continue;
+    if (host !== "stripe.com" && !host.endsWith(".stripe.com")) continue;
+    const rechnung = (host === "pay.stripe.com" && /^\/invoice/i.test(u.pathname)) || /receipts/i.test(u.pathname);
+    if (rechnung && /\/pdf/i.test(u.pathname)) return u.href;
+  }
+  return null;
 }
 
 // ── Vendor-Auflösung aus dem Absender ────────────────────────

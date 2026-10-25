@@ -119,6 +119,21 @@ function strOrNull(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+/**
+ * Werte aus fremden Mails (Händler, Rechnungsnummer, Dateiname) landen im Task-Text eines Agenten,
+ * der die BMD-Zugangsdaten hat – also nur harmlose Zeichen (Buchstaben inkl. Umlaute, Ziffern,
+ * Leerzeichen . , - _ / #) und kurz, damit darüber keine Anweisungen eingeschleust werden.
+ */
+function harmlos(v: string | null | undefined, max = 80): string {
+  return (v ?? "")
+    .normalize("NFC")
+    .replace(/[^\p{L}0-9 .,\-_\/#]+/gu, " ")
+    .replace(/ {2,}/g, " ")
+    .trim()
+    .slice(0, max)
+    .trim();
+}
+
 const BMD_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -149,13 +164,16 @@ export async function startBmdUpload(input: {
   }
   const customer = (await getConfig("BMD_PORTAL_CUSTOMER")) || user; // Kundennummer; default = Benutzer
   const host = hostOf(portalUrl);
+  const vendor = harmlos(input.vendor) || "unknown vendor";
+  const invoiceNumber = harmlos(input.invoiceNumber);
+  const fileName = harmlos(input.fileName) || "invoice.pdf";
   const task = [
     `Open ${portalUrl} and log in to the BMD Com web portal.`,
     `The login form may have separate fields for customer/Kundennummer/Mandant/Datenbank, user/Benutzer and password/Kennwort.`,
     `Fill the Kundennummer/Mandant field with bmd_customer, the Benutzer field with bmd_user, and the Kennwort/Passwort field with bmd_pass. If there is only a user and a password field, use bmd_user and bmd_pass.`,
     `After login, navigate to the document/Beleg upload area (e.g. "Belege", "Belegscanner", "Eingangsrechnungen", "Upload").`,
     `Download the invoice PDF from this URL: ${input.pdfUrl} and upload it as a new Beleg/document.`,
-    `It is an invoice from ${input.vendor}${input.invoiceNumber ? ` (number ${input.invoiceNumber})` : ""}, file name "${input.fileName}".`,
+    `It is an invoice from ${vendor}${invoiceNumber ? ` (number ${invoiceNumber})` : ""}, file name "${fileName}".`,
     `Submit/confirm the upload. Then read back any confirmation number or success message shown by BMD.`,
     `Return JSON {"uploaded": true/false, "confirmation": "<number or text>", "error": "<reason if failed>"}.`,
   ].join(" ");

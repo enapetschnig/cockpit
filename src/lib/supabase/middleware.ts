@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { rolleVon, type Rolle } from "@/lib/inhaber";
 
 /**
  * Erneuert die Supabase-Session und liefert den eingeloggten User (oder null).
@@ -29,6 +30,7 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const role: "admin" | "customer" = (user?.app_metadata as { role?: string } | undefined)?.role === "customer" ? "customer" : "admin";
+  // Kunde (app_metadata) / Inhaber (feste User-IDs) / sonst kein Zugriff – siehe lib/inhaber.ts
+  const role: Rolle = user ? rolleVon(user) : "none";
   return { response, user, role };
 }

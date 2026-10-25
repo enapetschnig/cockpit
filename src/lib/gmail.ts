@@ -3,7 +3,7 @@
  *
  * Ablauf:
  *  1) OAuth pro Konto: getAuthUrl() -> Google-Consent -> /api/gmail/callback -> handleCallback()
- *     speichert das Refresh-Token verschlüsselt-light in der DB (Model GmailAccount, Schema cockpit).
+ *     speichert das Refresh-Token verschlüsselt (AES-256-GCM, geheimnis.ts) in der DB (Model GmailAccount, Schema cockpit).
  *  2) Sync: fetchNewRawMails(account) holt neue Nachrichten via Gmail API (Dedupe über gmailId).
  *     Die Klassifizierung + DB-Ablage passiert in /api/gmail/sync.
  *
@@ -12,6 +12,7 @@
 import { google } from "googleapis";
 import { prisma } from "./db";
 import { getConfig } from "./config";
+import { entschluesseln, verschluesseln } from "./geheimnis";
 
 export type Account = "firma" | "privat";
 
@@ -55,16 +56,27 @@ async function oauthClient(redirectUri?: string) {
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri || "http://localhost:3000/api/gmail/callback");
 }
 
-/** Consent-URL für den OAuth-Flow. `state` trägt das Konto durch den Redirect. */
-export async function getAuthUrl(account: Account, redirectUri: string): Promise<string> {
+// Login-CSRF-Schutz: Nonce steckt im `state` UND in diesem Cookie (nur /api/gmail, 10 Minuten).
+// Die Callback-Route nimmt nur einen Flow an, der in diesem Browser über /api/gmail/connect gestartet wurde.
+export const OAUTH_NONCE_COOKIE = "gmail_oauth_nonce";
+export const OAUTH_NONCE_COOKIE_OPTIONS = { httpOnly: true, secure: true, sameSite: "lax", path: "/api/gmail", maxAge: 600 } as const;
+
+/** Consent-URL für den OAuth-Flow. `state` = "<konto>.<nonce>" trägt Konto + Nonce durch den Redirect. */
+export async function getAuthUrl(account: Account, redirectUri: string, nonce: string): Promise<string> {
   const client = await oauthClient(redirectUri);
   return client.generateAuthUrl({
     access_type: "offline", // -> Refresh-Token
     prompt: "select_account consent", // Konto-Auswahl erzwingen + Refresh-Token sichern
     scope: SCOPES,
-    state: account,
+    state: `${account}.${nonce}`,
     include_granted_scopes: true,
   });
+}
+
+/** Zerlegt `state` aus dem Google-Redirect – null, wenn Konto oder Nonce nicht dem erwarteten Format entsprechen. */
+export function parseOAuthState(state: string | null): { account: Account; nonce: string } | null {
+  const m = /^(firma|privat)\.([0-9a-f]{32})$/.exec(state ?? "");
+  return m ? { account: m[1] as Account, nonce: m[2] } : null;
 }
 
 /** Tauscht den Auth-Code gegen Tokens, liest die Gmail-Adresse und speichert das Konto. */
@@ -78,14 +90,21 @@ export async function handleCallback(code: string, account: Account, redirectUri
   const profile = await gmail.users.getProfile({ userId: "me" });
   const email = profile.data.emailAddress ?? null;
 
+  // Refresh-Token nur verschlüsselt ablegen (ohne COCKPIT_GEHEIMNIS_KEY vorerst Klartext, siehe geheimnis.ts)
+  const refreshToken = tokens.refresh_token ? verschluesseln(tokens.refresh_token) : null;
   await prisma.gmailAccount.upsert({
     where: { account },
-    create: { account, email, refreshToken: tokens.refresh_token ?? null },
+    create: { account, email, refreshToken },
     // Refresh-Token nur überschreiben, wenn Google ein neues geliefert hat
-    update: { email, ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}) },
+    update: { email, ...(refreshToken ? { refreshToken } : {}) },
   });
 
   return { account, email };
+}
+
+/** Refresh-Token eines Kontos im Klartext – DB-Wert ist "enc1:…" verschlüsselt (Klartext-Altbestand geht durch). */
+export function refreshTokenOf(acc: { refreshToken: string | null }): string {
+  return acc.refreshToken ? entschluesseln(acc.refreshToken) : "";
 }
 
 export interface ConnectedAccount {
@@ -116,7 +135,7 @@ export async function fetchNewRawMails(account: Account, opts?: { max?: number; 
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
 
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
 
   const list = await gmail.users.messages.list({
@@ -145,7 +164,7 @@ export async function fetchRawMail(account: Account, gmailId: string): Promise<R
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
   const msg = await gmail.users.messages.get({ userId: "me", id: gmailId, format: "full" });
   return toRawMail(account, gmailId, msg.data);
@@ -266,7 +285,7 @@ export async function fetchAttachment(account: Account, gmailId: string, attachm
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
   const res = await gmail.users.messages.attachments.get({ userId: "me", messageId: gmailId, id: attachmentId });
   const data = res.data.data;
@@ -309,7 +328,7 @@ export async function sendReply(
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
 
   const orig = await gmail.users.messages.get({
@@ -343,23 +362,29 @@ export async function sendMailWithPdf(opts: {
   fileName?: string;
   pdfBase64?: string;
 }): Promise<{ to: string }> {
+  const to = safeRecipient(opts.to); // Zeilenumbruch im Empfänger = Header-Injection → gar nicht erst weiter
   const account = opts.account ?? ("firma" as Account);
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Gmail-Konto "${account}" ist nicht verbunden (unter /connect verbinden).`);
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
 
-  const from = acc.email || "me";
+  const from = oneLine(acc.email || "me");
   const enc = (s: string) => `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
+  const subject = enc(oneLine(opts.subject));
   let raw: string;
   if (opts.pdfBase64) {
     const b = "b_" + Math.random().toString(36).slice(2);
-    const file = (opts.fileName || "Beleg.pdf").replace(/"/g, "");
+    // Dateiname steht in einem quoted-string: keine Zeilenumbrüche/Steuerzeichen, kein " und kein \
+    const file = oneLine((opts.fileName || "").replace(/["\\]/g, "")) || "Beleg.pdf";
+    // Nur echtes Base64 in den Body – sonst könnten Zeilenumbrüche + "--Boundary" eigene MIME-Teile einschleusen
+    const pdf = opts.pdfBase64.replace(/\s+/g, "");
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(pdf)) throw new Error("PDF-Anhang ist kein gültiges Base64.");
     raw = [
       `From: ${from}`,
-      `To: ${opts.to}`,
-      `Subject: ${enc(opts.subject)}`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
       "MIME-Version: 1.0",
       `Content-Type: multipart/mixed; boundary="${b}"`,
       "",
@@ -374,21 +399,21 @@ export async function sendMailWithPdf(opts: {
       "Content-Transfer-Encoding: base64",
       `Content-Disposition: attachment; filename="${file}"`,
       "",
-      opts.pdfBase64.replace(/(.{76})/g, "$1\n"),
+      pdf.replace(/(.{76})/g, "$1\n"),
       "",
       `--${b}--`,
       "",
     ].join("\r\n");
   } else {
     raw = [
-      `From: ${from}`, `To: ${opts.to}`, `Subject: ${enc(opts.subject)}`,
+      `From: ${from}`, `To: ${to}`, `Subject: ${subject}`,
       "MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"',
       "Content-Transfer-Encoding: base64", "", Buffer.from(opts.body, "utf8").toString("base64"), "",
     ].join("\r\n");
   }
   const encoded = Buffer.from(raw).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   await gmail.users.messages.send({ userId: "me", requestBody: { raw: encoded } });
-  return { to: opts.to };
+  return { to };
 }
 
 /** Liefert die letzten Nachrichten eines Threads als Kontext-Text (für bessere Antworten). */
@@ -397,7 +422,7 @@ export async function getThreadContext(account: Account, threadId: string, maxMe
     const acc = await prisma.gmailAccount.findUnique({ where: { account } });
     if (!acc?.refreshToken) return "";
     const client = await oauthClient();
-    client.setCredentials({ refresh_token: acc.refreshToken });
+    client.setCredentials({ refresh_token: refreshTokenOf(acc) });
     const gmail = google.gmail({ version: "v1", auth: client });
     const t = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
     const msgs = (t.data.messages ?? []).slice(-maxMessages);
@@ -420,29 +445,43 @@ export async function sendNewEmail(account: Account, to: string, subject: string
   const acc = await prisma.gmailAccount.findUnique({ where: { account } });
   if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
   const client = await oauthClient();
-  client.setCredentials({ refresh_token: acc.refreshToken });
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
   const gmail = google.gmail({ version: "v1", auth: client });
   const raw = buildRawEmail({ from: acc.email || "me", to, subject, body });
   await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
 }
 
 function buildRawEmail(o: { from: string; to: string; subject: string; inReplyTo?: string; references?: string; body: string }): string {
-  const lines = [
-    `From: ${o.from}`,
-    `To: ${o.to}`,
-    `Subject: ${encodeSubject(o.subject)}`,
-    o.inReplyTo ? `In-Reply-To: ${o.inReplyTo}` : "",
-    o.references ? `References: ${o.references}` : "",
+  // Betreff/Absender einer eingehenden Mail sind fremdgesteuert (RFC-2047 kann CR/LF enthalten) → alles einzeilig
+  const headers = [
+    `From: ${oneLine(o.from)}`,
+    `To: ${safeRecipient(o.to)}`,
+    `Subject: ${encodeSubject(oneLine(o.subject))}`,
+    o.inReplyTo ? `In-Reply-To: ${oneLine(o.inReplyTo)}` : "",
+    o.references ? `References: ${oneLine(o.references)}` : "",
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
-    "",
-    o.body,
   ].filter((l) => l !== "");
-  return Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
+  // Die Leerzeile beendet die Header. Früher wurde sie mitgefiltert – dann galt die erste Body-Zeile
+  // als Header (ein KI-Entwurf mit "Bcc: …" in Zeile 1 hätte so Empfänger eingeschleust).
+  return Buffer.from([...headers, "", o.body].join("\r\n"), "utf8").toString("base64url");
 }
 
 function encodeSubject(s: string): string {
   if (/^[\x00-\x7F]*$/.test(s)) return s;
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
+}
+
+// ── Helfer: Header-Werte gegen Injection ─────────────────────
+/** Header-Wert einzeilig: CR/LF (und andere Steuerzeichen) würden sonst eigene Header wie "Bcc:" einschleusen. */
+function oneLine(s: string): string {
+  return (s || "").replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+}
+
+/** Empfänger mit Zeilenumbruch/Steuerzeichen = Injection-Versuch → ablehnen statt "reparieren". */
+function safeRecipient(to: string): string {
+  const t = (to || "").trim();
+  if (!t || /[\x00-\x1f\x7f]/.test(t)) throw new Error("Ungültige Empfänger-Adresse.");
+  return t;
 }
