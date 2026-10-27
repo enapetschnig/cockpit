@@ -38,6 +38,7 @@ export const APPS: AppInfo[] = [
   { key: '3dscanimholzbau', label: '3D-SCAN im Holzbau (Netzker)', projectRef: 'zmpjhstslooexuxmkqlg' },
   // Ordner heißt metalldemo (Kopie der CS-Powermetall-App); Repo, Vercel und Supabase heißen gaggl.
   { key: 'gaggl', label: 'Thomas Gaggl Metallbau', projectRef: 'versolkykdvtnhbatrcx' },
+  { key: 'unterberger', label: 'Holzbau Unterberger', projectRef: 'rzusgmhfrpcvqfrhkmvy' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
