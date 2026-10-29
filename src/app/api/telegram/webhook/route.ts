@@ -505,7 +505,8 @@ async function roboterKnopf(cb: TgCallback) {
     case "verw":
       return danach("🗑 Verworfen", await roboter.verwerfen(a.id));
     case "nochmal":
-      return danach("🔁 Der Roboter versucht es erneut", await roboter.nochmal(a));
+      return danach(roboter.rueckspracheVorDemStart(a) ? "▶️ Mach ich – du bekommst eine Zeile, wenn es live ist" : "🔁 Der Roboter versucht es erneut",
+        await roboter.nochmal(a));
     case "vk": // rob:vk:<id>:<Prüfsumme der Liste> – Christophs OK zu genau der gezeigten Liste „vor dem Kunden“
       return danach("✅ Danke – der Roboter prüft den Live-Stand nochmal und schickt dem Kunden dann die Antwort",
         !!zusatz && zusatz === a.vk && (await roboter.vorKundeBestaetigen(a.id, zusatz)));

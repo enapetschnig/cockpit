@@ -225,6 +225,9 @@ export const vorDemKunden = (a: Auftrag) =>
   a.status === "wartet" && !!a.vor_kunde && !a.vor_kunde_ok_am && (a.fehler ?? "").startsWith("🧾 Vor dem Kunden");
 // → „live“: Der Roboter geht direkt in den Live-Schritt (schon zusammengeführt) – prüft Live-Stand und Schlüssel
 // erneut und schickt dem Kunden erst dann die Antwort. Geht auch bei Altaufträgen ohne Freigabe-Zeitpunkt.
+/** Der Roboter fragt, bevor er überhaupt anfängt (Einstufung: Geld, Rechte, Daten, unklar …). */
+export const rueckspracheVorDemStart = (a: Auftrag) =>
+  a.status === "wartet" && !!a.freigegeben_am && (a.fehler ?? "").startsWith("Kurze Rücksprache");
 export const vorKundeBestaetigen = (id: string, vk: string) =>
   wechsel(id, ["wartet"], Prisma.sql`status = 'live', vor_kunde_ok_am = now()`,
     Prisma.sql`and vor_kunde is not null and vor_kunde_ok_am is null and ${VK} = ${vk}
@@ -319,8 +322,9 @@ export async function wunschMeldung(id: string): Promise<Karte | null> {
   const kunde = (await kundenNamen()).get(w.app_key) ?? w.app_key;
   const yolo = (await yoloSeit()).has(w.app_key);
   const kopf = `🛠 <b>${esc(kunde)}</b> – ${w.art === "fehler" ? "Fehlermeldung" : "neuer Wunsch"}${w.melder ? ` von ${esc(w.melder)}` : ""}:\n„${esc(kuerzen(w.text, 700))}“`;
-  // Fuß „Projekt …“: eine Antwort auf diese Nachricht landet beim richtigen Kunden.
-  if (yolo) return { text: `${kopf}\n\n⚡ YOLO – ich setze es gleich um und melde mich, wenn es live ist.\n<i>Projekt ${w.app_key}</i>`, buttons: [] };
+  // YOLO (seit 29.10.2026 für alle): beim Eingang still – der Roboter stuft selbst ein und meldet sich nur mit
+  // ✅ live oder ❓ kurzer Rücksprache (Christoph: „nicht überhäuft mit Infos“).
+  if (yolo) return null;
   return {
     text: `${kopf}\n\nSoll ich das umsetzen? ▶️ tippen oder einfach antworten (z. B. „ja, und mach noch …“).\n<i>Projekt ${w.app_key}</i>`,
     buttons: [[{ text: "▶️ Umsetzen", data: `rob:start:${w.app_key}` }]],
@@ -632,6 +636,13 @@ export async function meldungFuerAuftrag(a: Auftrag): Promise<Karte | null> {
     };
   }
   if (a.status === "wartet") {
+    // Rücksprache aus der Einstufung (Roboter 4): Plan steht drin – ▶️ heißt „so machen“ (nochmal → freigegeben).
+    if (rueckspracheVorDemStart(a)) {
+      return {
+        text: `❓ <b>${kunde}</b>: ${esc(kuerzen(a.fehler, 1500))}\n\n<i>▶️ = so machen. Oder antworte einfach, wie du es haben willst.</i>\n${fuss}`,
+        buttons: [[{ text: "▶️ Ja, so machen", data: `rob:nochmal:${a.id}` }, { text: "🗑 Nicht machen", data: `rob:verw:${a.id}` }], [crm]],
+      };
+    }
     return { text: `❓ <b>${kunde}</b>: ${esc(kuerzen(a.fehler, 1500))}\n\n<i>Antworte einfach auf diese Nachricht.</i>\n${fuss}`, buttons: [[{ text: "🗑 Verwerfen", data: `rob:verw:${a.id}` }, crm]] };
   }
   if (a.status === "fehler") {
