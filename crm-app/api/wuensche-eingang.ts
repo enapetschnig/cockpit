@@ -16,7 +16,7 @@ interface Res { status(c: number): Res; json(b: unknown): void }
 interface Payload {
   id?: string; art?: string; status?: string; text?: string;
   antwort?: string | null; seite?: string | null;
-  bild_pfad?: string | null; audio_pfad?: string | null; melder?: string | null;
+  bild_pfad?: string | null; audio_pfad?: string | null; aufnahme_pfad?: string | null; melder?: string | null;
   anhaenge?: unknown;
   erstellt_am?: string; aktualisiert_am?: string;
 }
@@ -82,6 +82,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     melder: str(b.melder),
     bild_pfad: str(b.bild_pfad),
     audio_pfad: str(b.audio_pfad),
+    // „Zeigen & erklären" (Bildschirmaufnahme); Apps ohne das Feld schicken keins → leer.
+    aufnahme_pfad: (() => { const p = str(b.aufnahme_pfad); return p && PFAD.test(p) ? p : null; })(),
     // Zusätzliche Fotos (bis zu 10); Apps ohne dieses Feld schicken keins → leer.
     anhaenge: anhaenge(b.anhaenge),
     erstellt_am: datum(b.erstellt_am),
@@ -125,7 +127,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     // Push nur beim erstmaligen Eingang mit Status "neu" – Updates pingen nicht.
     // `x-kein-ping: 1` unterdrückt ihn zusätzlich: beim Nachtragen der
     // Altmeldungen einer frisch angebundenen App will niemand 20 Telegrams.
-    if (felder.status === 'neu' && kopf(req, 'x-kein-ping') !== '1') {
+    // Testmeldungen der Prüfskripte („ZZTEST …", werden gleich wieder gelöscht) pingen nie.
+    if (felder.status === 'neu' && kopf(req, 'x-kein-ping') !== '1' && !text.startsWith('ZZTEST')) {
       // Über das Cockpit (Telegram-Bot mit Knöpfen): „Soll ich das umsetzen?“ + ▶️ – Christophs Antwort geht an den Roboter.
       // Klappt das nicht, wenigstens die einfache Zeile wie bisher.
       const r = await fetch('https://cockpit-flax-tau.vercel.app/api/roboter/melden', {

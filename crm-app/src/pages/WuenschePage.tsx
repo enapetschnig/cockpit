@@ -3,7 +3,7 @@
  * Handwerker-Apps. Die Apps schicken sie selbst hierher (Datenbank-Trigger auf
  * /api/wuensche-eingang); hier wird nur gelesen und „gesehen" vermerkt.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { BillingNav } from '@/components/billing/BillingNav';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -12,11 +12,14 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { APP_LABEL, APPS } from '@/lib/apps';
-import { Loader2, Image as ImageIcon, Check, Inbox } from 'lucide-react';
+import { Loader2, Image as ImageIcon, Check, Inbox, MonitorPlay } from 'lucide-react';
 import { RoboterKnopf, RoboterVerlauf, RoboterVorschlaege, useRoboter } from '@/components/RoboterVorschlaege';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
+
+// rrweb erst laden, wenn jemand eine Aufnahme ansieht.
+const AufnahmeAbspielen = lazy(() => import('@/components/AufnahmeAbspielen').then((m) => ({ default: m.AufnahmeAbspielen })));
 
 interface Wunsch {
   id: string;
@@ -30,6 +33,8 @@ interface Wunsch {
   melder: string | null;
   bild_pfad: string | null;
   audio_pfad: string | null;
+  /** „Zeigen & erklären": Bildschirmaufnahme aus der App (rrweb, gzip). */
+  aufnahme_pfad?: string | null;
   /** Zusätzliche Fotos aus der App (bis zu 10). */
   anhaenge?: string[] | null;
   erstellt_am: string;
@@ -75,6 +80,7 @@ export default function WuenschePage() {
   const [nurOffen, setNurOffen] = useState(false);
   const [fStatus, setFStatus] = useState('');
   const [bildOffen, setBildOffen] = useState<string | null>(null);
+  const [aufnahmeOffen, setAufnahmeOffen] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [kunden, setKunden] = useState<{ id: string; name: string; app_key: string }[]>([]);
   const { auftraege, puls, laden: ladenRoboter } = useRoboter();
@@ -189,7 +195,7 @@ export default function WuenschePage() {
     if (error) { toast.error('Konnte nicht gespeichert werden'); load(); }
   }
 
-  const datei = (w: Wunsch, art: 'bild' | 'audio', nr?: number) =>
+  const datei = (w: Wunsch, art: 'bild' | 'audio' | 'aufnahme', nr?: number) =>
     `/api/wuensche-datei?id=${encodeURIComponent(w.id)}&art=${art}${nr !== undefined ? `&nr=${nr}` : ''}&token=${encodeURIComponent(token ?? '')}`;
 
   return (
@@ -401,7 +407,17 @@ export default function WuenschePage() {
                 );
               })()}
 
-              {w.audio_pfad && (
+              {w.aufnahme_pfad && token ? (
+                aufnahmeOffen === w.id ? (
+                  <Suspense fallback={<Loader2 className="mt-3 h-4 w-4 animate-spin text-muted-foreground" />}>
+                    <AufnahmeAbspielen aufnahmeUrl={datei(w, 'aufnahme')} tonUrl={w.audio_pfad ? datei(w, 'audio') : null} />
+                  </Suspense>
+                ) : (
+                  <Button size="sm" variant="outline" className="mt-3 gap-1.5" onClick={() => setAufnahmeOffen(w.id)}>
+                    <MonitorPlay className="h-3.5 w-3.5" /> Aufnahme ansehen
+                  </Button>
+                )
+              ) : w.audio_pfad && (
                 <audio controls preload="none" src={datei(w, 'audio')} className="mt-3 w-full max-w-xs" />
               )}
 

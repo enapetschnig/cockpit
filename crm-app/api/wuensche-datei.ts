@@ -1,5 +1,6 @@
 /**
- * Datei-Proxy für Screenshots, zusätzliche Fotos (`&nr=0…9`) und Sprachnachrichten.
+ * Datei-Proxy für Screenshots, zusätzliche Fotos (`&nr=0…9`), Sprachnachrichten und
+ * Bildschirmaufnahmen (`&art=aufnahme`, „Zeigen & erklären").
  *
  * Die Dateien bleiben im privaten Bucket der jeweiligen App. Wir holen bei der
  * App-eigenen Edge Function `wunsch-datei` eine signierte URL (1 h gültig) und
@@ -30,15 +31,16 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   if (!istInhaber(userData.user.id)) return res.status(403).json({ error: 'kein Zugriff' });
 
   const id = eins(req.query.id);
-  const art = eins(req.query.art) === 'audio' ? 'audio' : 'bild';
+  const artRoh = eins(req.query.art);
+  const art = artRoh === 'audio' || artRoh === 'aufnahme' ? artRoh : 'bild';
   if (!id) return res.status(400).json({ error: 'id fehlt' });
 
   const sb = createClient(url, key, { auth: { persistSession: false }, db: { schema: 'crm' } });
-  const { data: w } = await sb.from('app_wuensche').select('app_key, bild_pfad, audio_pfad, anhaenge').eq('id', id).maybeSingle();
+  const { data: w } = await sb.from('app_wuensche').select('app_key, bild_pfad, audio_pfad, aufnahme_pfad, anhaenge').eq('id', id).maybeSingle();
   if (!w) return res.status(404).json({ error: 'nicht gefunden' });
 
   // `nr` = eines der zusätzlichen Fotos (0–9), sonst das Bildschirmfoto.
-  let pfad: string | null = art === 'audio' ? w.audio_pfad : w.bild_pfad;
+  let pfad: string | null = art === 'audio' ? w.audio_pfad : art === 'aufnahme' ? w.aufnahme_pfad : w.bild_pfad;
   const nr = eins(req.query.nr);
   if (art === 'bild' && nr !== '') {
     const i = Number(nr);
