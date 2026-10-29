@@ -31,6 +31,7 @@ export const APPS: AppInfo[] = [
   { key: '3dscanimholzbau', label: '3D-SCAN im Holzbau (Netzker)' },
   { key: 'gaggl', label: 'Thomas Gaggl Metallbau' },
   { key: 'unterberger', label: 'Holzbau Unterberger' },
+  { key: 'sonnenoase', label: 'Sonnenoase Wintergarten' },
 ];
 
 export const APP_LABEL: Record<string, string> =
