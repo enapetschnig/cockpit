@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "
 import { useAuth } from "@/hooks/useAuth";
 import { sichererPfad } from "@/lib/sichererPfad";
 import Index from "./pages/Index";
+import HeutePage from "./pages/HeutePage";
 import Auth from "./pages/Auth";
 import StatisticsPage from "./pages/StatisticsPage";
 import OrderVolumePage from "./pages/OrderVolumePage";
@@ -88,8 +89,10 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
+          {/* Startseite: nur, was heute ansteht. Die Pipeline (bisherige Startseite) liegt unter /crm. */}
+          <Route path="/" element={<ProtectedRoute><HeutePage /></ProtectedRoute>} />
           <Route
-            path="/"
+            path="/crm"
             element={
               <ProtectedRoute>
                 <Index />

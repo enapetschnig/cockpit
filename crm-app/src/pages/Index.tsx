@@ -21,6 +21,7 @@ const Index = () => {
   const { leads, addLead, updateLead, deleteLead, addContactLog, deleteContactLog } = useLeads();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   // Quellen-Filter: nur Quellen anbieten, die es in den Leads auch gibt.
   const [sourceFilter, setSourceFilter] = useState<LeadSource | 'alle'>('alle');
   const vorhandeneQuellen = (Object.keys(SOURCE_LABELS) as LeadSource[]).filter((q) => leads.some((l) => l.source === q));
@@ -29,9 +30,8 @@ const Index = () => {
   const [sp, setSp] = useSearchParams();
   useEffect(() => {
     const id = sp.get('lead');
-    if (id && leads.some((l) => l.id === id)) { setSelectedLeadId(id); setSp({}, { replace: true }); }
+    if (id && leads.some((l) => l.id === id)) { setSelectedLeadId(id); setIsDetailDialogOpen(true); setSp({}, { replace: true }); }
   }, [sp, leads, setSp]);
-  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [showUnqualified, setShowUnqualified] = useState(false);
 
   const visibleStages = showUnqualified

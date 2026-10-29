@@ -1,7 +1,7 @@
 /**
  * DIE Navigation der App – eine einzige, überall gleiche Kopfzeile.
  *
- * Oben nur das Tägliche: CRM, Buchhaltung, Angebote, Rechnungen, Wünsche.
+ * Oben nur das Tägliche: Heute (Startseite), CRM, Buchhaltung, Angebote, Rechnungen, Wünsche.
  * Alles andere unter „Mehr", in Gruppen sortiert, damit man es findet.
  *
  * Zähler zeigen, wo Arbeit wartet: überfällige Rechnungen (rot) an der
@@ -20,11 +20,12 @@ import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 import {
   Zap, LayoutGrid, Wallet, FileText, Receipt, Users, MessageSquare,
   MoreHorizontal, BarChart3, BookOpen, Archive, Package, Tag, Settings,
-  ExternalLink, LogOut, TrendingUp, Megaphone, FileSignature, Wrench, Mic, FileWarning,
+  ExternalLink, LogOut, TrendingUp, Megaphone, FileSignature, Wrench, Mic, FileWarning, Sun,
 } from 'lucide-react';
 
 const HAUPT = [
-  { to: '/', label: 'CRM', icon: LayoutGrid },
+  { to: '/', label: 'Heute', icon: Sun },
+  { to: '/crm', label: 'CRM', icon: LayoutGrid },
   { to: '/buchhaltung', label: 'Buchhaltung', icon: Wallet },
   { to: '/angebote-rechnung', label: 'Angebote', icon: FileText },
   { to: '/rechnungen', label: 'Rechnungen', icon: Receipt },
@@ -79,7 +80,7 @@ export function AppNav({ children }: { children?: ReactNode }) {
   return (
     <header className="bg-card border-b border-border sticky top-0 z-30">
       <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center gap-3">
-        <Link to="/" className="flex items-center gap-2 shrink-0" aria-label="Zum CRM">
+        <Link to="/" className="flex items-center gap-2 shrink-0" aria-label="Zur Startseite">
           <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary text-primary-foreground">
             <Zap className="w-4 h-4" />
           </div>

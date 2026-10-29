@@ -51,7 +51,7 @@ export default function DmcPage() {
       <header className="bg-card border-b border-border px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <Link to="/" className="flex items-center gap-3">
+            <Link to="/crm" className="flex items-center gap-3">
               <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary text-primary-foreground">
                 <Zap className="w-5 h-5" />
               </div>
@@ -62,7 +62,7 @@ export default function DmcPage() {
             </Link>
 
             <nav className="hidden md:flex items-center gap-1 ml-4">
-              <Link to="/">
+              <Link to="/crm">
                 <Button variant="ghost" size="sm">
                   Pipeline
                 </Button>
