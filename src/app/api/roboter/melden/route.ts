@@ -37,7 +37,7 @@ const freigeben = (key: string) => prisma.setting.deleteMany({ where: { key } })
  * Texte verschicken. Jede Stufe geht genau einmal raus, nur frische Stände.
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string };
+  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string; roboter?: string };
 
   // Neue Besprechung aus Plaud (PC, werkzeuge/plaud): „🎙 … abgelegt“ bzw. „❓ zu wem gehört die?“ – genau einmal.
   if (b.besprechung && UUID.test(b.besprechung)) {
@@ -56,6 +56,16 @@ export async function POST(req: Request) {
     const key = MARKE + "plaud:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
     if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
     const r = await sendTelegram("⚠️ Plaud: die Anmeldung am PC ist abgelaufen – Besprechungen kommen gerade nicht ins CRM. Sag mir kurz Bescheid, dann melde ich dich neu an.");
+    if (!r.ok) await freigeben(key);
+    return NextResponse.json({ ok: true });
+  }
+
+  // Der Roboter kommt mit seinem Supabase-Schlüssel nicht mehr an die Datenbank – sonst steht er still, ohne dass es
+  // jemand merkt (01.11.2026). Fester Text, höchstens einmal am Tag.
+  if (b.roboter === "schluessel") {
+    const key = MARKE + "roboter-schluessel:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
+    if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
+    const r = await sendTelegram("⚠️ Roboter steht: sein Supabase-Schlüssel (SUPABASE_ACCESS_TOKEN am PC) gilt nicht mehr – keine Wünsche, keine Antworten auf Telegram. Bitte unter supabase.com → Account → Access Tokens einen neuen anlegen und am PC eintragen.");
     if (!r.ok) await freigeben(key);
     return NextResponse.json({ ok: true });
   }
