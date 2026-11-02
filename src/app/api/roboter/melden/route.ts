@@ -37,7 +37,24 @@ const freigeben = (key: string) => prisma.setting.deleteMany({ where: { key } })
  * Texte verschicken. Jede Stufe geht genau einmal raus, nur frische Stände.
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string; roboter?: string };
+  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string; roboter?: string; notfall?: boolean };
+
+  // Notfall vom Roboter (App nach dem Deploy kaputt und Zurückrollen ging nicht): sofort, jede Notiz genau einmal.
+  // Alles andere wartet auf den Tagesstand um 7 und 18 Uhr (02.11.2026, Christoph: „zwischendrin wirklich nur die Notfälle“).
+  if (b.notfall === true) {
+    const neu = await prisma.$queryRaw<{ id: string; app_key: string | null; text: string }[]>`
+      update crm.roboter_notizen set gemeldet_am = now()
+      where art = 'notfall' and gemeldet_am is null and erstellt_am > now() - interval '1 hour'
+      returning id::text as id, app_key, text`;
+    if (!neu.length) return NextResponse.json({ ok: true, nichts: true });
+    const namen = await kundenNamen();
+    const r = await sendTelegram(neu.map((n) => `🚨 <b>${esc(n.app_key ? namen.get(n.app_key) ?? n.app_key : "Roboter")}</b>: ${esc(n.text)}`).join("\n\n"));
+    if (!r.ok) {
+      await prisma.$executeRaw`update crm.roboter_notizen set gemeldet_am = null where id = any(${neu.map((n) => n.id)}::uuid[])`;
+      return NextResponse.json({ ok: false }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true });
+  }
 
   // Neue Besprechung aus Plaud (PC, werkzeuge/plaud): „🎙 … abgelegt“ bzw. „❓ zu wem gehört die?“ – genau einmal.
   if (b.besprechung && UUID.test(b.besprechung)) {
@@ -119,6 +136,10 @@ export async function POST(req: Request) {
     returning id::text as id`;
   if (!beansprucht) return NextResponse.json({ ok: true, schon: true });
   const a = (await ladeAuftrag(beansprucht.id)) as Auftrag;
+  // Was der Roboter von sich aus (YOLO) macht, meldet er nicht einzeln – erledigt, Rücksprachen und Fehler stehen im
+  // Tagesstand (/api/roboter/tagesstand). Sofort nur, wenn Christoph selbst gerade dran ist: von Hand angestoßen
+  // (nicht YOLO) oder aus seinem Telegram-Gespräch.
+  if (a.yolo && !a.quelle_frage) return NextResponse.json({ ok: true, tagesstand: true });
   const m = await meldungFuerAuftrag(a);
   if (m) {
     const r = await sendTelegram(m.text, { ...(m.buttons.length ? { buttons: m.buttons } : {}), leise: !!m.leise });

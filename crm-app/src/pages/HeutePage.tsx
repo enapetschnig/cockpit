@@ -15,10 +15,10 @@ import { APP_LABEL } from '@/lib/apps';
 import { eur, fmtDate } from '@/types/billing';
 import {
   ANGEBOT_NACHFASSEN_TAGE, WARTET_AUF_DICH, HeuteAuftrag, HeuteBesprechung, HeuteWunsch,
-  besprechungTitel, besprechungenFuerDich, einSatz, freieWuensche, meinePunkte, roboterPuls, roboterSatz,
+  besprechungTitel, besprechungenFuerDich, einSatz, meinePunkte, roboterPuls, roboterSatz,
   tageZwischen, tagVon,
 } from '@/lib/heute';
-import { Bot, ChevronRight, Inbox, Loader2, Mic, Phone, Wallet } from 'lucide-react';
+import { Bot, ChevronRight, Loader2, Mic, Phone, Wallet } from 'lucide-react';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -175,14 +175,15 @@ export default function HeutePage() {
   }
 
   const wartend = daten.auftraege.filter((a) => WARTET_AUF_DICH.includes(a.status));
-  const neueWuensche = freieWuensche(daten.wuensche, daten.auftraege);
+  // Neue Wünsche stehen hier bewusst nicht mehr (02.11.2026, Christoph: nicht ständig sehen, wie viel offen ist) –
+  // die sammelt und macht der Roboter selbst; was Christoph tun muss, steht unter „Roboter wartet auf dich“.
   const entwuerfe = open.filter((r) => r.status === 'draft' && !overdue.includes(r));
   const besprechungen = besprechungenFuerDich(daten.besprechungen);
   const puls = roboterPuls(daten.puls?.zuletzt);
 
   const anrufen = daten.termine.length + daten.rueckrufe.length;
   const geld = daten.vertraege.length + overdue.length + restFaellig.length + entwuerfe.length + daten.angebote.length;
-  const nichts = !wartend.length && !neueWuensche.length && !anrufen && !geld && !besprechungen.length;
+  const nichts = !wartend.length && !anrufen && !geld && !besprechungen.length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -212,17 +213,6 @@ export default function HeutePage() {
               return <Zeile key={a.id} to={`/wuensche#a-${a.id}`} titel={<>{kunde(a.app_key)} <span className="font-normal text-muted-foreground">· {s.was}</span></>}
                 detail={s.satz} />;
             })}
-          </Gruppe>
-        )}
-
-        {neueWuensche.length > 0 && (
-          <Gruppe icon={Inbox} titel="Neue Wünsche – noch ohne Roboter" anzahl={neueWuensche.length}>
-            {neueWuensche.map((w) => (
-              <Zeile key={w.id} to="/wuensche"
-                titel={<>{kunde(w.app_key)}{w.art !== 'wunsch' && <span className="font-normal text-muted-foreground"> · {w.art === 'fehler' ? 'Fehler' : 'Frage'}</span>}</>}
-                detail={`„${einSatz(w.text, 140)}“${w.melder ? ` – ${w.melder}` : ''}`}
-                rechts={tagVon(new Date(w.erstellt_am)) === heute ? uhr(w.erstellt_am) : fmtDate(w.erstellt_am)} />
-            ))}
           </Gruppe>
         )}
 

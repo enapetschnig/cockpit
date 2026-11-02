@@ -7,7 +7,7 @@
  * Nur `gesehen_am` und `customer_id` bleiben unangetastet, das sind eigene Vermerke.
  */
 import { createClient } from '@supabase/supabase-js';
-import { appInfo, appLabel, INHABER_IDS, secretGleich, sendTelegram } from './_apps.js';
+import { appInfo, INHABER_IDS, secretGleich } from './_apps.js';
 
 // Vercels Node-Runtime übergibt Node-Objekte (kein Web-Request).
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: unknown }
@@ -39,7 +39,6 @@ const datum = (v: unknown): string => {
   return (Number.isNaN(d.getTime()) ? new Date() : d).toISOString();
 };
 
-const ART_LABEL: Record<string, string> = { wunsch: 'Wunsch', fehler: 'Fehler', frage: 'Frage' };
 
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method !== 'POST') return res.status(405).json({ error: 'nur POST' });
@@ -131,13 +130,11 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     if (felder.status === 'neu' && kopf(req, 'x-kein-ping') !== '1' && !text.startsWith('ZZTEST')) {
       // Über das Cockpit (Telegram-Bot mit Knöpfen): „Soll ich das umsetzen?“ + ▶️ – Christophs Antwort geht an den Roboter.
       // Klappt das nicht, wenigstens die einfache Zeile wie bisher.
-      const r = await fetch('https://cockpit-flax-tau.vercel.app/api/roboter/melden', {
+      // Ist das Cockpit nicht erreichbar, bleibt es still – der Roboter holt den Wunsch trotzdem (02.11.2026:
+      // keine Telegram-Nachricht je neuem Wunsch mehr, nur Notfälle und der Tagesstand um 7/18 Uhr).
+      await fetch('https://cockpit-flax-tau.vercel.app/api/roboter/melden', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wunsch: id }),
       }).catch(() => null);
-      if (!r?.ok) {
-        const anfang = text.length > 160 ? text.slice(0, 160) + ' …' : text;
-        await sendTelegram(`🛠 ${appLabel(appKey)}: ${ART_LABEL[felder.art] ?? felder.art} — ${anfang}`);
-      }
     }
   }
 

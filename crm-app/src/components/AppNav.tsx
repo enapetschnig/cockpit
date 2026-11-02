@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import { useOpenInvoices } from '@/hooks/useOpenInvoices';
-import { useOffeneWuensche } from '@/hooks/useOffeneWuensche';
 import {
   Zap, LayoutGrid, Wallet, FileText, Receipt, Users, MessageSquare,
   MoreHorizontal, BarChart3, BookOpen, Archive, Package, Tag, Settings,
@@ -73,7 +72,6 @@ export function AppNav({ children }: { children?: ReactNode }) {
   const { pathname } = useLocation();
   const { signOut } = useAuth();
   const { overdueCount } = useOpenInvoices();
-  const { anzahl: offeneWuensche } = useOffeneWuensche();
   const [mehrOffen, setMehrOffen] = useState(false);
   const mehrAktiv = MEHR.some((g) => g.eintraege.some((m) => aktiv(pathname, m.to)));
 
@@ -95,7 +93,6 @@ export function AppNav({ children }: { children?: ReactNode }) {
                 <Icon className="w-4 h-4 shrink-0" />
                 <span className="hidden sm:inline">{label}</span>
                 {to === '/buchhaltung' && <Zaehler wert={overdueCount} farbe="rot" />}
-                {to === '/wuensche' && <Zaehler wert={offeneWuensche} farbe="blau" />}
               </Button>
             </Link>
           ))}

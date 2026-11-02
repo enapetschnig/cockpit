@@ -47,6 +47,8 @@ export async function middleware(req: NextRequest) {
   // Termin-Erinnerungen (Supabase pg_cron): die Route prüft den CRON_SECRET selbst – nur per
   // Authorization-Header und zeitkonstant (crypto.timingSafeEqual gibt es in der Edge-Middleware nicht).
   if (pathname === "/api/reminders") return NextResponse.next();
+  // Tagesstand/Wachhund des Roboters (Vercel-Cron): prüft den CRON_SECRET genauso selbst.
+  if (pathname === "/api/roboter/tagesstand") return NextResponse.next();
 
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();

@@ -40,6 +40,7 @@ export interface Auftrag {
   vor_kunde: string | null; // was vor der Antwort an den Kunden noch nötig ist (nur Christoph kann es)
   vor_kunde_ok_am: Date | null; // Christophs OK zu genau dieser Liste
   vk: string; // Kurz-Prüfsumme von vor_kunde: „✅ Erledigt“ gilt nur für die gezeigte Liste
+  quelle_frage: string | null; // aus Christophs Telegram-Gespräch entstanden → sofort melden, nicht erst im Tagesstand
   erstellt_am: Date;
   aktualisiert: Date;
 }
@@ -111,7 +112,7 @@ const VER = Prisma.sql`left(md5(coalesce(vorschlag, '') || '|' || coalesce(db_ha
 const VK = Prisma.sql`left(md5(coalesce(vor_kunde, '')), 8)`;
 const SPALTEN = Prisma.sql`id::text as id, app_key, wunsch_ids, status, vorschlag, aufwand, risiko, datenbank,
   antwort_kunde, anmerkung, zweig, vorschau_url, fehler, protokoll, gemeldet, db_info, yolo, freigegeben_am, sitzungen,
-  ${VER} as ver, geprueft, vor_kunde, vor_kunde_ok_am, ${VK} as vk, erstellt_am, aktualisiert`;
+  ${VER} as ver, geprueft, vor_kunde, vor_kunde_ok_am, ${VK} as vk, quelle_frage::text as quelle_frage, erstellt_am, aktualisiert`;
 
 // ── Lesen ──────────────────────────────────────────────────────────────────
 /** app_key → Kundenname (aus dem CRM; Apps ohne Kunde behalten ihren Schlüssel). */

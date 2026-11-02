@@ -56,7 +56,7 @@ export async function runBmdWorker(): Promise<WorkerResult> {
           data: { status: "uploaded", bmdUploadedAt: new Date(), confirmation: t.confirmation || t.output || "ok", bmdError: null },
         });
         res.uploaded++;
-        await sendTelegram(`✅ <b>${esc(b.vendor)} an BMD übermittelt</b>${t.confirmation ? ` · ${esc(t.confirmation)}` : ""}`).catch(() => {});
+        // Gelungene Uploads melden nicht mehr (02.11.2026: Telegram nur, wenn etwas nicht geht) – Fehler unten schon.
       } else {
         await prisma.beleg.update({
           where: { id: b.id },
