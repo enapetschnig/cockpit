@@ -42,6 +42,8 @@ export const APPS: AppInfo[] = [
   { key: 'gaggl', label: 'Thomas Gaggl Metallbau', projectRef: 'versolkykdvtnhbatrcx' },
   { key: 'unterberger', label: 'Holzbau Unterberger', projectRef: 'rzusgmhfrpcvqfrhkmvy' },
   { key: 'sonnenoase', label: 'Sonnenoase Wintergarten', projectRef: 'ykzaiauumeasvbdlryja' },
+  // Composite Solutions CSG GmbH (02.11.2026), Leichtbau/Verbundwerkstoffe – Repo/Vercel compositesolutions.
+  { key: 'compositesolutions', label: 'Composite Solutions', projectRef: 'tfkhiofspqmbbwqtvjxi' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));

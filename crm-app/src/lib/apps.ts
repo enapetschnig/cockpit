@@ -34,6 +34,7 @@ export const APPS: AppInfo[] = [
   { key: 'gaggl', label: 'Thomas Gaggl Metallbau' },
   { key: 'unterberger', label: 'Holzbau Unterberger' },
   { key: 'sonnenoase', label: 'Sonnenoase Wintergarten' },
+  { key: 'compositesolutions', label: 'Composite Solutions' },
 ];
 
 export const APP_LABEL: Record<string, string> =
