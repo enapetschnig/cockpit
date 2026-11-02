@@ -56,6 +56,17 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     return res.status(404).json({ error: 'Datei nicht verfügbar' });
   }
 
+  // Das Cockpit selbst: Die Datei liegt hier im eigenen Ablagebereich, kein Umweg über eine App.
+  if (app.key === 'cockpit') {
+    const [bereich, ...rest] = pfad.split('/');
+    if (bereich !== 'cockpit-wuensche' || !rest.length) return res.status(404).json({ error: 'Datei nicht verfügbar' });
+    const { data: s } = await sb.storage.from(bereich).createSignedUrl(rest.join('/'), 3600);
+    if (!s?.signedUrl) return res.status(502).json({ error: 'Datei konnte nicht geladen werden' });
+    res.setHeader('Location', s.signedUrl);
+    res.setHeader('Cache-Control', 'private, max-age=0, no-store');
+    return res.status(307).end();
+  }
+
   try {
     const antwort = await fetch(`https://${app.projectRef}.supabase.co/functions/v1/wunsch-datei`, {
       method: 'POST',

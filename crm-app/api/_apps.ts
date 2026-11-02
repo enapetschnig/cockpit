@@ -10,6 +10,8 @@
 export interface AppInfo { key: string; label: string; projectRef: string }
 
 export const APPS: AppInfo[] = [
+  // Das Cockpit selbst (02.11.2026) – Dateien liegen im CRM-Supabase, Ablagebereich `cockpit-wuensche`.
+  { key: 'cockpit', label: 'Mein Cockpit', projectRef: 'xyhgckqxowqnzjtoblfs' },
   { key: 'lengauer-stockner', label: 'Holzbau Lengauer-Stockner', projectRef: 'icmxtnqjtflmrpwztxmn' },
   { key: 'steron', label: 'Steron Poolbau', projectRef: 'keqnrzispxnvdzephcfv' },
   { key: 'willroider', label: 'Holzbau Willroider', projectRef: 'ylqbxnsxksbtsqrcwtuq' },

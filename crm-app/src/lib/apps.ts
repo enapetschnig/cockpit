@@ -9,6 +9,8 @@
 export interface AppInfo { key: string; label: string }
 
 export const APPS: AppInfo[] = [
+  // Das Cockpit selbst (02.11.2026): Melden direkt hier, Dateien im eigenen Ablagebereich `cockpit-wuensche`.
+  { key: 'cockpit', label: 'Mein Cockpit' },
   { key: 'lengauer-stockner', label: 'Holzbau Lengauer-Stockner' },
   { key: 'steron', label: 'Steron Poolbau' },
   { key: 'willroider', label: 'Holzbau Willroider' },

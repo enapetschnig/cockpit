@@ -29,6 +29,7 @@ import VertraegePage from './pages/VertraegePage';
 import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
 import WartungPage from './pages/WartungPage';
+import { CockpitMelden } from '@/components/aenderungswunsch/AenderungswunschKnopf';
 
 const queryClient = new QueryClient();
 
@@ -88,6 +89,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <CockpitMelden />
         <Routes>
           {/* Startseite: nur, was heute ansteht. Die Pipeline (bisherige Startseite) liegt unter /crm. */}
           <Route path="/" element={<ProtectedRoute><HeutePage /></ProtectedRoute>} />
