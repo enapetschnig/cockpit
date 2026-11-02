@@ -7,11 +7,11 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useCompanySettings } from '@/hooks/useBilling';
 import {
-  buildExportZip, downloadBlob, loadPeriod, monthPeriod, summarize, yearPeriod,
+  buildExportZip, buildMonthPdf, downloadBlob, loadPeriod, monthPeriod, summarize, yearPeriod,
   buildCsv, type Period, type VatSummary,
 } from '@/lib/exportBooks';
 import { eur } from '@/types/billing';
-import { Download, FileSpreadsheet, Loader2, Package, Calendar } from 'lucide-react';
+import { Download, FileSpreadsheet, FileText, Loader2, Package, Calendar } from 'lucide-react';
 
 const MONTHS = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
@@ -50,6 +50,17 @@ export default function ExportPage() {
       toast.success('Export erstellt');
     } catch (e) {
       toast.error('Export fehlgeschlagen: ' + (e as Error).message);
+    } finally { setBusy(null); setProgress(null); }
+  };
+
+  const exportPdf = async () => {
+    setBusy('pdf'); setProgress({ done: 0, total: 0 });
+    try {
+      const blob = await buildMonthPdf(period, settings, (done, total) => setProgress({ done, total }));
+      downloadBlob(blob, `Rechnungen_${period.label}.pdf`);
+      toast.success('PDF erstellt');
+    } catch (e) {
+      toast.error('PDF fehlgeschlagen: ' + (e as Error).message);
     } finally { setBusy(null); setProgress(null); }
   };
 
@@ -152,6 +163,12 @@ export default function ExportPage() {
             {busy === 'zip'
               ? `PDFs werden erzeugt … ${progress?.done ?? 0}/${progress?.total ?? 0}`
               : 'Komplett-Export als ZIP'}
+          </Button>
+          <Button variant="outline" className="gap-2" disabled={!!busy || !sum?.count} onClick={exportPdf}>
+            {busy === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            {busy === 'pdf'
+              ? `PDF wird erzeugt … ${progress?.done ?? 0}/${progress?.total ?? 0}`
+              : 'Alle Rechnungen als ein PDF'}
           </Button>
           <Button variant="outline" className="gap-2" disabled={!!busy || !sum?.count} onClick={exportCsv}>
             {busy === 'csv' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}

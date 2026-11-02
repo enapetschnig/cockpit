@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
 import { supabase } from '@/integrations/supabase/client';
 import { buildDocumentPdf, epcQr } from '@/lib/documentPdf';
 import type { BillingDocument, CashBookEntry, CompanySettings, DocumentItem } from '@/types/billing';
@@ -14,7 +15,9 @@ let cancelledInPeriod: BillingDocument[] = [];
 
 export const monthPeriod = (year: number, month: number): Period => {
   const from = `${year}-${String(month).padStart(2, '0')}-01`;
-  const to = new Date(year, month, 0).toISOString().slice(0, 10);
+  // Letzter Tag ohne toISOString – das rechnet in UTC um und machte in Österreich aus dem 31. den 30.
+  // (Rechnungen vom Monatsletzten fehlten so im Export, z. B. 1436–1438 vom 30.09.2026.)
+  const to = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
   return { from, to, label: `${String(month).padStart(2, '0')}-${year}` };
 };
 export const yearPeriod = (year: number): Period => ({ from: `${year}-01-01`, to: `${year}-12-31`, label: String(year) });
@@ -192,6 +195,74 @@ export async function buildExportZip(
   zip.file(`UVA_Zusammenfassung_${p.label}.txt`, '﻿' + uva);
 
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+}
+
+/**
+ * Alle Rechnungen des Zeitraums in EINEM PDF für den Steuerberater:
+ * vorne eine Übersicht (Rechnungsjournal + USt je Satz), dahinter jede Rechnung
+ * im gewohnten Layout. Stornos wie im ZIP nicht enthalten, aber auf der Übersicht erwähnt.
+ */
+export async function buildMonthPdf(
+  p: Period, settings: CompanySettings | null, onProgress?: (done: number, total: number) => void,
+): Promise<Blob> {
+  const { docs, items, cash } = await loadPeriod(p);
+  const sum = summarize(docs, items, cash);
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const H = pdf.internal.pageSize.getHeight();
+  const eurDe = (n: unknown) => `${num(n)} €`;
+
+  // Übersicht
+  let y = 18;
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15);
+  pdf.text(`Rechnungen ${p.label}`, 14, y); y += 6;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+  pdf.text(`${settings?.company_name || ''}${settings?.uid_number ? ` · UID ${settings.uid_number}` : ''} · Zeitraum ${dateDe(p.from)} bis ${dateDe(p.to)}`, 14, y);
+  y += 9;
+  const spalten = [14, 30, 52, 128, 150, 172]; // Nr, Datum, Kunde, Netto, USt, Brutto (rechtsbündig ab 128)
+  const kopf = () => {
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Nr.', spalten[0], y); pdf.text('Datum', spalten[1], y); pdf.text('Kunde', spalten[2], y);
+    pdf.text('Netto', 146, y, { align: 'right' }); pdf.text('USt', 168, y, { align: 'right' }); pdf.text('Brutto', 196, y, { align: 'right' });
+    pdf.setFont('helvetica', 'normal');
+    y += 2; pdf.line(14, y, 196, y); y += 5;
+  };
+  kopf();
+  for (const d of docs) {
+    if (y > H - 20) { pdf.addPage(); y = 18; kopf(); }
+    const sign = d.kind === 'credit_note' ? -1 : 1;
+    const kunde = (d.recipient_company || d.recipient_name || '').slice(0, 44) + (d.kind === 'credit_note' ? ' (Gutschrift)' : '');
+    pdf.text(d.number || '', spalten[0], y); pdf.text(dateDe(d.doc_date), spalten[1], y); pdf.text(kunde, spalten[2], y);
+    pdf.text(eurDe(sign * Number(d.net || 0)), 146, y, { align: 'right' });
+    pdf.text(eurDe(sign * Number(d.vat || 0)), 168, y, { align: 'right' });
+    pdf.text(eurDe(sign * Number(d.gross || 0)), 196, y, { align: 'right' });
+    y += 5;
+  }
+  if (y > H - 50) { pdf.addPage(); y = 18; }
+  pdf.line(14, y - 2, 196, y - 2); y += 3;
+  pdf.setFont('helvetica', 'bold');
+  pdf.text(`Summe (${sum.count} Belege)`, spalten[2], y);
+  pdf.text(eurDe(sum.net), 146, y, { align: 'right' }); pdf.text(eurDe(sum.vat), 168, y, { align: 'right' }); pdf.text(eurDe(sum.gross), 196, y, { align: 'right' });
+  pdf.setFont('helvetica', 'normal'); y += 9;
+  for (const r of sum.byRate) { pdf.text(`Entgelte ${r.rate} %: ${eurDe(r.net)}   USt: ${eurDe(r.vat)}`, 14, y); y += 5; }
+  if (sum.cancelledCount) { y += 2; pdf.text(`Stornierte Belege (nicht enthalten): ${sum.cancelledCount} über ${eurDe(sum.cancelledSum)}`, 14, y); y += 5; }
+  y += 2;
+  pdf.setFontSize(8);
+  pdf.text('Sollversteuerung (Ausstellungsdatum). Die einzelnen Rechnungen folgen auf den nächsten Seiten.', 14, y);
+
+  // Rechnungen dahinter
+  for (let i = 0; i < docs.length; i++) {
+    const d = docs[i];
+    try {
+      let qr: string | null = null;
+      if (settings?.iban) {
+        qr = await epcQr({ name: settings.company_name || '', iban: settings.iban, bic: settings.bic || '',
+          amount: Number(d.gross) || 0, reference: d.number || '' });
+      }
+      buildDocumentPdf(d, items[d.id] || [], settings, qr, pdf);
+    } catch { /* einzelner Beleg darf den Export nicht stoppen */ }
+    onProgress?.(i + 1, docs.length);
+  }
+  return pdf.output('blob');
 }
 
 export function downloadBlob(blob: Blob, name: string) {
