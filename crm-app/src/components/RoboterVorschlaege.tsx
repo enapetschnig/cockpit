@@ -21,6 +21,7 @@ export interface RoboterAuftrag {
   id: string;
   app_key: string;
   wunsch_ids: string[];
+  live_am?: string | null;
   status: string;
   vorschlag: string | null;
   aufwand: string | null;
@@ -407,14 +408,18 @@ const FERTIG: Record<string, string> = { erledigt: '✓ Live', abgelehnt: 'Abgel
 const kuerzen = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Was der Roboter bei einem Kunden schon erledigt (oder verworfen) hat – kompakt, zum Aufklappen. */
-export function RoboterVerlauf({ appKey }: { appKey: string }) {
+/** Ohne appKey: die letzten 20 erledigten Änderungen über alle Kunden, oben auf „Wünsche“ zum Aufklappen (03.11.2026). */
+export function RoboterVerlauf({ appKey }: { appKey?: string }) {
   const [liste, setListe] = useState<RoboterAuftrag[] | null>(null);
   const [texte, setTexte] = useState<Record<string, { text: string; melder: string | null }>>({});
   useEffect(() => {
     let aktiv = true;
     (async () => {
-      const { data } = await db.from('roboter_auftraege').select('*').eq('app_key', appKey)
-        .in('status', Object.keys(FERTIG)).order('aktualisiert', { ascending: false }).limit(30);
+      const { data } = appKey
+        ? await db.from('roboter_auftraege').select('*').eq('app_key', appKey)
+          .in('status', Object.keys(FERTIG)).order('aktualisiert', { ascending: false }).limit(30)
+        : await db.from('roboter_auftraege').select('*').eq('status', 'erledigt')
+          .order('live_am', { ascending: false, nullsFirst: false }).limit(20);
       const auftraege = (data as RoboterAuftrag[]) || [];
       const ids = [...new Set(auftraege.flatMap((a) => a.wunsch_ids))];
       const { data: ws } = ids.length
@@ -428,15 +433,8 @@ export function RoboterVerlauf({ appKey }: { appKey: string }) {
   }, [appKey]);
 
   if (!liste?.length) return null;
-  const kunde = APP_LABEL[appKey] ?? appKey;
-  return (
-    <div className="mb-4">
-      <div className="flex flex-wrap items-baseline gap-x-2 mb-1.5">
-        <h3 className="text-sm font-semibold">Verlauf beim Roboter</h3>
-        <span className="text-[11px] text-muted-foreground">
-          {liste.length} erledigt · ganzer Verlauf: VS Code (epower-pc) → Projektordner → Claude → „Roboter · {kunde}“
-        </span>
-      </div>
+  const kunde = appKey ? APP_LABEL[appKey] ?? appKey : '';
+  const zeilen = (
       <div className="rounded-xl border divide-y bg-card">
         {liste.map((a) => {
           const erster = texte[a.wunsch_ids[0]]?.text ?? a.anmerkung ?? '';
@@ -444,11 +442,12 @@ export function RoboterVerlauf({ appKey }: { appKey: string }) {
             <details key={a.id} className="group px-3 py-2 text-sm">
               <summary className="cursor-pointer list-none flex items-baseline gap-2">
                 <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
-                  {new Date(a.aktualisiert).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit' })}
+                  {new Date(a.live_am ?? a.aktualisiert).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit' })}
                 </span>
                 <span className={'text-[11px] shrink-0 ' + (a.status === 'erledigt' ? 'text-green-700 font-medium' : 'text-muted-foreground')}>
                   {FERTIG[a.status]}{a.yolo ? ' ⚡' : ''}
                 </span>
+                {!appKey && <span className="text-[11px] font-semibold shrink-0">{APP_LABEL[a.app_key] ?? a.app_key}</span>}
                 <span className="truncate">{kuerzen(erster.replace(/\s+/g, ' '), 110)}</span>
                 {a.wunsch_ids.length > 1 && <span className="text-[11px] text-muted-foreground shrink-0">+{a.wunsch_ids.length - 1}</span>}
               </summary>
@@ -466,6 +465,26 @@ export function RoboterVerlauf({ appKey }: { appKey: string }) {
           );
         })}
       </div>
+  );
+  if (!appKey) {
+    return (
+      <details className="mb-4 group/verlauf">
+        <summary className="cursor-pointer text-sm font-semibold select-none">
+          Verlauf – die letzten {liste.length} Änderungen über alle Kunden
+        </summary>
+        <div className="mt-1.5">{zeilen}</div>
+      </details>
+    );
+  }
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-baseline gap-x-2 mb-1.5">
+        <h3 className="text-sm font-semibold">Verlauf beim Roboter</h3>
+        <span className="text-[11px] text-muted-foreground">
+          {liste.length} erledigt · ganzer Verlauf: VS Code (epower-pc) → Projektordner → Claude → „Roboter · {kunde}“
+        </span>
+      </div>
+      {zeilen}
     </div>
   );
 }

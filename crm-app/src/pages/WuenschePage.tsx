@@ -211,6 +211,8 @@ export default function WuenschePage() {
           Änderungswünsche, Fehler und Fragen aus allen Handwerker-Apps. Die Apps melden selbstständig hierher.
         </p>
 
+        {!fApp && <RoboterVerlauf />}
+
         <RoboterVorschlaege auftraege={auftraege} puls={puls} laden={ladenRoboter}
           texte={Object.fromEntries(items.map((w) => [w.id, { text: w.text, melder: w.melder }]))} />
 
