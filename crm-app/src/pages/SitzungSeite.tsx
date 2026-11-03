@@ -76,9 +76,10 @@ export default function SitzungSeite() {
     return () => clearInterval(t);
   }, [laden, eigeneNachladen, arbeitet]);
 
-  // Offen = der Roboter spiegelt auch, was in VS Code oder bei einem Auftrag in dieser Sitzung weiterläuft
+  // Offen = der Roboter spiegelt auch, was in VS Code oder bei einem Auftrag in dieser Sitzung weiterläuft.
+  // .then() ist nötig: ohne läuft die Abfrage nie los (Supabase schickt erst beim Abwarten)
   useEffect(() => {
-    const melden = () => db.from('cockpit_sitzungen').update({ beobachten_bis: new Date(Date.now() + 3 * 60_000).toISOString() }).eq('id', id);
+    const melden = () => db.from('cockpit_sitzungen').update({ beobachten_bis: new Date(Date.now() + 3 * 60_000).toISOString() }).eq('id', id).then(() => {});
     melden();
     const t = setInterval(melden, 60_000);
     return () => clearInterval(t);
