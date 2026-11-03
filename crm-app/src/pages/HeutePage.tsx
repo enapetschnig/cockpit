@@ -194,11 +194,11 @@ export default function HeutePage() {
             <h1 className="text-xl font-semibold">Heute</h1>
             <p className="text-sm text-muted-foreground">{datum}</p>
           </div>
-          <Link to="/wuensche" className={'text-xs ' + (puls.laeuft ? 'text-green-700' : 'text-red-600 font-medium')}>
+          <Link to="/apps" className={'text-xs ' + (puls.laeuft ? 'text-green-700' : 'text-red-600 font-medium')}>
             {puls.laeuft
               ? `● Roboter läuft${daten.puls?.meldung && daten.puls.meldung !== 'bereit' ? ` – ${einSatz(daten.puls.meldung, 60)}` : ''}`
               : puls.minuten === null ? '○ Roboter noch nie gestartet'
-              : `○ Roboter steht – seit ${puls.minuten >= 120 ? `${Math.round(puls.minuten / 60)} Std.` : `${puls.minuten} Min.`} kein Lebenszeichen (PC aus?)`}
+              : `○ Roboter steht – seit ${puls.minuten >= 120 ? `${Math.round(puls.minuten / 60)} Std.` : `${puls.minuten} Min.`} kein Lebenszeichen (Devbox aus?)`}
           </Link>
         </div>
 

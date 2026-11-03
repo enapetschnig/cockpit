@@ -32,5 +32,6 @@ Cockpit über den runden Knopf rechts unten (seit 02.11.2026), der Roboter setzt
 ## Wissen nach Thema
 
 - Doku je Funktion: `docs/`.
+- Apps & Claude-Sitzungen am Handy (`/apps`, Roboter steuern, Verlauf live): `docs/14-handy-sitzungen.md`.
 - „Änderung melden“ im Cockpit: `crm-app/src/components/aenderungswunsch/`, Dateien im Ablagebereich
   `cockpit-wuensche`, Abschrift per Edge Function `wunsch-abschrift`, Wünsche in `crm.app_wuensche` (app_key `cockpit`).

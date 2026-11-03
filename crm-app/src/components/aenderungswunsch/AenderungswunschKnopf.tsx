@@ -25,7 +25,8 @@ export function CockpitMelden() {
   const [seite, setSeite] = useState("");
   const [arbeitet, setArbeitet] = useState(false);
 
-  if (!user || ort.pathname.startsWith("/auth")) return null;
+  // In einer Claude-Sitzung schreibt man ohnehin direkt an Claude – dort läge der Knopf auf dem Senden-Knopf.
+  if (!user || ort.pathname.startsWith("/auth") || /^\/apps\/[^/]+\/[^/]+/.test(ort.pathname)) return null;
 
   const starten = async () => {
     if (aufnahmeStand() === "laeuft" || aufnahmeStand() === "startet") return;
@@ -52,8 +53,8 @@ export function CockpitMelden() {
           title="Änderung melden – Bild vom Bildschirm ist automatisch dabei"
           aria-label="Änderung melden"
           data-bildschirmfoto="aus"
-          // Im Beleg-Editor liegt unten die Aktionsleiste – dann darüber.
-          className={`fixed ${ort.pathname.startsWith("/beleg/") ? "bottom-24" : "bottom-4"} right-4 z-40 h-10 w-10 rounded-full shadow-md bg-background/90 backdrop-blur hover:bg-accent print:hidden`}
+          // Im Beleg-Editor liegt unten die Aktionsleiste – dann darüber. Am Handy über der Leiste unten (--unten).
+          className={`fixed ${ort.pathname.startsWith("/beleg/") ? "bottom-24" : "bottom-[calc(var(--unten)+1rem)]"} right-4 z-40 h-10 w-10 rounded-full shadow-md bg-background/90 backdrop-blur hover:bg-accent print:hidden`}
         >
           <MessageSquarePlus className="h-5 w-5" />
         </Button>

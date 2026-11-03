@@ -29,6 +29,9 @@ import VertraegePage from './pages/VertraegePage';
 import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
 import WartungPage from './pages/WartungPage';
+import AppsPage from './pages/AppsPage';
+import AppSeite from './pages/AppSeite';
+import SitzungSeite from './pages/SitzungSeite';
 import { CockpitMelden } from '@/components/aenderungswunsch/AenderungswunschKnopf';
 
 const queryClient = new QueryClient();
@@ -157,6 +160,9 @@ const App = () => (
           <Route path="/vertraege" element={<ProtectedRoute><VertraegePage /></ProtectedRoute>} />
           <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
           <Route path="/wartung" element={<ProtectedRoute><WartungPage /></ProtectedRoute>} />
+          <Route path="/apps" element={<ProtectedRoute><AppsPage /></ProtectedRoute>} />
+          <Route path="/apps/:key" element={<ProtectedRoute><AppSeite /></ProtectedRoute>} />
+          <Route path="/apps/:key/:id" element={<ProtectedRoute><SitzungSeite /></ProtectedRoute>} />
           {/* Öffentlich: der Kunde kommt nur mit seinem Link hierher, ohne Login. */}
           <Route path="/unterschreiben/:token" element={<Unterschreiben />} />
           <Route path="*" element={<NotFound />} />
