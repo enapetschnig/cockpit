@@ -132,7 +132,7 @@ async function tagesstand(frueh: boolean, woche: boolean, probe: boolean) {
     where im_tagesstand_am is null and art not in ('lehre', 'gegenprobe') and erstellt_am > now() - interval '7 days'
     order by erstellt_am limit 30`;
   if (notizen.length) {
-    const titel: Record<string, string> = { notfall: "🚨 Notfall (schon gemeldet)", zurueckgerollt: "↩️ Zurückgestellt", appcheck: "🔍 App-Check" };
+    const titel: Record<string, string> = { notfall: "🚨 Notfall (schon gemeldet)", zurueckgerollt: "↩️ Zurückgestellt", appcheck: "🔍 App-Check", haengt: "⏳ Hängt" };
     z.push("", "<b>Bemerkt</b>");
     for (const n of notizen) z.push(`• ${titel[n.art] ?? n.art}: ${esc(kuerzen(n.text, 220))}`);
     zuTun += notizen.filter((n) => n.art !== "zurueckgerollt").length;
