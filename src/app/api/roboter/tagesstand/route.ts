@@ -162,8 +162,8 @@ async function tagesstand(frueh: boolean, woche: boolean, probe: boolean) {
         (select count(*) from crm.app_wuensche where erstellt_am > now() - interval '7 days')::int as wuensche,
         (select count(*) from crm.roboter_auftraege where status = 'erledigt' and live_am > now() - interval '7 days')::int as erledigt,
         (select count(*) from crm.roboter_auftraege where wartet_seit > now() - interval '7 days')::int as rueck,
-        (select count(*) from crm.app_wuensche where erstellt_am > now() - interval '7 days'
-           and text ~* '(noch immer|immer noch|nach wie vor|stimmt (noch )?(immer )?nicht|geht (noch )?(immer )?nicht|schon wieder|wieder falsch)')::int as rueckmelder,
+        -- echte Rückmelder: vom Auftrag selbst bestätigt ("rueckmelder" echt: true), nicht nur nach Stichworten (03.11.2026)
+        (select count(*) from crm.roboter_notizen where art = 'rueckmelder' and erstellt_am > now() - interval '7 days')::int as rueckmelder,
         (select count(*) from crm.roboter_notizen where art = 'gegenprobe' and erstellt_am > now() - interval '7 days')::int as gegen,
         (select count(*) from crm.roboter_notizen where art = 'zurueckgerollt' and erstellt_am > now() - interval '7 days')::int as zurueck`;
     z.push("", `<b>Letzte Woche:</b> ${w.wuensche} Wünsche · ${w.erledigt} erledigt · ${w.rueck} Rücksprachen · ${w.rueckmelder} kamen wieder („geht noch immer nicht“) · Gegenprobe hat ${w.gegen}× nachgebessert · ${w.zurueck}× zurückgestellt`);
