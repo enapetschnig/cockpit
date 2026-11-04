@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { naechsteRechnungsnummer, saveDocument, useCompanySettings } from '@/hooks/useBilling';
-import { plusMonate, speichereWartung, useWartung, type WartungZeile, type WartungStatus } from '@/hooks/useWartung';
+import { plusMonate, speichereWartung, useWartung, wartungSumme, type WartungZeile, type WartungStatus } from '@/hooks/useWartung';
 import { supabase } from '@/integrations/supabase/client';
 import { eur, fmtDate, round2 } from '@/types/billing';
 import { Wrench, Receipt, AlarmClock, EyeOff, Eye, Check, FileText } from 'lucide-react';
@@ -123,7 +123,7 @@ export default function WartungPage() {
   };
 
   const sichtbar = zeilen.filter((z) => zeigeKeine || z.status !== 'kein');
-  const summeMonat = zeilen.filter((z) => z.status === 'aktiv').reduce((a, z) => a + z.monatlich, 0);
+  const summe = wartungSumme(zeilen);
 
   return (
     <div className="min-h-screen bg-background">
@@ -135,13 +135,31 @@ export default function WartungPage() {
             <p className="text-sm text-muted-foreground">
               Aus allen Rechnungen zusammengesucht: {zeilen.length} verkaufte Softwares
               {faellig.length > 0 && <> · <span className="text-amber-700 font-medium">{faellig.length} fällig oder bald fällig</span></>}
-              {summeMonat > 0 && <> · aktiv {eur(summeMonat)}/Monat</>}
             </p>
           </div>
           <Button size="sm" variant="ghost" className="gap-1 text-xs" onClick={() => setZeigeKeine((v) => !v)}>
             {zeigeKeine ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />} {zeigeKeine ? 'Ausgeblendete verstecken' : 'Ausgeblendete zeigen'}
           </Button>
         </div>
+
+        {!isLoading && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {[
+              ['Kunden mit Wartung', String(summe.kunden), summe.aktiv.kunden ? `${summe.aktiv.kunden} davon aktiv` : 'noch keiner aktiv'],
+              ['pro Monat netto', eur(summe.monat), summe.aktiv.monat ? `aktiv ${eur(summe.aktiv.monat)}` : ''],
+              ['pro Jahr netto', eur(summe.jahr), summe.aktiv.jahr ? `aktiv ${eur(summe.aktiv.jahr)}` : ''],
+            ].map(([t, w, u]) => (
+              <Card key={t} className="p-3">
+                <div className="text-[11px] text-muted-foreground">{t}</div>
+                <div className="text-xl font-bold tabular-nums">{w}</div>
+                {u && <div className="text-[11px] text-muted-foreground">{u}</div>}
+              </Card>
+            ))}
+            {summe.ausgeblendet > 0 && (
+              <p className="col-span-3 text-[11px] text-muted-foreground">{summe.ausgeblendet} ausgeblendet – zählen nicht mit.</p>
+            )}
+          </div>
+        )}
 
         <Card className="p-3 mb-4">
           <button type="button" className="text-sm font-semibold flex items-center gap-1.5 w-full text-left" onClick={() => setVorlageOffen((o) => !o)}>
@@ -201,6 +219,12 @@ export default function WartungPage() {
                         <Input type="number" step="1" className="h-8 w-24" value={w.monatlich} disabled={z.status === 'kein'}
                           onChange={(e) => setEdit((x) => ({ ...x, [z.key]: { ...x[z.key], monatlich: e.target.value === '' ? '' : Number(e.target.value) } }))} />
                       </div>
+                      {z.status !== 'kein' && (
+                        <div className="text-xs tabular-nums pb-1.5">
+                          <div className="text-[10px] text-muted-foreground">im Jahr</div>
+                          {eur(round2((Number(w.monatlich) || 0) * 12))}
+                        </div>
+                      )}
                       {geaendert && (
                         <Button size="sm" variant="outline" className="h-8 gap-1" disabled={busy === z.key} onClick={() => speichern(z)}>
                           <Check className="w-3.5 h-3.5" /> Speichern

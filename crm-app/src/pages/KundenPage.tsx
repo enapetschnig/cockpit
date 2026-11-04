@@ -8,15 +8,18 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/hooks/useBilling';
 import { BesprechungenBei } from '@/components/Besprechungen';
-import { customerLabel, type Customer } from '@/types/billing';
+import { customerLabel, eur, round2, type Customer } from '@/types/billing';
+import { useWartung, wartungJeKunde } from '@/hooks/useWartung';
 import { APPS } from '@/lib/apps';
-import { Search, Plus, FileText, Receipt, Mail, Phone } from 'lucide-react';
+import { Search, Plus, FileText, Receipt, Mail, Phone, Wrench } from 'lucide-react';
 
 export default function KundenPage() {
   const { customers, isLoading, save } = useCustomers();
   const [q, setQ] = useState('');
   const [edit, setEdit] = useState<Partial<Customer> | null>(null);
   const navigate = useNavigate();
+  const { zeilen: wartungZeilen } = useWartung();
+  const wartung = useMemo(() => wartungJeKunde(wartungZeilen), [wartungZeilen]);
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -33,7 +36,8 @@ export default function KundenPage() {
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h1 className="text-2xl font-bold">Kunden</h1>
-            <p className="text-sm text-muted-foreground">{customers.length} Kunden · zeigt {list.length}</p>
+            <p className="text-sm text-muted-foreground">{customers.length} Kunden · zeigt {list.length}
+              {wartung.size > 0 && <> · {wartung.size} mit Wartung</>}</p>
           </div>
           <Button className="gap-2" onClick={() => setEdit({})}><Plus className="w-4 h-4" /> Neuer Kunde</Button>
         </div>
@@ -58,6 +62,11 @@ export default function KundenPage() {
                   </button>
                   {c.source === 'hellocash' && <Badge variant="outline" className="text-[9px] shrink-0">Import</Badge>}
                 </div>
+                {wartung.has(c.id) && (
+                  <button className="mt-1.5 text-xs flex items-center gap-1 text-emerald-700 tabular-nums" onClick={() => navigate('/wartung')}>
+                    <Wrench className="w-3 h-3" /> Wartung {eur(wartung.get(c.id)!)}/Monat · {eur(round2(wartung.get(c.id)! * 12))}/Jahr
+                  </button>
+                )}
                 <div className="flex gap-1 mt-2">
                   <Button size="sm" variant="outline" className="gap-1 flex-1 text-xs"
                     onClick={() => navigate(`/beleg/neu?kind=offer&customer=${c.id}`)}>

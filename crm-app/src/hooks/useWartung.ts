@@ -129,6 +129,31 @@ export function useWartung() {
   return { zeilen, faellig, isLoading, reload: load, heute };
 }
 
+/**
+ * Was die Wartung bringt: alle nicht ausgeblendeten Zeilen (ausgeblendet =
+ * z. B. Firma doppelt drin, zählt nirgends mit). Kunden = verschiedene Kunden.
+ */
+export function wartungSumme(zeilen: WartungZeile[]) {
+  const zaehlt = zeilen.filter((z) => z.status !== 'kein');
+  const kundeVon = (z: WartungZeile) => z.vertrag?.customer_id ?? z.verkauf?.customer_id ?? z.kunde.trim().toLowerCase();
+  const teil = (l: WartungZeile[]) => {
+    const monat = round2(l.reduce((a, z) => a + z.monatlich, 0));
+    return { kunden: new Set(l.map(kundeVon)).size, monat, jahr: round2(monat * 12) };
+  };
+  return { ...teil(zaehlt), aktiv: teil(zaehlt.filter((z) => z.status === 'aktiv')), ausgeblendet: zeilen.length - zaehlt.length };
+}
+
+/** Wartung je Kunde (customer_id → €/Monat), ohne ausgeblendete. */
+export function wartungJeKunde(zeilen: WartungZeile[]) {
+  const m = new Map<string, number>();
+  for (const z of zeilen) {
+    const id = z.vertrag?.customer_id ?? z.verkauf?.customer_id;
+    if (!id || z.status === 'kein') continue;
+    m.set(id, round2((m.get(id) || 0) + z.monatlich));
+  }
+  return m;
+}
+
 /** Wartungsvertrag anlegen oder ändern – aus einer Zeile heraus. */
 export async function speichereWartung(z: WartungZeile, patch: Partial<Wartungsvertrag>, userId: string): Promise<string | null> {
   const basis = {
