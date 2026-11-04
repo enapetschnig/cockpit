@@ -17,6 +17,8 @@ export const maxDuration = 60;
  *    montags früh die Wochenzahlen. Steht nichts an, kommt sie leise.
  *  - Wachhund: steht der Roboter (kein Puls seit 20 Min) und es liegt Arbeit da → sofort 🚨, höchstens alle 3 Std,
  *    nur zwischen 6 und 22 Uhr (nachts steht es dann im Tagesstand um 7).
+ *  - Achtung (seit 04.11.2026): sofort, wenn Christoph handeln muss, etwas öfter danebengeht oder ein Kunde sauer
+ *    klingt – siehe achtung().
  */
 function cronErlaubt(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -51,7 +53,7 @@ async function einmal(key: string): Promise<boolean> {
 export async function GET(req: Request) {
   if (!cronErlaubt(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const jetzt = wien();
-  const ergebnis: Record<string, unknown> = { wachhund: await wachhund(jetzt.stunde) };
+  const ergebnis: Record<string, unknown> = { wachhund: await wachhund(jetzt.stunde), achtung: await achtung(jetzt.stunde) };
   // Zum Testen: ?jetzt=1 schickt den Tagesstand sofort (ohne Marke, ändert „zuletzt“ nicht).
   const probe = new URL(req.url).searchParams.get("jetzt") === "1";
   if (probe || jetzt.stunde === 7 || jetzt.stunde === 18) {
@@ -64,6 +66,7 @@ export async function GET(req: Request) {
   }
   // Alte Marken aufräumen.
   await prisma.setting.deleteMany({ where: { key: { startsWith: "TAGESSTAND:" }, updatedAt: { lt: new Date(Date.now() - 3 * 86400_000) } } });
+  await prisma.setting.deleteMany({ where: { key: { startsWith: "ACHTUNG:" }, updatedAt: { lt: new Date(Date.now() - 30 * 86400_000) } } });
   return NextResponse.json(ergebnis);
 }
 
@@ -83,6 +86,72 @@ async function wachhund(stunde: number) {
   const dauer = minuten >= 120 ? `${Math.round(minuten / 60)} Std.` : `${minuten} Min.`;
   await sendTelegram(`🚨 <b>Roboter steht</b> seit ${dauer} – ${arbeit.n} ${arbeit.n === 1 ? "Sache wartet" : "Sachen warten"}. Ist der PC an? Am PC: <code>systemctl --user restart roboter</code>`);
   return { ok: false, minuten, gemeldet: true };
+}
+
+/** Klingt der Kunde verärgert? Bewusst eng gefasst – lieber einmal zu wenig als ständig Fehlalarm. */
+const SAUER = /(!!!|immer noch nicht|noch immer nicht|schon wieder nicht|nach wie vor nicht|wieder kaputt|umgehend|sauer|ärgerlich|verärgert|unzufrieden|katastroph|frechheit|inakzeptabel|nicht akzeptabel|kündig|reicht (jetzt|mir)|seit tagen|seit wochen|geht gar nicht|so geht das nicht)/i;
+
+/**
+ * Sofort Bescheid, wenn Christoph handeln muss oder etwas komisch ist (04.11.2026, Christoph: „wenn irgendwas öfter
+ * danebengeht oder komisch ist … wenn ich handeln muss, wenn ein Kunde sauer ist“). Je Sache genau einmal
+ * (Marke ACHTUNG:…), alles in EINER Nachricht je Durchlauf. Nachts (22–6) wartet es, bis 6 Uhr.
+ */
+async function achtung(stunde: number) {
+  if (stunde < 6 || stunde >= 22) return { still: true };
+  const [auftraege, namen] = await Promise.all([aktiveAuftraege(), kundenNamen()]);
+  const name = (k: string | null) => esc(k ? namen.get(k) ?? k : "Roboter");
+  const punkte: { key: string; zeile: string; knopf?: Knopf }[] = [];
+
+  // 1) Ein Auftrag braucht Christoph (Rücksprache, ging nicht, Datenbank freigeben …).
+  for (const a of auftraege.filter((x) => WARTET_AUF_DICH.includes(x.status))) {
+    const was = a.status === "fehler" ? "⚠️ ging nicht" : a.status === "wartet" ? "❓ braucht deine Entscheidung" : a.status === "db_freigabe" ? "🗄 Datenbank freigeben" : "🟢 bitte ansehen";
+    punkte.push({
+      key: `ACHTUNG:auftrag:${a.id}:${a.status}`,
+      zeile: `• ${name(a.app_key)} – ${was}${a.fehler ? `: ${esc(kuerzen(ohneMarkdown(a.fehler), 160))}` : ""}`,
+      knopf: { text: `📄 ${kuerzen(namen.get(a.app_key) ?? a.app_key, 30)}`, data: `rob:zeig:${a.id}` },
+    });
+  }
+
+  // 2) Geht öfter daneben: Kunde meldet dasselbe nochmal, Auftrag hängt, zurückgerollt, App-Check findet was.
+  const notizen = await prisma.$queryRaw<{ id: string; art: string; app_key: string | null; text: string }[]>`
+    select id::text as id, art, app_key, text from crm.roboter_notizen
+    where art in ('rueckmelder', 'haengt', 'zurueckgerollt', 'appcheck') and erstellt_am > now() - interval '2 days'
+    order by erstellt_am limit 20`;
+  const titel: Record<string, string> = { rueckmelder: "🔁 kam wieder (Kunde sagt: geht noch nicht)", haengt: "⏳ hängt", zurueckgerollt: "↩️ nach dem Deploy kaputt, zurückgestellt", appcheck: "🔍 App-Check" };
+  for (const n of notizen) punkte.push({ key: `ACHTUNG:notiz:${n.id}`, zeile: `• ${name(n.app_key)} – ${titel[n.art]}: ${esc(kuerzen(n.text, 200))}` });
+
+  // 3) Mehrere Fehlversuche bei einem Kunden in 24 Std. (zurückgerollt/hängt öfter) → einmal am Tag zusammengefasst.
+  const oft = await prisma.$queryRaw<{ app_key: string; n: number }[]>`
+    select app_key, count(*)::int as n from crm.roboter_notizen
+    where art in ('haengt', 'zurueckgerollt', 'notfall') and app_key is not null and erstellt_am > now() - interval '24 hours'
+    group by app_key having count(*) >= 2`;
+  const tag = new Date().toISOString().slice(0, 10);
+  for (const o of oft) punkte.push({ key: `ACHTUNG:oft:${o.app_key}:${tag}`, zeile: `• ${name(o.app_key)} – ${o.n}× daneben in 24 Std., bitte mal draufschauen` });
+
+  // 4) Kunde klingt verärgert.
+  const wuensche = await prisma.$queryRaw<{ id: string; app_key: string; text: string; melder: string | null }[]>`
+    select id::text as id, app_key, text, melder from crm.app_wuensche
+    where erstellt_am > now() - interval '1 day' and coalesce(text, '') <> '' order by erstellt_am`;
+  for (const w of wuensche.filter((x) => SAUER.test(x.text))) {
+    punkte.push({ key: `ACHTUNG:sauer:${w.id}`, zeile: `• ${name(w.app_key)}${w.melder ? ` (${esc(kuerzen(w.melder, 40))})` : ""} – 😠 klingt verärgert: „${esc(kuerzen(ohneMarkdown(w.text), 180))}“` });
+  }
+
+  // 5) Wünsche bleiben liegen: über 3 Std. ohne Auftrag (der Roboter sollte sie längst haben) – einmal je Kunde und Tag.
+  const liegen = await prisma.$queryRaw<{ app_key: string; n: number }[]>`
+    select w.app_key, count(*)::int as n from crm.app_wuensche w
+    where w.status = 'neu' and w.erledigt_am is null and w.erstellt_am between now() - interval '3 days' and now() - interval '3 hours'
+      and not exists (select 1 from crm.roboter_auftraege a where w.id = any(a.wunsch_ids))
+    group by w.app_key`;
+  for (const l of liegen) punkte.push({ key: `ACHTUNG:liegt:${l.app_key}:${tag}`, zeile: `• ${name(l.app_key)} – ${l.n === 1 ? "1 Wunsch liegt" : `${l.n} Wünsche liegen`} seit über 3 Std., der Roboter nimmt ${l.n === 1 ? "ihn" : "sie"} nicht auf` });
+
+  // Nur Neues melden – Marke vorab setzen, bei Sendefehler wieder entfernen.
+  const neu: typeof punkte = [];
+  for (const p of punkte) if (await einmal(p.key)) neu.push(p);
+  if (!neu.length) return { neu: 0 };
+  const buttons = neu.filter((p) => p.knopf).map((p) => [p.knopf!]);
+  const r = await sendTelegram(["👀 <b>Achtung</b>", ...neu.map((p) => p.zeile)].join("\n"), buttons.length ? { buttons } : {});
+  if (!r.ok) await prisma.setting.deleteMany({ where: { key: { in: neu.map((p) => p.key) } } });
+  return { neu: neu.length, ok: r.ok };
 }
 
 async function tagesstand(frueh: boolean, woche: boolean, probe: boolean) {
