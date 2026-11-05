@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { APP_LABEL, APPS } from '@/lib/apps';
-import { Loader2, Image as ImageIcon, Check, Inbox, MonitorPlay } from 'lucide-react';
+import { Loader2, Image as ImageIcon, Check, Inbox, MonitorPlay, Paperclip } from 'lucide-react';
 import { RoboterKnopf, RoboterVerlauf, RoboterVorschlaege, useRoboter } from '@/components/RoboterVorschlaege';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -386,25 +386,39 @@ export default function WuenschePage() {
 
               {/* Weitere Fotos aus der App – das erste ist oft schon das Bild oben. */}
               {token && (() => {
-                const weitere = (w.anhaenge ?? []).map((p, nr) => ({ p, nr })).filter(({ p }) => p !== w.bild_pfad);
-                if (!weitere.length) return null;
+                const alle = (w.anhaenge ?? []).map((p, nr) => ({ p, nr })).filter(({ p }) => p !== w.bild_pfad);
+                const weitere = alle.filter(({ p }) => /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(p));
+                // PDFs, Excel, Word … aus der App (seit 05.11.2026): zum Öffnen, nicht als Bild.
+                const dateien = alle.filter(({ p }) => !weitere.some((b) => b.p === p));
+                if (!alle.length) return null;
                 return (
-                  <div className="mt-3">
-                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                      <ImageIcon className="w-3 h-3" /> {weitere.length} weitere{weitere.length === 1 ? 's' : ''} Foto{weitere.length === 1 ? '' : 's'} – Klick vergrößert
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {weitere.map(({ nr }) => {
-                        const k = `${w.id}:${nr}`;
-                        return (
-                          <img key={nr} src={datei(w, 'bild', nr)} alt={`Foto ${nr + 1} aus der App`} loading="lazy"
-                            onClick={() => setBildOffen(bildOffen === k ? null : k)}
-                            className={'rounded-lg border bg-muted/30 ' +
-                              (bildOffen === k ? 'w-full cursor-zoom-out' : 'h-28 max-w-[10rem] object-cover cursor-zoom-in')}
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                        );
-                      })}
-                    </div>
+                  <div className="mt-3 space-y-2">
+                    {weitere.length > 0 && (
+                      <div>
+                        <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                          <ImageIcon className="w-3 h-3" /> {weitere.length} weitere{weitere.length === 1 ? 's' : ''} Foto{weitere.length === 1 ? '' : 's'} – Klick vergrößert
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {weitere.map(({ nr }) => {
+                            const k = `${w.id}:${nr}`;
+                            return (
+                              <img key={nr} src={datei(w, 'bild', nr)} alt={`Foto ${nr + 1} aus der App`} loading="lazy"
+                                onClick={() => setBildOffen(bildOffen === k ? null : k)}
+                                className={'rounded-lg border bg-muted/30 ' +
+                                  (bildOffen === k ? 'w-full cursor-zoom-out' : 'h-28 max-w-[10rem] object-cover cursor-zoom-in')}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {dateien.map(({ p, nr }) => (
+                      <a key={nr} href={datei(w, 'bild', nr)} target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1.5 text-sm underline-offset-2 hover:underline">
+                        <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                        {(p.split('/').pop() ?? p).replace(/^\d+-anhang-\d+-/, '')}
+                      </a>
+                    ))}
                   </div>
                 );
               })()}
