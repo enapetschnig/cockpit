@@ -15,7 +15,6 @@ const ABGESCHALTET: { pfad: string; methode?: string }[] = [
   { pfad: "/api/gmail/sync" }, // Gmail-Sync
   { pfad: "/api/briefing" }, // Morgen-Briefing
   { pfad: "/api/buchhaltung/worker" }, // BMD-/Buchhaltungs-Worker
-  { pfad: "/api/ads/sync/crm-leads" }, // Meta-Leads → CRM
   // Nur der Cron-Lauf über alle Konten – POST (eigene Konten) braucht /werbung, auch die Kunden.
   { pfad: "/api/ads/sync/leads", methode: "GET" },
 ];
@@ -49,6 +48,8 @@ export async function middleware(req: NextRequest) {
   if (pathname === "/api/reminders") return NextResponse.next();
   // Tagesstand/Wachhund des Roboters (Vercel-Cron): prüft den CRON_SECRET genauso selbst.
   if (pathname === "/api/roboter/tagesstand") return NextResponse.next();
+  // Meta-Leads → CRM (Vercel-Cron): nur der GET-Lauf, die Route prüft den CRON_SECRET genauso selbst.
+  if (pathname === "/api/ads/sync/crm-leads" && req.method === "GET") return NextResponse.next();
 
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();

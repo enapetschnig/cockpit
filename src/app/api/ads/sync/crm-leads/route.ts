@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { syncAdLeadsToCrm } from "@/lib/crmLeadSync";
 import { getSessionUser } from "@/lib/authz";
@@ -22,16 +23,21 @@ async function run(sinceDays: number) {
   return results;
 }
 
-// GET – vom Cron aufgerufen (CRON_SECRET), holt die Leads der letzten Tage
+/**
+ * Cron-Schlüssel NUR per Header "Authorization: Bearer <CRON_SECRET>" (kein ?key= – der landet in
+ * Logs), zeitkonstant verglichen. Ohne CRON_SECRET bleibt die Route zu (die Middleware lässt sie durch).
+ */
+function cronErlaubt(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const h = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(h(req.headers.get("authorization") || ""), h(`Bearer ${secret}`));
+}
+
+// GET – vom Vercel-Cron aufgerufen (CRON_SECRET), holt die Leads der letzten Tage
 export async function GET(req: Request) {
-  const cron = process.env.CRON_SECRET;
+  if (!cronErlaubt(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const u = new URL(req.url);
-  const ok = cron && (req.headers.get("authorization") === `Bearer ${cron}` || u.searchParams.get("key") === cron);
-  if (!ok) {
-    // Ohne Cron-Schlüssel: nur für eingeloggte Admins
-    const user = await getSessionUser();
-    if (!user || user.role !== "admin") return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
   const days = Math.min(365, Math.max(1, Number(u.searchParams.get("days")) || 14));
   const results = await run(days);
   return NextResponse.json({ ok: true, results });
