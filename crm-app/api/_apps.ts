@@ -44,6 +44,8 @@ export const APPS: AppInfo[] = [
   { key: 'sonnenoase', label: 'Sonnenoase Wintergarten', projectRef: 'ykzaiauumeasvbdlryja' },
   // Composite Solutions CSG GmbH (02.11.2026), Leichtbau/Verbundwerkstoffe – Repo/Vercel compositesolutions.
   { key: 'compositesolutions', label: 'Composite Solutions', projectRef: 'tfkhiofspqmbbwqtvjxi' },
+  // HTP Kellner GmbH (06.11.2026), Ein-Mann-Holzbaubetrieb – Repo/Vercel htpkellner.
+  { key: 'htpkellner', label: 'HTP Kellner', projectRef: 'mxjmztvdctiegkeirgra' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
