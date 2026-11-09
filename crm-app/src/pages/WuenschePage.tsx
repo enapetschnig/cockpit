@@ -50,6 +50,8 @@ const ART: Record<string, { label: string; cls: string }> = {
   frage: { label: 'Frage', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 const STATUS: Record<string, { label: string; cls: string }> = {
+  // Per Mail an hallo@ gekommen (werkzeuge/mail-wuensche am PC): erst nach Christophs Blick an den Roboter.
+  pruefen:   { label: '✉ Mail – prüfen', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
   neu:       { label: 'Neu',       cls: 'bg-blue-50 text-blue-700 border-blue-200' },
   gesehen:   { label: 'In Arbeit', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   umgesetzt: { label: '✓ Erledigt', cls: 'bg-green-100 text-green-800 border-green-300 font-bold' },
@@ -195,6 +197,22 @@ export default function WuenschePage() {
     if (error) { toast.error('Konnte nicht gespeichert werden'); load(); }
   }
 
+  /** Wunsch aus einer Mail: so (oder mit geändertem Text) an den Roboter – oder verwerfen. */
+  const [entwurf, setEntwurf] = useState<Record<string, string>>({});
+  async function mailFreigeben(w: Wunsch, ok: boolean) {
+    const text = (entwurf[w.id] ?? w.text).trim();
+    if (ok && !text) return toast.error('Text ist leer');
+    const jetzt = new Date().toISOString();
+    // Neu = der Roboter sammelt ihn ab jetzt ein (YOLO); erstellt_am auf jetzt, damit er nicht als „alt“ gilt.
+    const felder = ok ? { status: 'neu', text, erstellt_am: jetzt, aktualisiert: jetzt, gesehen_am: jetzt }
+      : { status: 'abgelehnt', aktualisiert: jetzt, gesehen_am: jetzt };
+    const { data, error } = await db.from('app_wuensche').update(felder).eq('id', w.id).eq('status', 'pruefen').select('id');
+    if (error || !data?.length) { toast.error('Konnte nicht gespeichert werden'); load(); return; }
+    setItems((xs) => xs.map((x) => (x.id === w.id ? { ...x, ...felder } : x)));
+    toast.success(ok ? 'An den Roboter gegeben' : 'Verworfen');
+  }
+  const zuPruefen = items.filter((w) => w.status === 'pruefen').length;
+
   const datei = (w: Wunsch, art: 'bild' | 'audio' | 'aufnahme', nr?: number) =>
     `/api/wuensche-datei?id=${encodeURIComponent(w.id)}&art=${art}${nr !== undefined ? `&nr=${nr}` : ''}&token=${encodeURIComponent(token ?? '')}`;
 
@@ -207,6 +225,12 @@ export default function WuenschePage() {
           {neu > 0 && <Badge className="bg-blue-600">{neu} offen</Badge>}
           {ungelesen > 0 && <span className="text-xs text-muted-foreground">davon {ungelesen} noch nicht angesehen</span>}
         </div>
+        {zuPruefen > 0 && fStatus !== 'pruefen' && (
+          <button onClick={() => { setFStatus('pruefen'); setFApp(''); }}
+            className="mb-3 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-700">
+            ✉ {zuPruefen} Wunsch{zuPruefen === 1 ? '' : 'e'} per Mail zum Prüfen
+          </button>
+        )}
         <p className="text-sm text-muted-foreground mb-5">
           Änderungswünsche, Fehler und Fragen aus allen Handwerker-Apps. Die Apps melden selbstständig hierher.
         </p>
@@ -343,7 +367,13 @@ export default function WuenschePage() {
                 <span className="text-xs text-muted-foreground ml-auto">{wann(w.erstellt_am)}</span>
               </div>
 
-              <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{w.text}</div>
+              {w.status === 'pruefen' ? (
+                <textarea value={entwurf[w.id] ?? w.text} onChange={(e) => setEntwurf((x) => ({ ...x, [w.id]: e.target.value }))}
+                  rows={Math.min(12, Math.max(4, (entwurf[w.id] ?? w.text).split('\n').length + 1))}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-[15px] leading-relaxed" />
+              ) : (
+                <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{w.text}</div>
+              )}
 
               {bearbeitet && (
                 <div className={'mt-2 text-xs font-semibold ' + (erledigt ? 'text-green-700' : 'text-amber-700')}>
@@ -437,6 +467,13 @@ export default function WuenschePage() {
                 <audio controls preload="none" src={datei(w, 'audio')} className="mt-3 w-full max-w-xs" />
               )}
 
+              {w.status === 'pruefen' ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button size="sm" className="bg-violet-600 hover:bg-violet-700" onClick={() => mailFreigeben(w, true)}>An den Roboter geben</Button>
+                  <Button size="sm" variant="outline" onClick={() => mailFreigeben(w, false)}>Kein Wunsch – verwerfen</Button>
+                  <span className="text-xs text-muted-foreground">Kam per Mail. Text kannst du vorher anpassen – der Roboter bekommt ihn so, mit den Anhängen.</span>
+                </div>
+              ) : (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {w.status !== 'umgesetzt' && (
                   <Button size="sm" variant={w.erledigt_am ? 'outline' : 'default'}
@@ -451,7 +488,7 @@ export default function WuenschePage() {
                 {(offen || auftraege.some((x) => x.wunsch_ids.includes(w.id))) && (
                   <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter}
                     yoloSeit={yoloSeit[w.app_key]} erstelltAm={erstelltAm}
-                    offeneIds={items.filter((x) => x.app_key === w.app_key && istOffen(x)).map((x) => x.id)} />
+                    offeneIds={items.filter((x) => x.app_key === w.app_key && istOffen(x) && x.status !== 'pruefen').map((x) => x.id)} />
                 )}
                 <span className="text-xs text-muted-foreground">
                   {w.status === 'umgesetzt'
@@ -459,6 +496,7 @@ export default function WuenschePage() {
                     : 'Abhaken zählt die Meldung nicht mehr als offen. Meldet die App später einen neuen Stand, wird das wieder aufgehoben.'}
                 </span>
               </div>
+              )}
             </Card>
           );
         })}

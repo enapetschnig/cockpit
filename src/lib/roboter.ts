@@ -157,6 +157,7 @@ export async function offeneWuensche(appKey?: string): Promise<Wunsch[]> {
         order by a.erstellt_am desc limit 1) as auftrag
     from crm.app_wuensche w
     where w.status <> all(${WUNSCH_ERLEDIGT}) and w.erledigt_am is null
+      and w.status <> 'pruefen'   -- per Mail gekommen, Christoph hat noch nicht draufgeschaut (WuenschePage)
       ${appKey ? Prisma.sql`and w.app_key = ${appKey}` : Prisma.empty}
     order by w.erstellt_am`;
 }
