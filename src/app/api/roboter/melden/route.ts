@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   if (b.mail === "anmeldung") {
     const key = MARKE + "mail:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
     if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
-    const r = await sendTelegram("⚠️ Mails an hallo@: der Zugang ist abgelaufen – Änderungswünsche per Mail kommen gerade nicht beim Roboter an. Einmal neu verbinden: cockpit.epowergmbh.at/connect → Firma → Verbinden.");
+    const r = await sendTelegram("⚠️ Mails an hallo@: der Zugang ist abgelaufen – Änderungswünsche per Mail kommen gerade nicht beim Roboter an. Einmal neu verbinden: cockpit-flax-tau.vercel.app/connect → Firma → Verbinden.");
     if (!r.ok) await freigeben(key);
     return NextResponse.json({ ok: true });
   }
