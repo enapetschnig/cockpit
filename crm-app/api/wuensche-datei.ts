@@ -56,8 +56,10 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     return res.status(404).json({ error: 'Datei nicht verfügbar' });
   }
 
-  // Das Cockpit selbst: Die Datei liegt hier im eigenen Ablagebereich, kein Umweg über eine App.
-  if (app.key === 'cockpit') {
+  // Das Cockpit selbst – und Anhänge von Wünschen, die per Mail an hallo@ kamen (mail-wuensche am PC legt sie unter
+  // cockpit-wuensche/mail/ ab; Apps können solche Pfade nicht schicken, wuensche-eingang lässt nur <uuid>/<name> durch):
+  // Die Datei liegt hier im eigenen Ablagebereich, kein Umweg über eine App.
+  if (app.key === 'cockpit' || pfad.startsWith('cockpit-wuensche/mail/')) {
     const [bereich, ...rest] = pfad.split('/');
     if (bereich !== 'cockpit-wuensche' || !rest.length) return res.status(404).json({ error: 'Datei nicht verfügbar' });
     const { data: s } = await sb.storage.from(bereich).createSignedUrl(rest.join('/'), 3600);

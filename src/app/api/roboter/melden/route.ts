@@ -37,7 +37,7 @@ const freigeben = (key: string) => prisma.setting.deleteMany({ where: { key } })
  * Texte verschicken. Jede Stufe geht genau einmal raus, nur frische Stände.
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string; roboter?: string; notfall?: boolean };
+  const b = (await req.json().catch(() => ({}))) as { id?: string; frage?: string; wunsch?: string; besprechung?: string; plaud?: string; mail?: string; roboter?: string; notfall?: boolean };
 
   // Notfall vom Roboter (App nach dem Deploy kaputt und Zurückrollen ging nicht): sofort, jede Notiz genau einmal.
   // Alles andere wartet auf den Tagesstand um 7 und 18 Uhr (02.11.2026, Christoph: „zwischendrin wirklich nur die Notfälle“).
@@ -73,6 +73,15 @@ export async function POST(req: Request) {
     const key = MARKE + "plaud:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
     if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
     const r = await sendTelegram("⚠️ Plaud: die Anmeldung am PC ist abgelaufen – Besprechungen kommen gerade nicht ins CRM. Sag mir kurz Bescheid, dann melde ich dich neu an.");
+    if (!r.ok) await freigeben(key);
+    return NextResponse.json({ ok: true });
+  }
+
+  // Mail-Abholer am PC (werkzeuge/mail-wuensche) kommt nicht mehr ins Postfach hallo@ – fester Text, einmal am Tag.
+  if (b.mail === "anmeldung") {
+    const key = MARKE + "mail:" + new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
+    if (!(await beanspruchen(key))) return NextResponse.json({ ok: true, schon: true });
+    const r = await sendTelegram("⚠️ Mails an hallo@: der Zugang ist abgelaufen – Änderungswünsche per Mail kommen gerade nicht beim Roboter an. Einmal neu verbinden: cockpit.epowergmbh.at/connect → Firma → Verbinden.");
     if (!r.ok) await freigeben(key);
     return NextResponse.json({ ok: true });
   }
