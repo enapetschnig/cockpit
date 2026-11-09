@@ -333,6 +333,42 @@ export async function wunschMeldung(id: string): Promise<Karte | null> {
   };
 }
 
+/**
+ * Telegram-Nachricht zu einer Mail an hallo@, aus der der Mail-Abholer am PC (werkzeuge/mail-wuensche) Wünsche mit
+ * Status „pruefen“ gemacht hat – eine Nachricht je Mail. Christoph: „gleich die Möglichkeit zum Umsetzen“ (09.11.2026).
+ */
+const MAIL_ID = /^[0-9a-f]{8,24}$/;
+export async function mailWunschMeldung(gmailId: string): Promise<Karte | null> {
+  if (!MAIL_ID.test(gmailId)) return null;
+  const ws = await prisma.$queryRaw<{ app_key: string; art: string; text: string; melder: string | null; anhaenge: string[] | null }[]>`
+    select app_key, art, text, melder, anhaenge from crm.app_wuensche
+    where id like ${`mail-${gmailId}-%`} and status = 'pruefen' and erstellt_am > now() - interval '1 day' order by id`;
+  if (!ws.length) return null;
+  const kunde = (await kundenNamen()).get(ws[0].app_key) ?? ws[0].app_key;
+  const anh = ws[0].anhaenge?.length ?? 0;
+  const zeilen = ws.map((w) => `• ${w.art === "frage" ? "❔ Frage: " : w.art === "fehler" ? "Fehler: " : ""}${esc(kuerzen(w.text.split("\n\n(per Mail an hallo@")[0], 400))}`);
+  return {
+    text: `📧 <b>${esc(kunde)}</b> – per Mail${ws[0].melder ? ` von ${esc(ws[0].melder.replace(/ \(Mail\)$/, ""))}` : ""}${anh ? ` (📎 ${anh})` : ""}:\n${zeilen.join("\n")}\n\nUmsetzen?`,
+    buttons: [
+      [{ text: "▶️ Umsetzen", data: `rob:mail:ok:${gmailId}` }, { text: "🗑 Kein Wunsch", data: `rob:mail:nein:${gmailId}` }],
+      [{ text: "✏️ Erst ansehen / Text ändern", url: "https://app.epowergmbh.at/wuensche" }],
+    ],
+  };
+}
+
+/** ▶️ → Wünsche dieser Mail freigeben und gleich an den Roboter; 🗑 → verwerfen. Nur was noch auf „pruefen“ steht. */
+export async function mailWunschEntscheiden(gmailId: string, ok: boolean): Promise<{ appKey?: string; n: number; auftrag?: string }> {
+  if (!MAIL_ID.test(gmailId)) return { n: 0 };
+  const rows = await prisma.$queryRaw<{ app_key: string }[]>`
+    update crm.app_wuensche set status = ${ok ? "neu" : "abgelehnt"}, gesehen_am = coalesce(gesehen_am, now()), aktualisiert = now(),
+      erstellt_am = case when ${ok} then now() else erstellt_am end
+    where id like ${`mail-${gmailId}-%`} and status = 'pruefen' returning app_key`;
+  if (!rows.length) return { n: 0 };
+  if (!ok) return { appKey: rows[0].app_key, n: rows.length };
+  const r = await anRoboterGeben(rows[0].app_key);
+  return { appKey: rows[0].app_key, n: rows.length, auftrag: r.auftrag };
+}
+
 /** Christophs Antwort auf „Soll ich das umsetzen?“ verstehen: machen (evtl. mit Zusatz), nicht, oder eine Frage. */
 export async function antwortVerstehen(text: string): Promise<{ aktion: "umsetzen" | "nicht" | "frage"; zusatz: boolean }> {
   if (istJa(text)) return { aktion: "umsetzen", zusatz: false };

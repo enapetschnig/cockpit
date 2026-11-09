@@ -430,6 +430,21 @@ async function roboterKnopf(cb: TgCallback) {
     return;
   }
 
+  if (aktion === "mail") {
+    // rob:mail:<ok|nein>:<gmail-id> – Wünsche aus einer Mail an hallo@ (Status „pruefen“)
+    const r = await roboter.mailWunschEntscheiden(zusatz, ref === "ok");
+    const kunde = r.appKey ? (await roboter.kundenNamen()).get(r.appKey) ?? r.appKey : "";
+    const text = !r.n
+      ? "Schon entschieden – steht nicht mehr zum Prüfen an (vielleicht im Cockpit erledigt)."
+      : ref === "ok"
+        ? `▶️ Mach ich – ${r.n === 1 ? "1 Wunsch" : `${r.n} Wünsche`} von ${esc(kunde)} aus der Mail. Du bekommst eine Zeile, wenn es live ist.`
+        : `🗑 Verworfen – ${esc(kunde)}, die Mail bleibt nur im Postfach.`;
+    await tgAnswerCallback(cb.id, !r.n ? "Schon entschieden" : ref === "ok" ? "▶️ Mach ich" : "🗑 Verworfen");
+    const ok = cb.message ? await tgEditMessage(cb.message.chat.id, cb.message.message_id, text) : false;
+    if (!ok) await sendTelegram(text);
+    return;
+  }
+
   if (aktion === "start") {
     const r = await roboter.anRoboterGeben(ref);
     await tgAnswerCallback(cb.id, r.neu ? "▶️ Mach ich" : "Nichts Offenes");
