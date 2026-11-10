@@ -46,6 +46,8 @@ export const APPS: AppInfo[] = [
   { key: 'compositesolutions', label: 'Composite Solutions', projectRef: 'tfkhiofspqmbbwqtvjxi' },
   // HTP Kellner GmbH (06.11.2026), Ein-Mann-Holzbaubetrieb – Repo/Vercel htpkellner.
   { key: 'htpkellner', label: 'HTP Kellner', projectRef: 'mxjmztvdctiegkeirgra' },
+  // Elektriker-Demo (10.11.2026) – eigene Demo-App für Elektrobetriebe, Repo/Vercel mayr.
+  { key: 'mayr', label: 'Elektriker-Demo (mayr)', projectRef: 'xcsbbaiwzdivmaodltxm' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
