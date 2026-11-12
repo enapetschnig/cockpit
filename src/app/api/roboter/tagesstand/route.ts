@@ -58,7 +58,7 @@ export async function GET(req: Request) {
   const probe = new URL(req.url).searchParams.get("jetzt") === "1";
   if (probe || jetzt.stunde === 7 || jetzt.stunde === 18) {
     const key = `TAGESSTAND:${jetzt.tag}:${jetzt.stunde}`;
-    if (probe || (await einmal(key))) {
+    if (probe || (!(await prisma.setting.findUnique({ where: { key }, select: { key: true } })) && (await einmal(key)))) {
       const r = await tagesstand(jetzt.stunde < 12, jetzt.montag && jetzt.stunde < 12, probe);
       if (!r.ok && !probe) await prisma.setting.deleteMany({ where: { key } });
       ergebnis.tagesstand = r;
@@ -145,8 +145,12 @@ async function achtung(stunde: number) {
   for (const l of liegen) punkte.push({ key: `ACHTUNG:liegt:${l.app_key}:${tag}`, zeile: `• ${name(l.app_key)} – ${l.n === 1 ? "1 Wunsch liegt" : `${l.n} Wünsche liegen`} seit über 3 Std., der Roboter nimmt ${l.n === 1 ? "ihn" : "sie"} nicht auf` });
 
   // Nur Neues melden – Marke vorab setzen, bei Sendefehler wieder entfernen.
+  // Schon gemeldete vorab aussortieren, sonst prallt jeder 10-Min-Lauf am Primärschlüssel ab (Supabase-Fehlerprotokoll).
+  const gemeldet = new Set(
+    punkte.length ? (await prisma.setting.findMany({ where: { key: { in: punkte.map((p) => p.key) } }, select: { key: true } })).map((r) => r.key) : [],
+  );
   const neu: typeof punkte = [];
-  for (const p of punkte) if (await einmal(p.key)) neu.push(p);
+  for (const p of punkte) if (!gemeldet.has(p.key) && (await einmal(p.key))) neu.push(p);
   if (!neu.length) return { neu: 0 };
   const buttons = neu.filter((p) => p.knopf).map((p) => [p.knopf!]);
   const r = await sendTelegram(["👀 <b>Achtung</b>", ...neu.map((p) => p.zeile)].join("\n"), buttons.length ? { buttons } : {});
