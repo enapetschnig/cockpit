@@ -65,6 +65,19 @@ const ERLEDIGT = ['umgesetzt', 'abgelehnt', 'geloescht'];
 const istOffen = (w: { status: string; erledigt_am: string | null }) =>
   !ERLEDIGT.includes(w.status) && !w.erledigt_am;
 
+/** Kundennamen in einem Zug nachladen statt je Zeile. */
+async function mitKunden(list: Wunsch[]): Promise<Wunsch[]> {
+  const ids = [...new Set(list.map((w) => w.customer_id).filter(Boolean))] as string[];
+  if (!ids.length) return list;
+  const { data: cs } = await db.from('customers').select('id, company_name, first_name, last_name').in('id', ids);
+  const byId = new Map<string, string | null>((cs || []).map((c: Record<string, string | null>) => [
+    String(c.id),
+    c.company_name || [c.first_name, c.last_name].filter(Boolean).join(' ') || null,
+  ]));
+  for (const w of list) w.kunde = w.customer_id ? byId.get(w.customer_id) ?? null : null;
+  return list;
+}
+
 function wann(iso: string): string {
   const d = new Date(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
@@ -91,20 +104,20 @@ export default function WuenschePage() {
     supabase.auth.getSession().then(({ data }) => setToken(data.session?.access_token ?? null));
   }, []);
 
+  // Zahlen je App über ALLE Wünsche – die Liste lädt nur die letzten 300, sonst fielen ruhige Kunden heraus.
+  const [zahlen, setZahlen] = useState<{ app_key: string; status: string; erledigt_am: string | null }[]>([]);
+
   const load = useCallback(async () => {
     const { data: ws } = await db.from('app_wuensche').select('*').order('erstellt_am', { ascending: false }).limit(300);
-    const list = (ws as Wunsch[]) || [];
-    // Kundennamen in einem Zug nachladen statt je Zeile
-    const ids = [...new Set(list.map((w) => w.customer_id).filter(Boolean))] as string[];
-    if (ids.length) {
-      const { data: cs } = await db.from('customers').select('id, company_name, first_name, last_name').in('id', ids);
-      const byId = new Map<string, string | null>((cs || []).map((c: Record<string, string | null>) => [
-        String(c.id),
-        c.company_name || [c.first_name, c.last_name].filter(Boolean).join(' ') || null,
-      ]));
-      for (const w of list) w.kunde = w.customer_id ? byId.get(w.customer_id) ?? null : null;
+    setItems(await mitKunden((ws as Wunsch[]) || []));
+
+    const alle: { app_key: string; status: string; erledigt_am: string | null }[] = [];
+    for (let ab = 0; ; ab += 1000) {
+      const { data } = await db.from('app_wuensche').select('app_key, status, erledigt_am').order('id').range(ab, ab + 999);
+      alle.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
-    setItems(list);
+    setZahlen(alle);
 
     // ALLE Kunden mit App-Zuordnung – auch die, von denen noch nichts kam.
     // Sonst sähe man nicht, dass eine App überhaupt angebunden ist.
@@ -120,6 +133,23 @@ export default function WuenschePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Kunde angetippt, dessen Wünsche älter als die letzten 300 sind: seine eigens nachladen.
+  useEffect(() => {
+    if (!fApp) return;
+    let weg = false;
+    (async () => {
+      const { data } = await db.from('app_wuensche').select('*').eq('app_key', fApp).order('erstellt_am', { ascending: false }).limit(300);
+      const neu = await mitKunden((data as Wunsch[]) || []);
+      if (weg || !neu.length) return;
+      setItems((xs) => {
+        const da = new Set(xs.map((x) => x.id));
+        const dazu = neu.filter((w) => !da.has(w.id));
+        return dazu.length ? [...xs, ...dazu].sort((a, b) => b.erstellt_am.localeCompare(a.erstellt_am)) : xs;
+      });
+    })();
+    return () => { weg = true; };
+  }, [fApp]);
 
   // YOLO je Kunde (crm.roboter_apps): alle Wünsche des Kunden setzt der Roboter sofort ohne Freigabe um.
   const [yolo, setYolo] = useState<Record<string, boolean>>({});
@@ -163,7 +193,7 @@ export default function WuenschePage() {
   /** Eine Kachel je angebundenem Kunden – plus Apps, die (noch) keinem zugeordnet sind. */
   const uebersicht = useMemo(() => {
     const zaehl = new Map<string, { offen: number; gesamt: number; erledigt: number }>();
-    for (const w of items) {
+    for (const w of zahlen.length ? zahlen : items) {
       const e = zaehl.get(w.app_key) ?? { offen: 0, gesamt: 0, erledigt: 0 };
       e.gesamt++;
       if (istOffen(w)) e.offen++;
@@ -174,12 +204,13 @@ export default function WuenschePage() {
       key: k.app_key, name: k.name, app: APP_LABEL[k.app_key] ?? k.app_key,
       ...(zaehl.get(k.app_key) ?? { offen: 0, gesamt: 0, erledigt: 0 }),
     }));
-    // Meldungen ohne zugeordneten Kunden trotzdem zeigen
-    const ohne = [...zaehl.keys()]
+    // Angebundene Apps ohne CRM-Kunden (und Meldungen unter anderen Schlüsseln) trotzdem zeigen
+    const ohne = [...new Set([...APPS.map((a) => a.key), ...zaehl.keys()])]
       .filter((k) => !kunden.some((x) => x.app_key === k))
-      .map((k) => ({ key: k, name: APP_LABEL[k] ?? k, app: 'kein Kunde zugeordnet', ...zaehl.get(k)! }));
+      .map((k) => ({ key: k, name: APP_LABEL[k] ?? k, app: 'kein Kunde zugeordnet',
+        ...(zaehl.get(k) ?? { offen: 0, gesamt: 0, erledigt: 0 }) }));
     return [...zugeordnet, ...ohne].sort((a, b) => b.offen - a.offen || a.name.localeCompare(b.name, 'de'));
-  }, [items, kunden]);
+  }, [items, zahlen, kunden]);
 
   /** Hier im CRM abhaken – überlebt spätere Updates aus der App. */
   async function abhaken(w: Wunsch) {
