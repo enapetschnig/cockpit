@@ -46,8 +46,8 @@ export const APPS: AppInfo[] = [
   { key: 'compositesolutions', label: 'Composite Solutions', projectRef: 'tfkhiofspqmbbwqtvjxi' },
   // HTP Kellner GmbH (06.11.2026), Ein-Mann-Holzbaubetrieb – Repo/Vercel htpkellner.
   { key: 'htpkellner', label: 'HTP Kellner', projectRef: 'mxjmztvdctiegkeirgra' },
-  // Elektriker-Demo (10.11.2026) – eigene Demo-App für Elektrobetriebe, Repo/Vercel mayr.
-  { key: 'mayr', label: 'Elektriker-Demo (mayr)', projectRef: 'xcsbbaiwzdivmaodltxm' },
+  // SETEC GmbH (Elektrik + PV, Kindberg) – bis 16.11.2026 Elektriker-Demo „mayr“; Repo/Vercel/Supabase-Name setec.
+  { key: 'setec', label: 'SETEC GmbH', projectRef: 'xcsbbaiwzdivmaodltxm' },
   // massenermittlung.at (12.11.2026) – eigenes Produkt (Architektenplan → Aufmaß), Repo/Vercel massenermittlung. Meldungen ohne Bild und Ton.
   // Mit Absicht nicht beim Roboter: Änderungen an der Erkennung brauchen die Messläufe des Projekts (Feldtest).
   { key: 'massenermittlung', label: 'massenermittlung.at', projectRef: 'kozjixaelotjjhdrztjx' },

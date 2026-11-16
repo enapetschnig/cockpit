@@ -36,7 +36,7 @@ export const APPS: AppInfo[] = [
   { key: 'sonnenoase', label: 'Sonnenoase Wintergarten' },
   { key: 'compositesolutions', label: 'Composite Solutions' },
   { key: 'htpkellner', label: 'HTP Kellner' },
-  { key: 'mayr', label: 'Elektriker-Demo (mayr)' },
+  { key: 'setec', label: 'SETEC GmbH' },
   // massenermittlung.at (12.11.2026) – eigenes Produkt, nicht beim Roboter (siehe api/_apps.ts).
   { key: 'massenermittlung', label: 'massenermittlung.at' },
 ];
