@@ -48,6 +48,8 @@ export const APPS: AppInfo[] = [
   { key: 'htpkellner', label: 'HTP Kellner', projectRef: 'mxjmztvdctiegkeirgra' },
   // SETEC GmbH (Elektrik + PV, Kindberg) – bis 16.11.2026 Elektriker-Demo „mayr“; Repo/Vercel/Supabase-Name setec.
   { key: 'setec', label: 'SETEC GmbH', projectRef: 'xcsbbaiwzdivmaodltxm' },
+  // GT-Holzbau - Geisselbacher GmbH / Kärntner Holzhaus (16.11.2026), Kopie der Steinbrecher-App – Repo/Vercel gtholzbau.
+  { key: 'gtholzbau', label: 'GT-Holzbau (Kärntner Holzhaus)', projectRef: 'axppqktkhhlpcsezobko' },
   // massenermittlung.at (12.11.2026) – eigenes Produkt (Architektenplan → Aufmaß), Repo/Vercel massenermittlung. Meldungen ohne Bild und Ton.
   // Mit Absicht nicht beim Roboter: Änderungen an der Erkennung brauchen die Messläufe des Projekts (Feldtest).
   { key: 'massenermittlung', label: 'massenermittlung.at', projectRef: 'kozjixaelotjjhdrztjx' },

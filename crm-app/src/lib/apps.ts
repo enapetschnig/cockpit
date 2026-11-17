@@ -37,6 +37,7 @@ export const APPS: AppInfo[] = [
   { key: 'compositesolutions', label: 'Composite Solutions' },
   { key: 'htpkellner', label: 'HTP Kellner' },
   { key: 'setec', label: 'SETEC GmbH' },
+  { key: 'gtholzbau', label: 'GT-Holzbau (Kärntner Holzhaus)' },
   // massenermittlung.at (12.11.2026) – eigenes Produkt, nicht beim Roboter (siehe api/_apps.ts).
   { key: 'massenermittlung', label: 'massenermittlung.at' },
 ];
