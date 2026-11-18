@@ -67,11 +67,14 @@ export interface RechnungLite {
   rest_faellig_am: string | null;
   projekt_id: string | null;
   source_document?: string | null;
+  project_total?: number | null;
   created_at: string;
 }
 
 /** Angenommenes Angebot (Auftrag gesichert). */
 export interface AngebotLite { id: string; number: string | null; recipient_company: string | null; recipient_name: string | null; net: number; gross: number; status: string }
+/** Auftragsvolumen je Monat (Seite „Auftragsvolumen“), netto. */
+export interface VolumenLite { year: number; month: number; amount: number; source: string | null }
 /** Wartungsvertrag: wird jährlich im Voraus verrechnet (WartungPage). */
 export interface WartungLite { kunde: string; start_am: string | null; monatlich_netto: number; status: string; abgerechnet_bis: string | null }
 /** Unterschriebener Software-Vertrag: Wartung beginnt nach der inkludierten Betreuung. */
@@ -99,6 +102,7 @@ export const monatDazu = (s: string, n: number) => {
   return iso(d);
 };
 const monat = (s: string) => s.slice(0, 7);
+const heuteMonat = (s: string) => s.slice(0, 7);
 const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 /** Datei → Text: George liefert UTF-16LE mit BOM, sonst UTF-8. */
@@ -330,7 +334,7 @@ export function erkenneMuster(buchungen: LiqBuchung[], stichtag: string): Muster
 
 /* ── Vorschau ───────────────────────────────────────────── */
 
-export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'wartung' | 'steuer' | 'ust' | 'variabel';
+export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'wartung' | 'neu' | 'steuer' | 'ust' | 'variabel';
 export interface Ereignis {
   datum: string;
   betrag: number;
@@ -357,6 +361,11 @@ export interface Vorschau {
   ustSchnitt: number;
   variabelSchnitt: number;
   ohneTermin: { bezeichnung: string; betrag: number }[];
+  erwartet: {
+    neuSchnitt: number;                                              // Ø Neugeschäft netto / Monat
+    neuMonate: string[];                                             // woraus der Schnitt stammt
+    ab: string | null;                                               // ab welchem Monat Neugeschäft gerechnet wird
+  };
 }
 
 const RECHNUNGSARTEN = ['invoice', 'partial_invoice', 'final_invoice', 'credit_note'];
@@ -383,6 +392,9 @@ export function berechneVorschau(o: {
   heute: string;
   monateVoraus?: number;
   angebote?: AngebotLite[];
+  auftragsvolumen?: VolumenLite[];
+  /** gesichert (Standard): nur was fix ist; mitNeugeschaeft: zusätzlich Ø Auftragsvolumen als Neugeschäft. */
+  szenario?: 'gesichert' | 'mitNeugeschaeft';
   wartung?: WartungLite[];
   vertraege?: VertragLite[];
 }): Vorschau | null {
@@ -445,8 +457,6 @@ export function berechneVorschau(o: {
 
   // 4) Rechnungen: offen, Restzahlungen, Entwürfe
   const ohneTermin: { bezeichnung: string; betrag: number }[] = [];
-  const spaetere = (d: RechnungLite) => !!d.projekt_id && o.docs.some((x) => x.id !== d.id && x.projekt_id === d.projekt_id
-    && x.status !== 'cancelled' && x.created_at > d.created_at);
   for (const d of o.docs) {
     if (!RECHNUNGSARTEN.includes(d.kind) || d.kind === 'credit_note' || d.status === 'cancelled') continue;
     // Offene Rechnungen (auch „draft“: im Cockpit bleibt eine ausgestellte Rechnung bis zur Zahlung auf draft)
@@ -457,13 +467,24 @@ export function berechneVorschau(o: {
         ev.push({ datum: f < o.heute ? tagDazu(o.heute, 1) : f, betrag: offen, bezeichnung: `Rechnung ${d.number} ${name(d)}${f < o.heute ? ` (fällig seit ${f.slice(8)}.${f.slice(5, 7)}.)` : ''}`, gruppe: 'einnahme', art: 'rechnung' });
       }
     }
-    if (Number(d.rest_offen) > 0 && !spaetere(d)) {
-      const brutto = r2(Number(d.rest_offen) * 1.2);
-      if (d.rest_faellig_am) {
-        const f = tagDazu(d.rest_faellig_am, 14);
-        ev.push({ datum: f < o.heute ? tagDazu(o.heute, 7) : f, betrag: brutto, bezeichnung: `Restzahlung ${name(d)}`, gruppe: 'einnahme', art: 'rest', geschaetzt: true });
-      } else ohneTermin.push({ bezeichnung: `Restzahlung ${name(d)}`, betrag: brutto });
-    }
+  }
+
+  // Offene Aufträge wie in der Buchhaltung (useAuftraege): Auftragswert minus alles schon Verrechnete je projekt_id.
+  // Restrechnung am geplanten Tag, Geld 14 Tage danach; ohne Termin einen Monat nach der letzten Rechnung.
+  const projekte = new Map<string, RechnungLite[]>();
+  for (const d of o.docs) if (d.projekt_id && d.kind !== 'credit_note') projekte.set(d.projekt_id, [...(projekte.get(d.projekt_id) || []), d]);
+  for (const rows of projekte.values()) {
+    rows.sort((a, b) => (a.doc_date || '').localeCompare(b.doc_date || '') || a.created_at.localeCompare(b.created_at));
+    const aktiv = rows.filter((r) => r.status !== 'cancelled');
+    if (!aktiv.length) continue;
+    const gesamt = Number([...rows].reverse().find((r) => r.project_total)?.project_total || 0);
+    const verrechnet = aktiv.reduce((a, r) => a + Number(r.gross || 0) / 1.2, 0);
+    const offenNetto = r2(gesamt - verrechnet);
+    if (offenNetto <= 0.01) continue;
+    const letzte = aktiv[aktiv.length - 1];
+    const rf = [...aktiv].reverse().find((r) => r.rest_faellig_am)?.rest_faellig_am;
+    const f = tagDazu(rf || monatDazu(letzte.doc_date || o.heute, 1), 14);
+    ev.push({ datum: f < o.heute ? tagDazu(o.heute, 7) : f, betrag: r2(offenNetto * 1.2), bezeichnung: `Restzahlung ${name(letzte)}${rf ? '' : ' (Termin geschätzt)'}`, gruppe: 'einnahme', art: 'rest', geschaetzt: true });
   }
 
   // 4b) Gesicherte Aufträge: angenommene Angebote, zu denen es noch gar keine Rechnung gibt
@@ -497,6 +518,26 @@ export function berechneVorschau(o: {
     jahresWartung(v.party_company, monatDazu(v.customer_signed_at.slice(0, 10), Number(v.support_months) || 12), Number(v.maintenance_monthly), ', laut Vertrag');
   }
 
+  // 4d) Optional (Schalter): Neugeschäft wie bisher. Offene Angebote zählen bewusst nicht – nur Aufträge.
+  const mitNeu = o.szenario === 'mitNeugeschaeft';
+  // Neugeschäft: Ø Auftragsvolumen der letzten 6 abgeschlossenen Monate, ohne Daueraufträge (die zählen schon als Muster)
+  const dauer = muster.filter((m) => m.betrag > 0 && !m.schwankend).flatMap((m) => schlagwort({ partner: m.bezeichnung, text: null }).split(' ').filter((w) => w.length > 2));
+  const istDauer = (src: string | null) => { const t = (src || '').toLowerCase(); return /^etk\b|^et k/.test(t) || dauer.some((w) => t.includes(w)); };
+  const vMonate = Array.from({ length: 6 }, (_, i) => monat(monatDazu(heuteMonat(o.heute) + '-01', -i - 1))).reverse();
+  const neuSchnitt = r2(vMonate.reduce((sum, m) => sum + (o.auftragsvolumen || [])
+    .filter((x) => `${x.year}-${String(x.month).padStart(2, '0')}` === m && !istDauer(x.source))
+    .reduce((a, x) => a + Number(x.amount || 0), 0), 0) / 6);
+  // Ab nächstem Monat. Verkauft im Monat M: halb am 20. M (Anzahlung), halb am 20. M+1 (Rest)
+  const neuAb = monat(monatDazu(heuteMonat(o.heute) + '-01', 1));
+  if (mitNeu && neuSchnitt > 0) {
+    for (let m = neuAb; m + '-20' < ende; m = monat(monatDazu(m + '-01', 1))) {
+      const halb = r2(neuSchnitt * 1.2 / 2);
+      for (const d of [m + '-20', monatDazu(m + '-20', 1)]) {
+        if (d < ende) ev.push({ datum: d, betrag: halb, bezeichnung: `Neugeschäft wie bisher (Ø ${Math.round(neuSchnitt).toLocaleString('de-AT')} € netto/Monat, verkauft ${m.slice(5)}/${m.slice(2, 4)})`, gruppe: 'einnahme', art: 'neu', geschaetzt: true });
+      }
+    }
+  }
+
   // 5) Finanzamt: Zahlungsaufforderungen aus den Steuerberater-Mails …
   for (const s of o.steuer) {
     if (s.faellig_am <= S || s.faellig_am >= ende) continue;
@@ -517,8 +558,8 @@ export function berechneVorschau(o: {
   const ust: UstMonat[] = bekannt.map((b, i) => ({ monat: b.m, ust: ustM.get(b.m) || 0, zahllast: b.zl, vorsteuer: r2(vst[i]), geschaetzt: false, faellig: monatDazu(b.m + '-15', 2) }));
   const ustGeplant = new Map<string, number>();
   for (const e of ev) {
-    if (e.betrag <= 0 || !['rest', 'wartung', 'muster'].includes(e.art)) continue;
-    const k = monat(e.art === 'muster' ? e.datum : tagDazu(e.datum, -14));
+    if (e.betrag <= 0 || !['rest', 'wartung', 'muster', 'neu'].includes(e.art)) continue;
+    const k = monat(e.art === 'muster' || e.art === 'neu' ? e.datum : tagDazu(e.datum, -14));
     ustGeplant.set(k, r2((ustGeplant.get(k) || 0) + e.betrag / 6));   // 20 % USt im Brutto = 1/6
   }
   const abM = firmaU.length ? monat(monatDazu(firmaU[firmaU.length - 1].u_monat!, 1)) : monat(monatDazu(S, -1));
@@ -596,6 +637,7 @@ export function berechneVorschau(o: {
     start: { saldo: startSaldo, datum: A, auszug: S, nachAuszug: nach.length },
     ereignisse: offen, privat: privat.filter((e) => e.datum >= o.heute.slice(0, 7) + '-01' && e.datum < ende).sort((a, b) => a.datum.localeCompare(b.datum)),
     monate, tiefster, muster, ust, vorsteuerSchnitt, ustSchnitt, variabelSchnitt, ohneTermin,
+    erwartet: { neuSchnitt, neuMonate: vMonate, ab: mitNeu && neuSchnitt > 0 ? neuAb : null },
   };
 }
 

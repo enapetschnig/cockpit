@@ -11,7 +11,7 @@ import { eur, fmtDate } from '@/types/billing';
 import {
   berechneVorschau, dateiText, iso, kreditkarteNachHaendler, monatDazu, parseAuszugZeilen, parseCsv, pdfZeilen,
   schluesselVergeben, type Ereignis, type LiqAuszug, type LiqBuchung, type LiqPosten, type LiqSteuer, type Muster,
-  type RechnungLite, type AngebotLite, type WartungLite, type VertragLite,
+  type RechnungLite, type AngebotLite, type WartungLite, type VertragLite, type VolumenLite,
 } from '@/lib/liquiditaet';
 import { Upload, Loader2, EyeOff, Eye, Trash2, Plus, Landmark, Info } from 'lucide-react';
 
@@ -56,6 +56,8 @@ export default function LiquiditaetPage() {
   const [angebote, setAngebote] = useState<AngebotLite[]>([]);
   const [wartung, setWartung] = useState<WartungLite[]>([]);
   const [vertraege, setVertraege] = useState<VertragLite[]>([]);
+  const [volumen, setVolumen] = useState<VolumenLite[]>([]);
+  const [mitNeu, setMitNeu] = useState(false);
   const [laden, setLaden] = useState(true);
   const [upload, setUpload] = useState(false);
   const [alleZeigen, setAlleZeigen] = useState(false);
@@ -64,16 +66,17 @@ export default function LiquiditaetPage() {
 
   const neuLaden = useCallback(async () => {
     const seit = monatDazu(heute, -14);
-    const [b, a, p, s, d, an, w, ve] = await Promise.all([
+    const [b, a, p, s, d, an, w, ve, vo] = await Promise.all([
       db.from('liq_buchungen').select('konto,datum,betrag,partner,text').gte('datum', seit).order('datum').limit(10000),
       db.from('liq_auszuege').select('konto,stand_am,saldo,bezeichnung').order('stand_am'),
       db.from('liq_posten').select('*').order('naechste_am'),
       db.from('liq_steuer').select('*').order('faellig_am'),
-      db.from('documents').select('id,kind,status,number,recipient_company,recipient_name,gross,vat,paid_amount,doc_date,due_date,rest_offen,rest_faellig_am,projekt_id,source_document,created_at')
+      db.from('documents').select('id,kind,status,number,recipient_company,recipient_name,gross,vat,paid_amount,doc_date,due_date,rest_offen,rest_faellig_am,projekt_id,source_document,project_total,created_at')
         .in('kind', ['invoice', 'partial_invoice', 'final_invoice', 'credit_note']).gte('doc_date', seit).limit(5000),
       db.from('documents').select('id,number,recipient_company,recipient_name,net,gross,status').eq('kind', 'offer').eq('status', 'accepted').gte('doc_date', seit),
       db.from('wartungsvertraege').select('kunde,start_am,monatlich_netto,status,abgerechnet_bis'),
       db.from('contracts').select('party_company,customer_signed_at,support_months,maintenance_monthly,document_id,status').eq('status', 'signed'),
+      db.from('order_volumes').select('year,month,amount,source').gte('year', Number(seit.slice(0, 4))),
     ]);
     const num = <T,>(rows: T[] | null, felder: string[]) => (rows || []).map((r: any) => {
       const x = { ...r }; for (const f of felder) if (x[f] != null) x[f] = Number(x[f]); return x as T;
@@ -82,7 +85,8 @@ export default function LiquiditaetPage() {
     setAuszuege(num(a.data, ['saldo']));
     setPosten(num(p.data, ['betrag']));
     setSteuer(num(s.data, ['u_betrag', 'k_betrag', 'e_betrag', 'gesamt']));
-    setDocs(num(d.data, ['gross', 'vat', 'paid_amount', 'rest_offen']));
+    setDocs(num(d.data, ['gross', 'vat', 'paid_amount', 'rest_offen', 'project_total']));
+    setVolumen(num(vo.data, ['amount']));
     setAngebote(num(an.data, ['net', 'gross']));
     setWartung(num(w.data, ['monatlich_netto']));
     setVertraege(num(ve.data, ['maintenance_monthly', 'support_months']));
@@ -90,8 +94,9 @@ export default function LiquiditaetPage() {
   }, [heute]);
   useEffect(() => { neuLaden(); }, [neuLaden]);
 
-  const v = useMemo(() => berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege }),
-    [buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege]);
+  const v = useMemo(() => berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege,
+    auftragsvolumen: volumen, szenario: mitNeu ? 'mitNeugeschaeft' : 'gesichert' }),
+    [buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege, volumen, mitNeu]);
   const kk = useMemo(() => kreditkarteNachHaendler(buchungen, heute), [buchungen, heute]);
 
   const verlauf = useMemo(() => {
@@ -256,9 +261,14 @@ export default function LiquiditaetPage() {
 
           {/* Verlauf */}
           <Card className="p-4">
-            <div className="flex items-baseline justify-between mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <h2 className="font-semibold">Kontostand voraus</h2>
-              <span className="text-[11px] text-muted-foreground">gesicherte Aufträge, Wartung und Daueraufträge – neue Aufträge sind nicht eingerechnet</span>
+              <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                {mitNeu ? `inkl. Neugeschäft wie bisher (Ø ${eur(v.erwartet.neuSchnitt)} netto/Monat aus dem Auftragsvolumen)` : 'gesicherte Aufträge, Wartung und Daueraufträge'}
+                <Button size="sm" variant={mitNeu ? 'secondary' : 'outline'} className="h-7 text-xs" onClick={() => setMitNeu(!mitNeu)}>
+                  {mitNeu ? 'Nur gesichert' : '+ Neugeschäft wie bisher'}
+                </Button>
+              </span>
             </div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">

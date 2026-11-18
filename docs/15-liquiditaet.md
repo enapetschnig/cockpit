@@ -26,7 +26,8 @@ Seite mit dem letzten Auszugsstand plus den Umsätzen danach.
   - Die KöSt-Vorauszahlung (2.950 €) ist als Quartalsposten hinterlegt.
 - **Eingänge:**
   - offene Rechnungen
-  - Restzahlungen: rest_offen ist netto, gerechnet wird ×1,2 und rest_faellig_am + 14 Tage, nur die letzte Rechnung je Projekt
+  - Restzahlungen wie „Offene Aufträge“ in der Buchhaltung (useAuftraege): project_total − Verrechnetes je projekt_id,
+    ×1,2, Geld am rest_faellig_am + 14 Tage (ohne Termin: letzte Rechnung + 1 Monat + 14 Tage)
   - erkannte Kunden-Daueraufträge mit stabilem Betrag (ET König, fonio). Schwankende Kundeneingänge wie Ruff sind
     Einzelrechnungen und zählen nicht als Muster. Liegt eine offene Rechnung desselben Kunden innerhalb von ±25 Tagen,
     zählt nur die Rechnung.
@@ -34,6 +35,9 @@ Seite mit dem letzten Auszugsstand plus den Umsätzen danach.
   - Wartung: aus `wartungsvertraege` (nicht „kein“) als Jahresrechnung 12 × monatlich + USt ab `abgerechnet_bis`+1
     bzw. `start_am`, bezahlt nach 14 Tagen. Dazu unterschriebene `contracts` mit `maintenance_monthly`, sofern der
     Kunde noch nicht in `wartungsvertraege` steht; Beginn = Unterschrift + `support_months`.
+  - Offene Angebote zählen bewusst nicht (Christoph 18.11.: „offene Angebote nicht, aber die Aufträge“).
+  - Schalter „+ Neugeschäft wie bisher“ (Standard aus): Ø Auftragsvolumen der letzten 6 Monate ohne Daueraufträge,
+    halb im Verkaufsmonat, halb im Folgemonat.
   - Angenommene Angebote ohne jede Rechnung: „gesichert, ohne Termin“, nicht im Kontostand.
 - **Abgleich nach dem Auszug:**
   - Finanzamt: irgendeine FA-Abbuchung ±20 Tage. Gutschriften werden gegengerechnet.
