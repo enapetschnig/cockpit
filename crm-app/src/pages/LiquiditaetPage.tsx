@@ -362,7 +362,7 @@ export default function LiquiditaetPage() {
                         <td className="py-1">{monatName(u.monat)}{u.geschaetzt ? ' ≈' : ''}</td>
                         <td className="text-right">{eur(u.ust)}</td>
                         <td className="text-right">{u.vorsteuer != null ? eur(u.vorsteuer) : '–'}</td>
-                        <td className="text-right font-medium text-foreground">{u.zahllast != null ? eur(u.zahllast) : '–'}</td>
+                        <td className="text-right font-medium text-foreground">{u.zahllast == null ? '–' : u.zahllast < 0 ? `Gutschrift ${eur(-u.zahllast)}` : eur(u.zahllast)}</td>
                         <td className="text-right">{fmtDate(u.faellig).slice(0, 6)}</td>
                       </tr>
                     ))}

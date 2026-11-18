@@ -515,12 +515,22 @@ export function berechneVorschau(o: {
   const letzte6 = Array.from({ length: 6 }, (_, i) => monat(monatDazu(heuteM + '-01', -i - 1)));
   const ustSchnitt = r2(letzte6.reduce((s, m) => s + (ustM.get(m) || 0), 0) / 6);
   const ust: UstMonat[] = bekannt.map((b, i) => ({ monat: b.m, ust: ustM.get(b.m) || 0, zahllast: b.zl, vorsteuer: r2(vst[i]), geschaetzt: false, faellig: monatDazu(b.m + '-15', 2) }));
+  const ustGeplant = new Map<string, number>();
+  for (const e of ev) {
+    if (e.betrag <= 0 || !['rest', 'wartung', 'muster'].includes(e.art)) continue;
+    const k = monat(e.art === 'muster' ? e.datum : tagDazu(e.datum, -14));
+    ustGeplant.set(k, r2((ustGeplant.get(k) || 0) + e.betrag / 6));   // 20 % USt im Brutto = 1/6
+  }
   const abM = firmaU.length ? monat(monatDazu(firmaU[firmaU.length - 1].u_monat!, 1)) : monat(monatDazu(S, -1));
   for (let m = abM; ; m = monat(monatDazu(m + '-01', 1))) {
     const faellig = monatDazu(m + '-15', 2);
     if (faellig >= ende) break;
     const eigen = ustM.get(m) || 0;
-    const u = m < heuteM ? eigen : m === heuteM ? Math.max(eigen, ustSchnitt) : ustSchnitt;
+    // Nur Umsätze, die auch in der Vorschau als Einnahme stehen: schon geschriebene Rechnungen + die geplanten
+    // (Restrechnung/Wartung am Rechnungstag = Eingang − 14 Tage, Dauerauftrag im Monat des Eingangs). Sonst würde
+    // für Umsatz Steuer gerechnet, der als Geld gar nicht eingeplant ist.
+    const geplant = m < heuteM ? 0 : ustGeplant.get(m) || 0;
+    const u = r2(eigen + geplant);
     const zl = r2(u - vorsteuerSchnitt);
     ust.push({ monat: m, ust: r2(u), zahllast: zl, vorsteuer: vorsteuerSchnitt, geschaetzt: true, faellig });
     if (faellig > S && zl > 0) ev.push({ datum: faellig, betrag: -zl, bezeichnung: `Umsatzsteuer ${m.slice(5)}/${m.slice(2, 4)} (geschätzt)`, gruppe: 'finanzamt', art: 'ust', geschaetzt: true });
