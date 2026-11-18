@@ -27,7 +27,6 @@ Seite mit dem letzten Auszugsstand plus den Umsätzen danach.
 - **Eingänge:**
   - offene Rechnungen
   - Restzahlungen: rest_offen ist netto, gerechnet wird ×1,2 und rest_faellig_am + 14 Tage, nur die letzte Rechnung je Projekt
-  - Entwürfe
   - erkannte Kunden-Daueraufträge mit stabilem Betrag (ET König, fonio). Schwankende Kundeneingänge wie Ruff sind
     Einzelrechnungen und zählen nicht als Muster. Liegt eine offene Rechnung desselben Kunden innerhalb von ±25 Tagen,
     zählt nur die Rechnung.
