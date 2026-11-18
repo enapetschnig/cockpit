@@ -311,6 +311,11 @@ export default function WuenschePage() {
               {u.gesamt === 0 && (
                 <div className="text-[11px] text-muted-foreground mt-0.5">noch keine Meldung</div>
               )}
+              {auftraege.some((a) => a.app_key === u.key && a.status === 'in_arbeit') ? (
+                <div className="text-[11px] font-semibold text-blue-700 mt-0.5">🤖 setzt gerade um</div>
+              ) : auftraege.some((a) => a.app_key === u.key && a.status === 'freigegeben') && (
+                <div className="text-[11px] text-blue-700 mt-0.5">⏳ startet gleich</div>
+              )}
               <div className="flex items-center gap-1 mt-2 pt-1.5 border-t" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                 <Switch id={`yolo-${u.key}`} checked={!!yolo[u.key]} onCheckedChange={(v) => yoloUmschalten(u.key, u.name, v)}
                   className="scale-75 origin-left data-[state=checked]:bg-amber-500" />
@@ -517,7 +522,7 @@ export default function WuenschePage() {
                   {ungesehen ? 'gelesen' : '✓ gelesen'}
                 </Button>
                 {(offen || auftraege.some((x) => x.wunsch_ids.includes(w.id))) && (
-                  <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter}
+                  <RoboterKnopf wunsch={w} auftraege={auftraege} onNeu={ladenRoboter} puls={puls}
                     yoloSeit={yoloSeit[w.app_key]} erstelltAm={erstelltAm}
                     offeneIds={items.filter((x) => x.app_key === w.app_key && istOffen(x) && x.status !== 'pruefen').map((x) => x.id)} />
                 )}

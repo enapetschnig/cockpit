@@ -102,7 +102,7 @@ const zaehlt = (x: RoboterAuftrag) => x.status !== 'verworfen' && x.status !== '
  * Alle offenen Wünsche desselben Kunden gehen gemeinsam mit; läuft für den Kunden schon
  * ein Vorschlag (noch nicht freigegeben), kommen sie dort dazu → ein gemeinsamer Vorschlag.
  */
-export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, erstelltAm }: {
+export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, erstelltAm, puls }: {
   wunsch: { id: string; app_key: string };
   offeneIds: string[];
   auftraege: RoboterAuftrag[];
@@ -110,10 +110,17 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
   /** YOLO an seit (roboter_apps.aktualisiert) – undefined = aus */
   yoloSeit?: string;
   erstelltAm: Record<string, string>;
+  /** Lebenszeichen – „Neustart: …“ heißt, der Roboter startet erst nach den laufenden Aufträgen Neues. */
+  puls?: { meldung: string | null } | null;
 }) {
   const a = auftraege.find((x) => x.wunsch_ids.includes(wunsch.id) && zaehlt(x));
+  const neustart = !!puls?.meldung?.startsWith('Neustart');
+  // Je Kunde läuft immer nur ein Auftrag – ein zweiter wartet, bis der fertig ist.
+  const laeuftSchon = (ausser?: string) => auftraege.some((x) => x.app_key === wunsch.app_key && x.id !== ausser && x.status === 'in_arbeit');
   if (a) {
-    const st = (a.status === 'in_arbeit' && !a.freigegeben_am && !a.yolo ? STATUS.vorbereiten : STATUS[a.status]) ?? { label: a.status, cls: '' };
+    let st = (a.status === 'in_arbeit' && !a.freigegeben_am && !a.yolo ? STATUS.vorbereiten : STATUS[a.status]) ?? { label: a.status, cls: '' };
+    if (a.status === 'freigegeben' && neustart) st = { ...st, label: '⏳ Startet nach dem Roboter-Neustart (höchstens 15 Min.)' };
+    else if (a.status === 'freigegeben' && laeuftSchon(a.id)) st = { ...st, label: '⏳ Kommt als Nächstes – der Roboter arbeitet gerade an einem anderen Wunsch dieses Kunden' };
     return (
       <a href={`#a-${a.id}`} className={'text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ' + st.cls}>
         <Bot className="w-3 h-3" /> {st.label}
@@ -144,6 +151,23 @@ export function RoboterKnopf({ wunsch, offeneIds, auftraege, onNeu, yoloSeit, er
     toast.success('▶️ Der Roboter setzt es um – du bekommst Bescheid, wenn es live ist');
     onNeu();
   };
+  // YOLO: den Wunsch holt der Roboter selbst ab (sammelt kurz, ob noch etwas nachkommt) – zeigen, dass er dran ist.
+  const holtSelbst = !!yoloSeit && new Date(erstelltAm[wunsch.id] ?? 0) >= new Date(yoloSeit);
+  if (holtSelbst) {
+    const text = neustart ? '⏳ Roboter startet gleich neu – danach geht es los'
+      : laeuftSchon() ? '⏳ Kommt dazu – der Roboter arbeitet gerade für diesen Kunden'
+      : '⏳ Roboter sammelt kurz – startet in ein paar Minuten';
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
+          <Bot className="w-3 h-3" /> {text}
+        </span>
+        {!neustart && !laeuftSchon() && (
+          <button onClick={geben} className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">sofort starten</button>
+        )}
+      </span>
+    );
+  }
   return (
     <Button size="sm" variant="outline" className="gap-1" onClick={geben}
       title={offenerVorschlag ? 'Kommt zu den anderen Wünschen dieses Kunden dazu' : undefined}>
