@@ -24,6 +24,38 @@ function esc(s: string): string {
 
 const ACC_LABEL: Record<string, string> = { firma: "Firma", privat: "Privat" };
 
+// Domains, die viele Leute teilen – dort zählt nur die genaue Adresse, nie die Domain.
+const SAMMEL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "gmx.at", "gmx.net", "gmx.de", "hotmail.com", "outlook.com", "outlook.at", "live.com",
+  "live.at", "yahoo.com", "yahoo.de", "icloud.com", "me.com", "web.de", "aon.at", "a1.net", "chello.at", "kabsi.at",
+  "utanet.at", "inode.at", "magenta.at", "drei.at", "t-online.de", "epowergmbh.at",
+]);
+
+/**
+ * Telegram nur für Mails, die eindeutig einem CRM-Kunden (crm.customers) gehören: genaue Adresse,
+ * oder eine eigene Firmen-Domain, die genau ein Kunde hat. Gibt den Kundennamen zurück, sonst null.
+ */
+async function kundenFinder(): Promise<(addr: string) => string | null> {
+  const rows = await prisma.$queryRaw<{ id: string; name: string; email: string }[]>`
+    select id::text, coalesce(nullif(company_name, ''), trim(concat_ws(' ', first_name, last_name))) as name, lower(trim(email)) as email
+    from crm.customers where coalesce(trim(email), '') <> ''`;
+  const nachAdresse = new Map<string, string>();
+  const nachDomain = new Map<string, Map<string, string>>(); // domain -> kunde-id -> name
+  for (const r of rows) {
+    nachAdresse.set(r.email, r.name);
+    const domain = r.email.split("@")[1];
+    if (!domain || SAMMEL_DOMAINS.has(domain)) continue;
+    if (!nachDomain.has(domain)) nachDomain.set(domain, new Map());
+    nachDomain.get(domain)!.set(r.id, r.name);
+  }
+  return (addr) => {
+    const a = addr.trim().toLowerCase();
+    if (nachAdresse.has(a)) return nachAdresse.get(a)!;
+    const kunden = nachDomain.get(a.split("@")[1] ?? "");
+    return kunden?.size === 1 ? [...kunden.values()][0] : null;
+  };
+}
+
 export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> {
   const notify = opts?.notify ?? true;
   const res: SyncResult = { imported: 0, perAccount: {}, errors: [] };
@@ -41,6 +73,13 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
     return res;
   }
   if (connected.length === 0) return res;
+
+  let kundeVon: (addr: string) => string | null = () => null;
+  try {
+    kundeVon = await kundenFinder();
+  } catch (e) {
+    console.error("[sync] Kunden laden", (e as Error).message); // ohne Kunden: kein Push, Sync läuft weiter
+  }
 
   for (const a of connected) {
     try {
@@ -84,11 +123,12 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
             });
           }
 
-          // Push nur für eingehende, firmenrelevante Mails – und nur einmal (notifiedAt).
-          if (notify && firmenrelevant && !r.outgoing) {
-            const tag = c!.priority === "hi" ? "❗️ Wichtig · " : "";
-            const suggestion = (c!.suggestedTodos ?? [])[0];
-            const pe = c!.proposedEvent;
+          // Push nur für eingehende Mails eines CRM-Kunden (Inhaber-Wunsch 18.11.2026) – und nur einmal (notifiedAt).
+          const kunde = r.outgoing ? null : kundeVon(r.fromAddr);
+          if (notify && kunde && c) {
+            const tag = c.priority === "hi" ? "❗️ Wichtig · " : "";
+            const suggestion = (c.suggestedTodos ?? [])[0];
+            const pe = c.proposedEvent;
             const peLine = pe ? `\n📅 <i>Termin erkannt: ${esc(pe.title)} (${pe.start.slice(0, 16).replace("T", " ")})</i>` : "";
             const actionRow = [
               { text: "✅ Aufgabe", data: `todo:${created.id}` },
@@ -96,8 +136,8 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
             ];
             const buttons = pe ? [[{ text: "📅 Termin eintragen", data: `cev:${created.id}` }], actionRow] : [actionRow];
             const sent = await sendTelegram(
-              `📨 <b>${tag}Neue firmenrelevante Mail</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
-                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c!.summary)}` +
+              `📨 <b>${tag}Mail von Kunde ${esc(kunde)}</b> · ${ACC_LABEL[a.account] ?? a.account}\n` +
+                `<b>${esc(r.fromName)}</b>: ${esc(r.subject)}\n${esc(c.summary)}` +
                 (suggestion ? `\n\n💡 <i>${esc(suggestion)}</i>` : "") +
                 peLine +
                 `\n\n<i>↩️ Antworte (Text/Sprache) für eine Antwort.</i>`,
@@ -110,7 +150,8 @@ export async function runSync(opts?: { notify?: boolean }): Promise<SyncResult> 
           }
 
           // Buchhaltung: aus Rechnungs-Mails den Beleg (PDF) erfassen – nie den Sync sprengen.
-          if (!r.outgoing) await maybeCaptureBeleg(r, created.id, c?.labels ?? [], notify);
+          // Beleg wird still erfasst – Telegram gibt es nur noch für Kunden-Mails (siehe oben).
+          if (!r.outgoing) await maybeCaptureBeleg(r, created.id, c?.labels ?? [], false);
         } catch (e) {
           // Doppelte gmailId (Race local+Vercel) o. ä. -> diese Mail überspringen, Batch läuft weiter.
           if (!String((e as Error).message).includes("Unique constraint")) {
