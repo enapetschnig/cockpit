@@ -43,9 +43,50 @@ const SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
 ];
 
+// Firmen-Postfach (Google Workspace epowergmbh.at) läuft über das ePower-Dienstkonto mit domänenweiter
+// Delegierung – kein Refresh-Token, das abläuft. Nur diese beiden Bereiche sind in admin.google.com
+// für Client-ID 110267341647112633213 freigegeben; der Kalender bleibt deshalb bei der Google-Anmeldung.
+const DIENSTKONTO_SCOPES = ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.send"];
+
+/** Schlüssel des Dienstkontos (GOOGLE_MAIL_DIENSTKONTO: JSON oder base64 davon) – null, wenn nicht eingetragen. */
+async function dienstkonto(): Promise<{ client_email: string; private_key: string } | null> {
+  const roh = await getConfig("GOOGLE_MAIL_DIENSTKONTO");
+  if (!roh) return null;
+  try {
+    const sa = JSON.parse(roh.startsWith("{") ? roh : Buffer.from(roh, "base64").toString("utf8"));
+    return sa?.client_email && sa?.private_key ? sa : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Adresse des Firmen-Postfachs für das Dienstkonto: GMAIL_ACCOUNT_FIRMA, sonst die zuletzt verbundene. */
+async function firmenPostfach(): Promise<string | null> {
+  const env = await getConfig("GMAIL_ACCOUNT_FIRMA");
+  if (env) return env;
+  const acc = await prisma.gmailAccount.findUnique({ where: { account: "firma" } });
+  return acc?.email ?? null;
+}
+
+/** Gmail-Client eines Postfachs samt Absender-Adresse – Firma über das Dienstkonto, sonst über das Refresh-Token. */
+async function gmailFuer(account: Account) {
+  if (account === "firma") {
+    const [sa, postfach] = await Promise.all([dienstkonto(), firmenPostfach()]);
+    if (sa && postfach) {
+      const auth = new google.auth.JWT({ email: sa.client_email, key: sa.private_key, scopes: DIENSTKONTO_SCOPES, subject: postfach });
+      return { gmail: google.gmail({ version: "v1", auth }), email: postfach };
+    }
+  }
+  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
+  if (!acc?.refreshToken) throw new Error(`Gmail-Konto "${account}" ist nicht verbunden (unter /connect verbinden).`);
+  const client = await oauthClient();
+  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
+  return { gmail: google.gmail({ version: "v1", auth: client }), email: acc.email };
+}
+
 export async function isGmailConfigured(): Promise<boolean> {
-  const [id, secret] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET")]);
-  return Boolean(id && secret);
+  const [id, secret, sa] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET"), dienstkonto()]);
+  return Boolean((id && secret) || sa);
 }
 
 async function oauthClient(redirectUri?: string) {
@@ -111,19 +152,22 @@ export interface ConnectedAccount {
   account: Account;
   email: string | null;
   connected: boolean;
+  dauerhaft: boolean; // über das Dienstkonto – muss nie neu verbunden werden
   lastSyncAt: Date | null;
 }
 
 /** Status beider Postfächer für die Verbinden-Seite. */
 export async function listAccounts(): Promise<ConnectedAccount[]> {
-  const rows = await prisma.gmailAccount.findMany();
+  const [rows, sa, postfach] = await Promise.all([prisma.gmailAccount.findMany(), dienstkonto(), firmenPostfach()]);
   const byAcc = new Map(rows.map((r) => [r.account, r]));
   return (["firma", "privat"] as Account[]).map((account) => {
     const r = byAcc.get(account);
+    const dauerhaft = account === "firma" && Boolean(sa && postfach);
     return {
       account,
-      email: r?.email ?? null,
-      connected: Boolean(r?.refreshToken),
+      email: dauerhaft ? postfach : r?.email ?? null,
+      connected: dauerhaft || Boolean(r?.refreshToken),
+      dauerhaft,
       lastSyncAt: r?.lastSyncAt ?? null,
     };
   });
@@ -131,12 +175,7 @@ export async function listAccounts(): Promise<ConnectedAccount[]> {
 
 /** Holt neue Nachrichten eines Kontos (nur solche, die noch nicht in der DB sind). */
 export async function fetchNewRawMails(account: Account, opts?: { max?: number; query?: string }): Promise<RawMail[]> {
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
-
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
+  const { gmail } = await gmailFuer(account);
 
   const list = await gmail.users.messages.list({
     userId: "me",
@@ -161,11 +200,7 @@ export async function fetchNewRawMails(account: Account, opts?: { max?: number; 
 
 /** Holt EINE Nachricht (mit Anhängen) erneut – z. B. um nachträglich einen Beleg zu erfassen. */
 export async function fetchRawMail(account: Account, gmailId: string): Promise<RawMail> {
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
+  const { gmail } = await gmailFuer(account);
   const msg = await gmail.users.messages.get({ userId: "me", id: gmailId, format: "full" });
   return toRawMail(account, gmailId, msg.data);
 }
@@ -197,7 +232,8 @@ function toRawMail(account: Account, gmailId: string, data: GmailMessageData): R
 }
 
 export async function markSynced(account: Account): Promise<void> {
-  await prisma.gmailAccount.update({ where: { account }, data: { lastSyncAt: new Date() } });
+  // upsert: das Firmen-Postfach über das Dienstkonto braucht keine verbundene Zeile
+  await prisma.gmailAccount.upsert({ where: { account }, create: { account, lastSyncAt: new Date() }, update: { lastSyncAt: new Date() } });
 }
 
 // ── Helfer: Header / Absender / Body ─────────────────────────
@@ -282,11 +318,7 @@ function collectAttachments(part: MimePart | null | undefined, out: MailAttachme
 
 /** Lädt die Bytes eines Mail-Anhangs (für die Buchhaltung: das Rechnungs-PDF). */
 export async function fetchAttachment(account: Account, gmailId: string, attachmentId: string): Promise<Buffer> {
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
+  const { gmail } = await gmailFuer(account);
   const res = await gmail.users.messages.attachments.get({ userId: "me", messageId: gmailId, id: attachmentId });
   const data = res.data.data;
   if (!data) throw new Error("Anhang ohne Daten");
@@ -325,11 +357,7 @@ export async function sendReply(
   gmailId: string,
   bodyText: string
 ): Promise<{ to: string; subject: string }> {
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
+  const { gmail, email } = await gmailFuer(account);
 
   const orig = await gmail.users.messages.get({
     userId: "me",
@@ -344,7 +372,7 @@ export async function sendReply(
   const messageId = header(h, "Message-ID");
   const references = [header(h, "References"), messageId].filter(Boolean).join(" ");
 
-  const raw = buildRawEmail({ from: acc.email || "me", to, subject, inReplyTo: messageId, references, body: bodyText });
+  const raw = buildRawEmail({ from: email || "me", to, subject, inReplyTo: messageId, references, body: bodyText });
 
   await gmail.users.messages.send({
     userId: "me",
@@ -363,14 +391,9 @@ export async function sendMailWithPdf(opts: {
   pdfBase64?: string;
 }): Promise<{ to: string }> {
   const to = safeRecipient(opts.to); // Zeilenumbruch im Empfänger = Header-Injection → gar nicht erst weiter
-  const account = opts.account ?? ("firma" as Account);
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Gmail-Konto "${account}" ist nicht verbunden (unter /connect verbinden).`);
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
+  const { gmail, email } = await gmailFuer(opts.account ?? "firma");
 
-  const from = oneLine(acc.email || "me");
+  const from = oneLine(email || "me");
   const enc = (s: string) => `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
   const subject = enc(oneLine(opts.subject));
   let raw: string;
@@ -419,11 +442,7 @@ export async function sendMailWithPdf(opts: {
 /** Liefert die letzten Nachrichten eines Threads als Kontext-Text (für bessere Antworten). */
 export async function getThreadContext(account: Account, threadId: string, maxMessages = 4): Promise<string> {
   try {
-    const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-    if (!acc?.refreshToken) return "";
-    const client = await oauthClient();
-    client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-    const gmail = google.gmail({ version: "v1", auth: client });
+    const { gmail } = await gmailFuer(account);
     const t = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
     const msgs = (t.data.messages ?? []).slice(-maxMessages);
     return msgs
@@ -442,12 +461,8 @@ export async function getThreadContext(account: Account, threadId: string, maxMe
 
 /** Sendet eine KOMPLETT NEUE E-Mail (kein Reply). */
 export async function sendNewEmail(account: Account, to: string, subject: string, body: string): Promise<void> {
-  const acc = await prisma.gmailAccount.findUnique({ where: { account } });
-  if (!acc?.refreshToken) throw new Error(`Konto "${account}" ist nicht verbunden.`);
-  const client = await oauthClient();
-  client.setCredentials({ refresh_token: refreshTokenOf(acc) });
-  const gmail = google.gmail({ version: "v1", auth: client });
-  const raw = buildRawEmail({ from: acc.email || "me", to, subject, body });
+  const { gmail, email } = await gmailFuer(account);
+  const raw = buildRawEmail({ from: email || "me", to, subject, body });
   await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
 }
 

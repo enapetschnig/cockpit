@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/roboter/tagesstand", "schedule": "*/10 * * * *" },
-    { "path": "/api/ads/sync/crm-leads", "schedule": "*/15 * * * *" }
+    { "path": "/api/ads/sync/crm-leads", "schedule": "*/15 * * * *" },
+    { "path": "/api/gmail/sync", "schedule": "*/15 * * * *" }
   ]
 }

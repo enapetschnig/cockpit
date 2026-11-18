@@ -10,6 +10,21 @@ zwei Postfächern (Firma + privat), klassifiziert sie mit der KI und legt sie in
 > Zum Loslegen fehlen nur **dein DB-Passwort** (siehe [Supabase](./10-supabase-datenbank.md)) und
 > **dein Google-OAuth-Client** (Schritte 1–5 unten).
 
+## Dauerhaft verbunden (seit 18.11.2026)
+
+- **Firma (hallo@epowergmbh.at)** liest und sendet über das ePower-Dienstkonto mit domänenweiter Delegierung
+  (Client-ID 110267341647112633213, Bereiche `gmail.modify` + `gmail.send`, eingetragen in admin.google.com).
+  Schlüssel als Vercel-Secret `GOOGLE_MAIL_DIENSTKONTO` (base64 des JSON, Projekt `cockpit`, nur Production);
+  Postfach = `GMAIL_ACCOUNT_FIRMA` oder die zuletzt verbundene Adresse. Kein Token, das abläuft – „Neu verbinden“
+  entfällt auf /connect. Der **Kalender** der Firma läuft weiter über die Google-Anmeldung (`calendar.events` ist
+  nicht delegiert).
+- **Privat (napetschnig.chris@gmail.com)** geht nicht per Dienstkonto (kein Workspace). Die Google-Anmeldung hält nur
+  dauerhaft, wenn der OAuth-Zustimmungsbildschirm des Projekts (Client `596454576530-…`) auf **„In production“** steht –
+  im Modus „Testing“ verfällt das Refresh-Token nach 7 Tagen (so geschehen am 23.06.2026). Redirect-URI
+  `https://cockpit.epowergmbh.at/api/gmail/callback` muss im OAuth-Client eingetragen sein.
+- **Abruf:** Vercel-Cron `/api/gmail/sync` alle 15 Min (GET nur mit `CRON_SECRET`, zeitkonstant). War vom 25.10. bis
+  18.11.2026 abgeschaltet.
+
 ## So funktioniert es (Architektur)
 1. **OAuth 2.0 pro Konto:** Du verbindest Firmen- und Privat-Gmail einmal. Google gibt uns
    ein *Refresh-Token*, das (verschlüsselt) in der DB gespeichert wird — kein Passwort nötig.

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
-type Acc = { account: "firma" | "privat"; email: string | null; connected: boolean; lastSyncAt: string | null };
+type Acc = { account: "firma" | "privat"; email: string | null; connected: boolean; dauerhaft?: boolean; lastSyncAt: string | null };
 type Status = { configured: boolean; accounts: Acc[]; error?: string };
 
 const LABEL: Record<string, string> = { firma: "Firma", privat: "Privat" };
@@ -287,11 +287,12 @@ export default function ConnectPage() {
               <div style={{ fontWeight: 700 }}>{LABEL[a.account]}-Postfach</div>
               <div style={{ color: "#6b6358", fontSize: 13 }}>
                 {a.connected ? `verbunden${a.email ? ` · ${a.email}` : ""}` : "nicht verbunden"}
+                {a.dauerhaft ? " · dauerhaft (Dienstkonto)" : ""}
               </div>
             </div>
-            <a href={`/api/gmail/connect?account=${a.account}`} style={{ ...btn, background: a.connected ? "#efece6" : "#2f6df0", color: a.connected ? "#2b2723" : "#fff", textDecoration: "none" }}>
+            {!a.dauerhaft && <a href={`/api/gmail/connect?account=${a.account}`} style={{ ...btn, background: a.connected ? "#efece6" : "#2f6df0", color: a.connected ? "#2b2723" : "#fff", textDecoration: "none" }}>
               {a.connected ? "Neu verbinden" : "Verbinden"}
-            </a>
+            </a>}
           </div>
         </div>
       ))}

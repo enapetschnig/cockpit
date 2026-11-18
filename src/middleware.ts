@@ -12,7 +12,6 @@ export const config = {
 // Eintrag entfernen; Cron-Aufrufe (ohne Login) brauchen dann wieder eine Ausnahme wie /api/reminders
 // unten, mit zeitkonstanter Schlüssel-Prüfung in der Route. Ohne Methode = alle Methoden.
 const ABGESCHALTET: { pfad: string; methode?: string }[] = [
-  { pfad: "/api/gmail/sync" }, // Gmail-Sync
   { pfad: "/api/briefing" }, // Morgen-Briefing
   { pfad: "/api/buchhaltung/worker" }, // BMD-/Buchhaltungs-Worker
   // Nur der Cron-Lauf über alle Konten – POST (eigene Konten) braucht /werbung, auch die Kunden.
@@ -50,6 +49,8 @@ export async function middleware(req: NextRequest) {
   if (pathname === "/api/roboter/tagesstand") return NextResponse.next();
   // Meta-Leads → CRM (Vercel-Cron): nur der GET-Lauf, die Route prüft den CRON_SECRET genauso selbst.
   if (pathname === "/api/ads/sync/crm-leads" && req.method === "GET") return NextResponse.next();
+  // Gmail-Abruf (Vercel-Cron): nur der GET-Lauf, die Route prüft den CRON_SECRET genauso selbst.
+  if (pathname === "/api/gmail/sync" && req.method === "GET") return NextResponse.next();
 
   // Telegram-Webhook ist öffentlich (durch eigenen Secret-Token abgesichert)
   if (pathname === "/api/telegram/webhook") return NextResponse.next();
