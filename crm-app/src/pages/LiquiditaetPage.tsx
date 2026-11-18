@@ -97,6 +97,11 @@ export default function LiquiditaetPage() {
   const v = useMemo(() => berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege,
     auftragsvolumen: volumen, szenario: mitNeu ? 'mitNeugeschaeft' : 'gesichert' }),
     [buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege, volumen, mitNeu]);
+  // Reichweite: nur Gesichertes, 6 Jahre weit – wann wäre das Konto leer, wenn kein neuer Auftrag dazukommt?
+  const reichweite = useMemo(() => {
+    const lang = berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege, monateVoraus: 72 });
+    return lang?.monate.find((m) => m.ende < 0)?.monat ?? null;
+  }, [buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege]);
   const kk = useMemo(() => kreditkarteNachHaendler(buchungen, heute), [buchungen, heute]);
 
   const verlauf = useMemo(() => {
@@ -251,6 +256,9 @@ export default function LiquiditaetPage() {
               <div className="text-xs text-muted-foreground">Tiefster Stand (12 Monate)</div>
               <div className={`text-2xl font-bold tabular-nums ${v.tiefster.saldo < 10000 ? 'text-red-600' : ''}`}>{eur(v.tiefster.saldo)}</div>
               <div className="text-[11px] text-muted-foreground">am {fmtDate(v.tiefster.datum)}</div>
+              <div className="text-[11px] mt-1">
+                Ohne neue Aufträge reicht das Geld {reichweite ? <b>bis {MONATE[Number(reichweite.slice(5, 7)) - 1]} {reichweite.slice(0, 4)}</b> : <b>über 6 Jahre</b>}
+              </div>
             </Card>
             <Card className="p-4">
               <div className="text-xs text-muted-foreground">Fixkosten pro Monat</div>

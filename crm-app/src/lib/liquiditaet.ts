@@ -589,7 +589,8 @@ export function berechneVorschau(o: {
     if (e.art === 'steuer' || e.art === 'ust') return FINANZAMT.test(bText) && tage(b.datum, e.datum) <= 20;
     if (e.key) return `${b.betrag < 0 ? '-' : '+'}${schlagwort(b)}` === e.key && tage(b.datum, e.datum) <= 12;
     const gleich = Math.abs(b.betrag - e.betrag) <= Math.max(1, Math.abs(e.betrag) * 0.05);
-    if (e.betrag > 0 && gleich) {
+    // Kundengeld zu einer Rechnung/Restzahlung darf auch deutlich früher oder später kommen – Monatsposten nicht
+    if (e.betrag > 0 && gleich && (e.art === 'rechnung' || e.art === 'rest')) {
       const w = nameWort(b.partner || '');
       if (w.some((x) => e.bezeichnung.toLowerCase().includes(x)) && tage(b.datum, e.datum) <= 60) return true;
     }
