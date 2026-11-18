@@ -28,7 +28,14 @@ Seite mit dem letzten Auszugsstand plus den Umsätzen danach.
   - offene Rechnungen
   - Restzahlungen: rest_offen ist netto, gerechnet wird ×1,2 und rest_faellig_am + 14 Tage, nur die letzte Rechnung je Projekt
   - Entwürfe
-  - erkannte Kunden-Daueraufträge (ET König …)
+  - erkannte Kunden-Daueraufträge mit stabilem Betrag (ET König, fonio). Schwankende Kundeneingänge wie Ruff sind
+    Einzelrechnungen und zählen nicht als Muster. Liegt eine offene Rechnung desselben Kunden innerhalb von ±25 Tagen,
+    zählt nur die Rechnung.
+  - Rechnungen mit Nummer und Status `draft` gelten als ausgestellt: Im Cockpit bleibt draft stehen, bis bezahlt ist.
+  - Wartung: aus `wartungsvertraege` (nicht „kein“) als Jahresrechnung 12 × monatlich + USt ab `abgerechnet_bis`+1
+    bzw. `start_am`, bezahlt nach 14 Tagen. Dazu unterschriebene `contracts` mit `maintenance_monthly`, sofern der
+    Kunde noch nicht in `wartungsvertraege` steht; Beginn = Unterschrift + `support_months`.
+  - Angenommene Angebote ohne jede Rechnung: „gesichert, ohne Termin“, nicht im Kontostand.
 - **Abgleich nach dem Auszug:**
   - Finanzamt: irgendeine FA-Abbuchung ±20 Tage. Gutschriften werden gegengerechnet.
   - Muster: gleiche Gegenseite.

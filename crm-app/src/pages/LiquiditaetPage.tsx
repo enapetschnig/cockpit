@@ -11,7 +11,7 @@ import { eur, fmtDate } from '@/types/billing';
 import {
   berechneVorschau, dateiText, iso, kreditkarteNachHaendler, monatDazu, parseAuszugZeilen, parseCsv, pdfZeilen,
   schluesselVergeben, type Ereignis, type LiqAuszug, type LiqBuchung, type LiqPosten, type LiqSteuer, type Muster,
-  type RechnungLite,
+  type RechnungLite, type AngebotLite, type WartungLite, type VertragLite,
 } from '@/lib/liquiditaet';
 import { Upload, Loader2, EyeOff, Eye, Trash2, Plus, Landmark, Info } from 'lucide-react';
 
@@ -53,6 +53,9 @@ export default function LiquiditaetPage() {
   const [posten, setPosten] = useState<LiqPosten[]>([]);
   const [steuer, setSteuer] = useState<LiqSteuer[]>([]);
   const [docs, setDocs] = useState<RechnungLite[]>([]);
+  const [angebote, setAngebote] = useState<AngebotLite[]>([]);
+  const [wartung, setWartung] = useState<WartungLite[]>([]);
+  const [vertraege, setVertraege] = useState<VertragLite[]>([]);
   const [laden, setLaden] = useState(true);
   const [upload, setUpload] = useState(false);
   const [alleZeigen, setAlleZeigen] = useState(false);
@@ -61,13 +64,16 @@ export default function LiquiditaetPage() {
 
   const neuLaden = useCallback(async () => {
     const seit = monatDazu(heute, -14);
-    const [b, a, p, s, d] = await Promise.all([
+    const [b, a, p, s, d, an, w, ve] = await Promise.all([
       db.from('liq_buchungen').select('konto,datum,betrag,partner,text').gte('datum', seit).order('datum').limit(10000),
       db.from('liq_auszuege').select('konto,stand_am,saldo,bezeichnung').order('stand_am'),
       db.from('liq_posten').select('*').order('naechste_am'),
       db.from('liq_steuer').select('*').order('faellig_am'),
-      db.from('documents').select('id,kind,status,number,recipient_company,recipient_name,gross,vat,paid_amount,doc_date,due_date,rest_offen,rest_faellig_am,projekt_id,created_at')
+      db.from('documents').select('id,kind,status,number,recipient_company,recipient_name,gross,vat,paid_amount,doc_date,due_date,rest_offen,rest_faellig_am,projekt_id,source_document,created_at')
         .in('kind', ['invoice', 'partial_invoice', 'final_invoice', 'credit_note']).gte('doc_date', seit).limit(5000),
+      db.from('documents').select('id,number,recipient_company,recipient_name,net,gross,status').eq('kind', 'offer').eq('status', 'accepted').gte('doc_date', seit),
+      db.from('wartungsvertraege').select('kunde,start_am,monatlich_netto,status,abgerechnet_bis'),
+      db.from('contracts').select('party_company,customer_signed_at,support_months,maintenance_monthly,document_id,status').eq('status', 'signed'),
     ]);
     const num = <T,>(rows: T[] | null, felder: string[]) => (rows || []).map((r: any) => {
       const x = { ...r }; for (const f of felder) if (x[f] != null) x[f] = Number(x[f]); return x as T;
@@ -77,11 +83,15 @@ export default function LiquiditaetPage() {
     setPosten(num(p.data, ['betrag']));
     setSteuer(num(s.data, ['u_betrag', 'k_betrag', 'e_betrag', 'gesamt']));
     setDocs(num(d.data, ['gross', 'vat', 'paid_amount', 'rest_offen']));
+    setAngebote(num(an.data, ['net', 'gross']));
+    setWartung(num(w.data, ['monatlich_netto']));
+    setVertraege(num(ve.data, ['maintenance_monthly', 'support_months']));
     setLaden(false);
   }, [heute]);
   useEffect(() => { neuLaden(); }, [neuLaden]);
 
-  const v = useMemo(() => berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute }), [buchungen, auszuege, posten, steuer, docs, heute]);
+  const v = useMemo(() => berechneVorschau({ buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege }),
+    [buchungen, auszuege, posten, steuer, docs, heute, angebote, wartung, vertraege]);
   const kk = useMemo(() => kreditkarteNachHaendler(buchungen, heute), [buchungen, heute]);
 
   const verlauf = useMemo(() => {
@@ -193,6 +203,8 @@ export default function LiquiditaetPage() {
   const privMonat = privPosten.filter((p) => p.aktiv && p.intervall_monate > 0).reduce((s, p) => s + p.betrag / p.intervall_monate, 0);
   const firmaPosten = posten.filter((p) => !p.privat && p.gruppe !== 'steuerberater');
   const kkSumme = kk.reduce((s, x) => s + x.proMonat, 0);
+  const gesichert = v ? v.ereignisse.filter((e) => ['rechnung', 'rest', 'wartung'].includes(e.art)) : [];
+  const gesichertSumme = gesichert.reduce((s, e) => s + e.betrag, 0);
   const mails = steuer.filter((s) => s.steuernummer === 'firma').slice(-4).reverse();
 
   return (
@@ -246,7 +258,7 @@ export default function LiquiditaetPage() {
           <Card className="p-4">
             <div className="flex items-baseline justify-between mb-2">
               <h2 className="font-semibold">Kontostand voraus</h2>
-              <span className="text-[11px] text-muted-foreground">nur bekannte Einnahmen – neue Aufträge sind nicht eingerechnet</span>
+              <span className="text-[11px] text-muted-foreground">gesicherte Aufträge, Wartung und Daueraufträge – neue Aufträge sind nicht eingerechnet</span>
             </div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -267,6 +279,24 @@ export default function LiquiditaetPage() {
             </div>
           </Card>
 
+          {/* Gesicherte Einnahmen */}
+          <Card className="p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+              <h2 className="font-semibold">Gesichertes Geld, das noch kommt</h2>
+              <span className="text-lg font-bold tabular-nums text-emerald-700">+ {eur(gesichertSumme)}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mb-2">
+              Offene Rechnungen, Restzahlungen aus angenommenen Aufträgen (Restrechnung + 14 Tage) und Wartungs-Jahresrechnungen –
+              alles brutto. Dazu laufend: {v.muster.filter((m) => m.betrag > 0 && !m.schwankend).map((m) => `${m.bezeichnung} ${eur(m.betrag)}/Monat`).join(', ') || '–'}.
+            </p>
+            <div className="divide-y">{gesichert.map((e, i) => <Zeile key={i} e={e} />)}</div>
+            {v.ohneTermin.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Gesichert, aber ohne Termin (nicht im Kontostand): {v.ohneTermin.map((o) => `${o.bezeichnung} ${eur(o.betrag)}`).join(' · ')}
+              </p>
+            )}
+          </Card>
+
           <div className="grid md:grid-cols-5 gap-4">
             {/* Nächste Zahlungen */}
             <Card className="p-4 md:col-span-3">
@@ -284,11 +314,6 @@ export default function LiquiditaetPage() {
                 <Button variant="ghost" size="sm" className="mt-1" onClick={() => setAlleZeigen(!alleZeigen)}>
                   {alleZeigen ? 'Weniger' : `Alle ${naechste.length} zeigen`}
                 </Button>
-              )}
-              {v.ohneTermin.length > 0 && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  Noch offen ohne Termin (nicht eingerechnet): {v.ohneTermin.map((o) => `${o.bezeichnung} ${eur(o.betrag)}`).join(' · ')}
-                </p>
               )}
             </Card>
 

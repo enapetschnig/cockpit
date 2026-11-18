@@ -66,8 +66,16 @@ export interface RechnungLite {
   rest_offen: number | null;
   rest_faellig_am: string | null;
   projekt_id: string | null;
+  source_document?: string | null;
   created_at: string;
 }
+
+/** Angenommenes Angebot (Auftrag gesichert). */
+export interface AngebotLite { id: string; number: string | null; recipient_company: string | null; recipient_name: string | null; net: number; gross: number; status: string }
+/** Wartungsvertrag: wird jährlich im Voraus verrechnet (WartungPage). */
+export interface WartungLite { kunde: string; start_am: string | null; monatlich_netto: number; status: string; abgerechnet_bis: string | null }
+/** Unterschriebener Software-Vertrag: Wartung beginnt nach der inkludierten Betreuung. */
+export interface VertragLite { party_company: string | null; customer_signed_at: string | null; support_months: number | null; maintenance_monthly: number | null; document_id: string | null; status: string }
 
 /* ── Hilfen ─────────────────────────────────────────────── */
 
@@ -322,7 +330,7 @@ export function erkenneMuster(buchungen: LiqBuchung[], stichtag: string): Muster
 
 /* ── Vorschau ───────────────────────────────────────────── */
 
-export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'steuer' | 'ust' | 'variabel';
+export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'wartung' | 'steuer' | 'ust' | 'variabel';
 export interface Ereignis {
   datum: string;
   betrag: number;
@@ -374,6 +382,9 @@ export function berechneVorschau(o: {
   docs: RechnungLite[];
   heute: string;
   monateVoraus?: number;
+  angebote?: AngebotLite[];
+  wartung?: WartungLite[];
+  vertraege?: VertragLite[];
 }): Vorschau | null {
   const giroAuszuege = o.auszuege.filter((a) => a.konto === 'giro').sort((a, b) => a.stand_am.localeCompare(b.stand_am));
   const anker = giroAuszuege[giroAuszuege.length - 1];
@@ -404,7 +415,9 @@ export function berechneVorschau(o: {
 
   // 2) Erkannte Muster (ohne die, die ein Posten schon abdeckt oder ausblendet)
   const muster = erkenneMuster(o.buchungen, A).filter((m) => !o.posten.some((p) => passtMuster(p.muster, m.beispiel)));
-  for (const m of muster) {
+  // Eingänge von Kunden nur als Muster, wenn der Betrag stabil ist (Dauerauftrag wie ET König) –
+  // schwankende Beträge sind Zahlungen einzelner Rechnungen, die stehen schon als Rechnung/Restzahlung drin.
+  for (const m of muster.filter((x) => x.betrag < 0 || !x.schwankend)) {
     for (let i = 1; i < 30; i++) {
       const d = monatDazu(m.letzte_am, i);
       if (d >= ende) break;
@@ -453,6 +466,37 @@ export function berechneVorschau(o: {
     }
   }
 
+  // 4b) Gesicherte Aufträge: angenommene Angebote, zu denen es noch gar keine Rechnung gibt
+  for (const a of o.angebote || []) {
+    if (a.status !== 'accepted' || o.docs.some((d) => d.source_document === a.id && d.status !== 'cancelled')) continue;
+    ohneTermin.push({ bezeichnung: `Auftrag ${a.number || ''} ${a.recipient_company || a.recipient_name || ''} (angenommen, noch keine Rechnung)`, betrag: Number(a.gross) });
+  }
+
+  // 4c) Wartung: Jahresrechnung im Voraus (12 × monatlich + USt), bezahlt ~14 Tage danach, jedes Jahr wieder
+  const wartungsKunden: string[] = [];
+  const jahresWartung = (kunde: string, ab: string, monatlich: number, herkunft: string) => {
+    for (let d = ab, i = 0; i < 5; i++, d = monatDazu(ab, 12 * i)) {
+      const f = tagDazu(d, 14);
+      if (f >= ende) break;
+      if (f > o.heute) ev.push({ datum: f, betrag: r2(monatlich * 12 * 1.2), bezeichnung: `Wartung ${kunde} (Jahresrechnung${herkunft})`, gruppe: 'einnahme', art: 'wartung', geschaetzt: true });
+    }
+  };
+  for (const w of o.wartung || []) {
+    wartungsKunden.push(w.kunde.toLowerCase());
+    if (w.status === 'kein' || !(Number(w.monatlich_netto) > 0) || !w.start_am) continue;
+    jahresWartung(w.kunde, w.abgerechnet_bis ? tagDazu(w.abgerechnet_bis, 1) : w.start_am, Number(w.monatlich_netto), '');
+  }
+  const schonVertrag = new Set<string>();
+  for (const v of o.vertraege || []) {
+    if (v.status !== 'signed' || !(Number(v.maintenance_monthly) > 0) || !v.customer_signed_at || !v.party_company) continue;
+    const k = v.document_id || v.party_company;
+    if (schonVertrag.has(k)) continue;
+    schonVertrag.add(k);
+    const erstes = v.party_company.toLowerCase().split(/[\s,-]+/).find((w) => w.length > 4 && !['holzbau', 'zimmerei', 'metallbau', 'elektro', 'tischlerei'].includes(w)) || v.party_company.toLowerCase();
+    if (wartungsKunden.some((w) => w.includes(erstes))) continue;   // steht schon bei den Wartungsverträgen
+    jahresWartung(v.party_company, monatDazu(v.customer_signed_at.slice(0, 10), Number(v.support_months) || 12), Number(v.maintenance_monthly), ', laut Vertrag');
+  }
+
   // 5) Finanzamt: Zahlungsaufforderungen aus den Steuerberater-Mails …
   for (const s of o.steuer) {
     if (s.faellig_am <= S || s.faellig_am >= ende) continue;
@@ -486,11 +530,6 @@ export function berechneVorschau(o: {
   // Finanzamt: irgendeine Finanzamt-Abbuchung ±20 Tage (Gutschriften werden gegengerechnet, Betrag weicht ab);
   // Muster: gleiche Gegenseite ±10 Tage; Kundengeld: gleicher Betrag + Name passt, egal wann;
   // sonst: gleicher Betrag (±5 %) ±10 Tage.
-  const verbraucht = new Set<LiqBuchung>();
-  const tage = (a: string, b: string) => Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 864e5;
-  // Nur unterscheidende Namensteile – „GmbH“ oder „Holzbau“ allein darf zwei Firmen nicht gleichsetzen
-  const ALLGEMEIN = new Set(['gmbh', 'gesmbh', 'gesellschaft', 'holzbau', 'zimmerei', 'metallbau', 'elektro', 'austria', 'österreich', 'firma']);
-  const nameWort = (t: string) => t.toLowerCase().replace(/[^a-zäöüß ]+/g, ' ').split(' ').filter((w) => w.length > 3 && !ALLGEMEIN.has(w));
   const passt = (e: Ereignis, b: LiqBuchung) => {
     if (Math.sign(b.betrag) !== Math.sign(e.betrag)) return false;
     // Restzahlung erst nach dem Schreiben der Restrechnung – Geld davor gehört zur Anzahlung
@@ -505,7 +544,20 @@ export function berechneVorschau(o: {
     }
     return gleich && tage(b.datum, e.datum) <= 10;
   };
+  const verbraucht = new Set<LiqBuchung>();
+  const tage = (a: string, b: string) => Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 864e5;
+  // Nur unterscheidende Namensteile – „GmbH“ oder „Holzbau“ allein darf zwei Firmen nicht gleichsetzen
+  const ALLGEMEIN = new Set(['gmbh', 'gesmbh', 'gesellschaft', 'holzbau', 'zimmerei', 'metallbau', 'elektro', 'austria', 'österreich', 'firma']);
+  const nameWort = (t: string) => t.toLowerCase().replace(/[^a-zäöüß ]+/g, ' ').split(' ').filter((w) => w.length > 3 && !ALLGEMEIN.has(w));
   ev.sort((a, b) => a.datum.localeCompare(b.datum));
+  // Dauerauftrag und offene Rechnung desselben Kunden im selben Zeitraum = dieselbe Zahlung → Rechnung zählt
+  const rechnungen = ev.filter((e) => e.art === 'rechnung');
+  for (let i = ev.length - 1; i >= 0; i--) {
+    const e = ev[i];
+    if (e.art !== 'muster' || e.betrag <= 0) continue;
+    const kunde = nameWort(e.bezeichnung);
+    if (rechnungen.some((r) => tage(r.datum, e.datum) <= 25 && kunde.some((w) => r.bezeichnung.toLowerCase().includes(w)))) ev.splice(i, 1);
+  }
   const offen = ev.filter((e) => {
     if (e.datum > tagDazu(A, 60) || e.art === 'variabel') return true;
     const treffer = nach.find((b) => !verbraucht.has(b) && passt(e, b));
