@@ -322,7 +322,7 @@ export function erkenneMuster(buchungen: LiqBuchung[], stichtag: string): Muster
 
 /* ── Vorschau ───────────────────────────────────────────── */
 
-export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'entwurf' | 'steuer' | 'ust' | 'variabel';
+export type Art = 'muster' | 'posten' | 'rechnung' | 'rest' | 'steuer' | 'ust' | 'variabel';
 export interface Ereignis {
   datum: string;
   betrag: number;
@@ -358,7 +358,8 @@ const name = (d: RechnungLite) => d.recipient_company || d.recipient_name || 'Ku
 export function ustJeMonat(docs: RechnungLite[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const d of docs) {
-    if (!RECHNUNGSARTEN.includes(d.kind) || ['cancelled', 'draft'].includes(d.status) || !d.doc_date) continue;
+    // „draft“ heißt hier nur „nicht als versendet markiert“ – mit Nummer ist die Rechnung ausgestellt (wie im Export)
+    if (!RECHNUNGSARTEN.includes(d.kind) || d.status === 'cancelled' || !d.doc_date) continue;
     const k = monat(d.doc_date);
     m.set(k, r2((m.get(k) || 0) + (d.kind === 'credit_note' ? -1 : 1) * Number(d.vat || 0)));
   }
@@ -435,13 +436,12 @@ export function berechneVorschau(o: {
     && x.status !== 'cancelled' && x.created_at > d.created_at);
   for (const d of o.docs) {
     if (!RECHNUNGSARTEN.includes(d.kind) || d.kind === 'credit_note' || d.status === 'cancelled') continue;
-    if (d.status === 'draft') {
-      ev.push({ datum: tagDazu(o.heute > (d.doc_date || '') ? o.heute : d.doc_date!, 14), betrag: Number(d.gross), bezeichnung: `Entwurf ${d.number || ''} ${name(d)} (noch nicht verschickt)`, gruppe: 'einnahme', art: 'entwurf', geschaetzt: true });
-    } else if (!['paid', 'rejected'].includes(d.status)) {
+    // Offene Rechnungen (auch „draft“: im Cockpit bleibt eine ausgestellte Rechnung bis zur Zahlung auf draft)
+    if (!['paid', 'rejected'].includes(d.status) && d.number) {
       const offen = r2(Number(d.gross) - Number(d.paid_amount || 0));
       if (offen > 0.01) {
         const f = d.due_date || tagDazu(d.doc_date || o.heute, 14);
-        ev.push({ datum: f < o.heute ? tagDazu(o.heute, 1) : f, betrag: offen, bezeichnung: `Rechnung ${d.number} ${name(d)}`, gruppe: 'einnahme', art: 'rechnung', ueberfaellig: f < o.heute });
+        ev.push({ datum: f < o.heute ? tagDazu(o.heute, 1) : f, betrag: offen, bezeichnung: `Rechnung ${d.number} ${name(d)}${f < o.heute ? ` (fällig seit ${f.slice(8)}.${f.slice(5, 7)}.)` : ''}`, gruppe: 'einnahme', art: 'rechnung' });
       }
     }
     if (Number(d.rest_offen) > 0 && !spaetere(d)) {
@@ -488,9 +488,13 @@ export function berechneVorschau(o: {
   // sonst: gleicher Betrag (±5 %) ±10 Tage.
   const verbraucht = new Set<LiqBuchung>();
   const tage = (a: string, b: string) => Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 864e5;
-  const nameWort = (t: string) => t.toLowerCase().replace(/[^a-zäöüß ]+/g, ' ').split(' ').filter((w) => w.length > 3);
+  // Nur unterscheidende Namensteile – „GmbH“ oder „Holzbau“ allein darf zwei Firmen nicht gleichsetzen
+  const ALLGEMEIN = new Set(['gmbh', 'gesmbh', 'gesellschaft', 'holzbau', 'zimmerei', 'metallbau', 'elektro', 'austria', 'österreich', 'firma']);
+  const nameWort = (t: string) => t.toLowerCase().replace(/[^a-zäöüß ]+/g, ' ').split(' ').filter((w) => w.length > 3 && !ALLGEMEIN.has(w));
   const passt = (e: Ereignis, b: LiqBuchung) => {
     if (Math.sign(b.betrag) !== Math.sign(e.betrag)) return false;
+    // Restzahlung erst nach dem Schreiben der Restrechnung – Geld davor gehört zur Anzahlung
+    if (e.art === 'rest' && b.datum < tagDazu(e.datum, -14)) return false;
     const bText = `${b.partner || ''} ${b.text || ''}`;
     if (e.art === 'steuer' || e.art === 'ust') return FINANZAMT.test(bText) && tage(b.datum, e.datum) <= 20;
     if (e.key) return `${b.betrag < 0 ? '-' : '+'}${schlagwort(b)}` === e.key && tage(b.datum, e.datum) <= 12;
@@ -501,6 +505,7 @@ export function berechneVorschau(o: {
     }
     return gleich && tage(b.datum, e.datum) <= 10;
   };
+  ev.sort((a, b) => a.datum.localeCompare(b.datum));
   const offen = ev.filter((e) => {
     if (e.datum > tagDazu(A, 60) || e.art === 'variabel') return true;
     const treffer = nach.find((b) => !verbraucht.has(b) && passt(e, b));
