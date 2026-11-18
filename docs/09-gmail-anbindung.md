@@ -21,7 +21,8 @@ zwei Postfächern (Firma + privat), klassifiziert sie mit der KI und legt sie in
 - **Privat (napetschnig.chris@gmail.com)** geht nicht per Dienstkonto (kein Workspace). Die Google-Anmeldung hält nur
   dauerhaft, wenn der OAuth-Zustimmungsbildschirm des Projekts (Client `596454576530-…`) auf **„In production“** steht –
   im Modus „Testing“ verfällt das Refresh-Token nach 7 Tagen (so geschehen am 23.06.2026). Redirect-URI
-  `https://cockpit.epowergmbh.at/api/gmail/callback` muss im OAuth-Client eingetragen sein.
+  `https://cockpit-flax-tau.vercel.app/api/gmail/callback` muss im OAuth-Client eingetragen sein (cockpit.epowergmbh.at
+  hat keinen DNS-Eintrag, verbunden wird über die vercel.app-Adresse).
 - **Abruf:** Vercel-Cron `/api/gmail/sync` alle 15 Min (GET nur mit `CRON_SECRET`, zeitkonstant). War vom 25.10. bis
   18.11.2026 abgeschaltet.
 
