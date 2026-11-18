@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,6 +21,7 @@ import BelegePage from "./pages/BelegePage";
 import BelegEditor from "./pages/BelegEditor";
 import KundenPage from "./pages/KundenPage";
 import KassabuchPage from "./pages/KassabuchPage";
+const LiquiditaetPage = lazy(() => import("./pages/LiquiditaetPage"));
 import ArchivPage from "./pages/ArchivPage";
 import FirmaPage from "./pages/FirmaPage";
 import WuenschePage from './pages/WuenschePage';
@@ -151,6 +153,7 @@ const App = () => (
           <Route path="/beleg/:id" element={<ProtectedRoute><BelegSeite /></ProtectedRoute>} />
           <Route path="/kunden" element={<ProtectedRoute><KundenPage /></ProtectedRoute>} />
           <Route path="/kassabuch" element={<ProtectedRoute><KassabuchPage /></ProtectedRoute>} />
+          <Route path="/liquiditaet" element={<ProtectedRoute><Suspense fallback={null}><LiquiditaetPage /></Suspense></ProtectedRoute>} />
           <Route path="/archiv" element={<ProtectedRoute><ArchivPage /></ProtectedRoute>} />
           <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/firma" element={<ProtectedRoute><FirmaPage /></ProtectedRoute>} />
