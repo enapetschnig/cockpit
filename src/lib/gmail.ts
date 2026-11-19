@@ -84,6 +84,15 @@ async function gmailFuer(account: Account) {
   return { gmail: google.gmail({ version: "v1", auth: client }), email: acc.email };
 }
 
+/** Kurzlebiges Zugangs-Token (1 h) fürs Firmen-Postfach über das Dienstkonto – für den Mail-Abholer am PC. */
+export async function firmenZugangsToken(): Promise<{ token: string; email: string; ablauf: number | null } | null> {
+  const [sa, postfach] = await Promise.all([dienstkonto(), firmenPostfach()]);
+  if (!sa || !postfach) return null;
+  const auth = new google.auth.JWT({ email: sa.client_email, key: sa.private_key, scopes: DIENSTKONTO_SCOPES, subject: postfach });
+  const t = await auth.authorize();
+  return t.access_token ? { token: t.access_token, email: postfach, ablauf: t.expiry_date ?? null } : null;
+}
+
 export async function isGmailConfigured(): Promise<boolean> {
   const [id, secret, sa] = await Promise.all([getConfig("GOOGLE_CLIENT_ID"), getConfig("GOOGLE_CLIENT_SECRET"), dienstkonto()]);
   return Boolean((id && secret) || sa);

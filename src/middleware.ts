@@ -58,6 +58,9 @@ export async function middleware(req: NextRequest) {
   // Roboter am PC meldet nur IDs – Text und Empfänger baut der Endpunkt selbst aus der DB
   if (pathname === "/api/roboter/melden") return NextResponse.next();
 
+  // Mail-Abholer am PC: Token fürs Firmen-Postfach, prüft seinen eigenen Schlüssel (ROBOTER_MAIL_SCHLUESSEL)
+  if (pathname === "/api/roboter/gmail-zugang" && req.method === "POST") return NextResponse.next();
+
   // Beleg-Versand aus der CRM-App: prüft das Supabase-Token selbst (inkl. CORS-Preflight)
   if (pathname === "/api/mail/send-document") return NextResponse.next();
 
