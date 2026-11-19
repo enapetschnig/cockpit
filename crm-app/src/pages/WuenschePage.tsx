@@ -311,11 +311,20 @@ export default function WuenschePage() {
               {u.gesamt === 0 && (
                 <div className="text-[11px] text-muted-foreground mt-0.5">noch keine Meldung</div>
               )}
-              {auftraege.some((a) => a.app_key === u.key && a.status === 'in_arbeit') ? (
-                <div className="text-[11px] font-semibold text-blue-700 mt-0.5">🤖 setzt gerade um</div>
-              ) : auftraege.some((a) => a.app_key === u.key && a.status === 'freigegeben') && (
-                <div className="text-[11px] text-blue-700 mt-0.5">⏳ startet gleich</div>
-              )}
+              {(() => {
+                // Aufträge ohne Wunsch = Nachtschicht/Wartung (rote Tests, Gegenprobe, Fehlerprotokoll) – nicht „setzt um“ nennen
+                const eigene = auftraege.filter((a) => a.app_key === u.key);
+                const wunsch = (s: string) => eigene.some((a) => a.status === s && a.wunsch_ids.length > 0);
+                const wartung = eigene.find((a) => a.status === 'in_arbeit' && a.wunsch_ids.length === 0);
+                if (wunsch('in_arbeit')) return <div className="text-[11px] font-semibold text-blue-700 mt-0.5">🤖 setzt gerade um</div>;
+                if (wunsch('freigegeben')) return <div className="text-[11px] text-blue-700 mt-0.5">⏳ startet gleich</div>;
+                if (wartung) return (
+                  <div className="text-[11px] text-muted-foreground mt-0.5" title={wartung.anmerkung ?? ''}>
+                    🔧 Wartung: {/^Rote Tests/.test(wartung.anmerkung ?? '') ? 'repariert Tests' : /^Grundtests/.test(wartung.anmerkung ?? '') ? 'legt Tests an' : 'prüft die App'}
+                  </div>
+                );
+                return null;
+              })()}
               <div className="flex items-center gap-1 mt-2 pt-1.5 border-t" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                 <Switch id={`yolo-${u.key}`} checked={!!yolo[u.key]} onCheckedChange={(v) => yoloUmschalten(u.key, u.name, v)}
                   className="scale-75 origin-left data-[state=checked]:bg-amber-500" />
