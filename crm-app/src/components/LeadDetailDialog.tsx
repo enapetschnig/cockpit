@@ -17,7 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Lead, LeadStage, ContactLog, STAGE_LABELS, SOURCE_LABELS } from '@/types/lead';
+import { Lead, LeadStage, ContactLog, SOURCE_LABELS } from '@/types/lead';
+import type { LeadPhase } from '@/hooks/useLeadPhasen';
 import { Switch } from '@/components/ui/switch';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Receipt } from 'lucide-react';
@@ -38,22 +39,9 @@ interface LeadDetailDialogProps {
   onAddContactLog: (leadId: string, log: Omit<ContactLog, 'id'>) => void;
   onDeleteContactLog?: (leadId: string, logId: string) => void;
   onDelete: (id: string) => void;
+  /** Spalten der Pipeline (selbst bearbeitbar) */
+  phasen: LeadPhase[];
 }
-
-const PIPELINE_STAGES: LeadStage[] = ['new', 'contacted', 'follow_up', 'qualified', 'unqualified', 'meeting_scheduled', 'meeting_done', 'no_show', 'won', 'lost'];
-
-const stageButtonColors: Record<LeadStage, string> = {
-  new: 'bg-blue-500 hover:bg-blue-600 text-white',
-  contacted: 'bg-amber-500 hover:bg-amber-600 text-white',
-  follow_up: 'bg-orange-500 hover:bg-orange-600 text-white',
-  qualified: 'bg-green-500 hover:bg-green-600 text-white',
-  unqualified: 'bg-slate-500 hover:bg-slate-600 text-white',
-  meeting_scheduled: 'bg-cyan-500 hover:bg-cyan-600 text-white',
-  meeting_done: 'bg-teal-500 hover:bg-teal-600 text-white',
-  no_show: 'bg-pink-500 hover:bg-pink-600 text-white',
-  won: 'bg-emerald-600 hover:bg-emerald-700 text-white',
-  lost: 'bg-red-500 hover:bg-red-600 text-white',
-};
 
 export function LeadDetailDialog({
   lead,
@@ -63,6 +51,7 @@ export function LeadDetailDialog({
   onAddContactLog,
   onDeleteContactLog,
   onDelete,
+  phasen,
 }: LeadDetailDialogProps) {
   const navigate = useNavigate();
   const { offers } = useOffers();
@@ -150,29 +139,7 @@ export function LeadDetailDialog({
     onUpdate(lead.id, updates);
   };
 
-  const getStageColor = (stage: LeadStage) => {
-    switch (stage) {
-      case 'new':
-        return 'stage-new';
-      case 'contacted':
-        return 'stage-contact';
-      case 'follow_up':
-        return 'bg-orange-100 text-orange-700';
-      case 'qualified':
-        return 'stage-won';
-      case 'unqualified':
-        return 'bg-slate-100 text-slate-700';
-      case 'meeting_scheduled':
-      case 'meeting_done':
-        return 'stage-meeting';
-      case 'no_show':
-        return 'bg-pink-100 text-pink-700';
-      case 'won':
-        return 'stage-won';
-      case 'lost':
-        return 'stage-lost';
-    }
-  };
+  const aktuellePhase = phasen.find((p) => p.schluessel === lead.stage);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -180,8 +147,8 @@ export function LeadDetailDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3 flex-wrap">
             <span>{lead.fullName}</span>
-            <span className={`stage-badge ${getStageColor(lead.stage)}`}>
-              {STAGE_LABELS[lead.stage]}
+            <span className="stage-badge" style={{ backgroundColor: `${aktuellePhase?.farbe ?? '#64748b'}22`, color: aktuellePhase?.farbe ?? '#64748b' }}>
+              {aktuellePhase?.name ?? lead.stage}
             </span>
             <OfferPicker
               offers={offers}
@@ -424,25 +391,17 @@ export function LeadDetailDialog({
                 <div className="space-y-3">
                   <Label>Status ändern</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    {PIPELINE_STAGES.map((stage) => (
+                    {phasen.map((p) => (
                       <Button
-                        key={stage}
+                        key={p.schluessel}
                         type="button"
-                        variant={draftStage === stage ? 'default' : 'outline'}
-                        className={`justify-start ${draftStage === stage ? stageButtonColors[stage] : ''}`}
-                        onClick={() => setDraftStage(stage)}
+                        variant={draftStage === p.schluessel ? 'default' : 'outline'}
+                        className="justify-start"
+                        style={draftStage === p.schluessel ? { backgroundColor: p.farbe, color: '#fff' } : undefined}
+                        onClick={() => setDraftStage(p.schluessel)}
                       >
-                        <div className={`w-2.5 h-2.5 rounded-full mr-2 ${
-                          stage === 'new' ? 'bg-blue-500' :
-                          stage === 'contacted' ? 'bg-amber-500' :
-                          stage === 'follow_up' ? 'bg-orange-500' :
-                          stage === 'qualified' ? 'bg-green-500' :
-                          stage === 'unqualified' ? 'bg-slate-500' :
-                          stage === 'meeting_scheduled' ? 'bg-cyan-500' :
-                          stage === 'meeting_done' ? 'bg-teal-500' :
-                          stage === 'won' ? 'bg-emerald-600' : 'bg-red-500'
-                        }`} />
-                        {STAGE_LABELS[stage]}
+                        <div className="w-2.5 h-2.5 rounded-full mr-2" style={{ backgroundColor: draftStage === p.schluessel ? '#fff' : p.farbe }} />
+                        {p.name}
                       </Button>
                     ))}
                   </div>

@@ -1,5 +1,8 @@
-export type LeadStage = 
-  | 'new' 
+/** Spalten-Schlüssel der Pipeline: die festen von früher oder eigene aus crm.lead_phasen (p_…). */
+export type LeadStage = BuiltinStage | (string & {});
+
+export type BuiltinStage =
+  | 'new'
   | 'contacted' 
   | 'follow_up'
   | 'qualified' 
@@ -55,7 +58,7 @@ export interface Lead {
   offerId?: string | null;
 }
 
-export const STAGE_LABELS: Record<LeadStage, string> = {
+export const STAGE_LABELS: Record<BuiltinStage, string> = {
   new: 'Neu',
   contacted: 'Erstkontakt',
   follow_up: 'Follow Up',

@@ -392,5 +392,6 @@ export function useLeads() {
     deleteContactLog,
     getLeadsByStage,
     getLeadsBySource,
+    refetch: fetchLeads,
   };
 }

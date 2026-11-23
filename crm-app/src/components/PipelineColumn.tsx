@@ -1,47 +1,37 @@
-import { Lead, LeadStage, STAGE_LABELS } from '@/types/lead';
+import { useState } from 'react';
+import { Lead } from '@/types/lead';
 import { LeadCard } from './LeadCard';
+import type { LeadPhase } from '@/hooks/useLeadPhasen';
 
 interface PipelineColumnProps {
-  stage: LeadStage;
+  phase: LeadPhase;
+  phasen: LeadPhase[];
   leads: Lead[];
   onLeadClick: (lead: Lead) => void;
   onLeadUpdate?: (id: string, updates: Partial<Lead>) => void;
+  onPhasenBearbeiten?: () => void;
 }
 
-const stageColors: Record<LeadStage, string> = {
-  new: 'bg-blue-500',
-  contacted: 'bg-amber-500',
-  follow_up: 'bg-orange-500',
-  qualified: 'bg-green-500',
-  unqualified: 'bg-slate-500',
-  meeting_scheduled: 'bg-cyan-500',
-  meeting_done: 'bg-teal-500',
-  no_show: 'bg-pink-500',
-  won: 'bg-emerald-600',
-  lost: 'bg-red-500',
-};
-
-const stageBgColors: Record<LeadStage, string> = {
-  new: 'bg-blue-50',
-  contacted: 'bg-amber-50',
-  follow_up: 'bg-orange-50',
-  qualified: 'bg-green-50',
-  unqualified: 'bg-slate-100',
-  meeting_scheduled: 'bg-cyan-50',
-  meeting_done: 'bg-teal-50',
-  no_show: 'bg-pink-50',
-  won: 'bg-emerald-50',
-  lost: 'bg-red-50',
-};
-
-export function PipelineColumn({ stage, leads, onLeadClick, onLeadUpdate }: PipelineColumnProps) {
-  const stageLeads = leads.filter((lead) => lead.stage === stage);
+export function PipelineColumn({ phase, phasen, leads, onLeadClick, onLeadUpdate, onPhasenBearbeiten }: PipelineColumnProps) {
+  const stageLeads = leads.filter((lead) => lead.stage === phase.schluessel);
+  // Karte hierher ziehen = Lead in diese Spalte
+  const [drueber, setDrueber] = useState(false);
 
   return (
-    <div className={`pipeline-stage ${stageBgColors[stage]} min-w-[300px] flex-1`}>
+    <div
+      className="pipeline-stage min-w-[300px] flex-1"
+      style={{ backgroundColor: `${phase.farbe}${drueber ? '2e' : '14'}`, outline: drueber ? `2px dashed ${phase.farbe}` : undefined }}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('text/lead-id')) { e.preventDefault(); setDrueber(true); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDrueber(false); }}
+      onDrop={(e) => {
+        setDrueber(false);
+        const id = e.dataTransfer.getData('text/lead-id');
+        if (id && leads.find((l) => l.id === id)?.stage !== phase.schluessel) onLeadUpdate?.(id, { stage: phase.schluessel });
+      }}
+    >
       <div className="flex items-center gap-2 mb-4">
-        <div className={`w-3 h-3 rounded-full ${stageColors[stage]}`} />
-        <h2 className="font-semibold text-foreground">{STAGE_LABELS[stage]}</h2>
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: phase.farbe }} />
+        <h2 className="font-semibold text-foreground">{phase.name}</h2>
         <span className="ml-auto bg-background rounded-full px-2.5 py-0.5 text-sm font-medium text-muted-foreground">
           {stageLeads.length}
         </span>
@@ -52,13 +42,15 @@ export function PipelineColumn({ stage, leads, onLeadClick, onLeadUpdate }: Pipe
           <LeadCard
             key={lead.id}
             lead={lead}
+            phasen={phasen}
             onClick={() => onLeadClick(lead)}
             onUpdate={onLeadUpdate}
+            onPhasenBearbeiten={onPhasenBearbeiten}
           />
         ))}
         {stageLeads.length === 0 && (
           <div className="text-center py-8 text-muted-foreground text-sm">
-            Keine Leads
+            {drueber ? 'Hier ablegen' : 'Keine Leads'}
           </div>
         )}
       </div>

@@ -9,16 +9,22 @@ import { AddLeadDialog } from '@/components/AddLeadDialog';
 import { LeadDetailDialog } from '@/components/LeadDetailDialog';
 import { CallbackList } from '@/components/CallbackList';
 import { OpenInvoicesStrip } from '@/components/billing/OpenInvoicesStrip';
-import { Lead, LeadSource, LeadStage, SOURCE_LABELS, SOURCE_STYLE } from '@/types/lead';
+import { PhasenEditor } from '@/components/PhasenEditor';
+import { useLeadPhasen } from '@/hooks/useLeadPhasen';
+import { Lead, LeadSource, SOURCE_LABELS, SOURCE_STYLE } from '@/types/lead';
 import { WeeklyActivityOverview } from '@/components/WeeklyActivityOverview';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-
-const ALL_STAGES: LeadStage[] = ['new', 'contacted', 'follow_up', 'qualified', 'unqualified', 'meeting_scheduled', 'meeting_done', 'no_show', 'won', 'lost'];
+import { Settings2 } from 'lucide-react';
 
 const Index = () => {
-  const { leads, addLead, updateLead, deleteLead, addContactLog, deleteContactLog } = useLeads();
+  const { leads, addLead, updateLead, deleteLead, addContactLog, deleteContactLog, refetch } = useLeads();
+  // Spalten der Pipeline – selbst bearbeitbar (crm.lead_phasen)
+  const phasenApi = useLeadPhasen();
+  const { phasen } = phasenApi;
+  const [phasenOffen, setPhasenOffen] = useState(false);
+  const anzahlJePhase = leads.reduce<Record<string, number>>((m, l) => ({ ...m, [l.stage]: (m[l.stage] ?? 0) + 1 }), {});
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
@@ -34,11 +40,9 @@ const Index = () => {
   }, [sp, leads, setSp]);
   const [showUnqualified, setShowUnqualified] = useState(false);
 
-  const visibleStages = showUnqualified
-    ? ALL_STAGES
-    : ALL_STAGES.filter((s) => s !== 'unqualified');
+  const visibleStages = showUnqualified ? phasen : phasen.filter((p) => !p.ausgeblendet);
 
-  const unqualifiedCount = leads.filter((l) => l.stage === 'unqualified').length;
+  const unqualifiedCount = phasen.filter((p) => p.ausgeblendet).reduce((n, p) => n + (anzahlJePhase[p.schluessel] ?? 0), 0);
 
   const selectedLead = selectedLeadId
     ? leads.find((l) => l.id === selectedLeadId) || null
@@ -84,11 +88,15 @@ const Index = () => {
             onCheckedChange={setShowUnqualified}
           />
           <label htmlFor="show-unqualified" className="text-sm text-muted-foreground cursor-pointer select-none">
-            Unqualifiziert anzeigen
+            Ausgeblendete anzeigen
           </label>
           {unqualifiedCount > 0 && (
             <Badge variant="secondary" className="text-xs">{unqualifiedCount}</Badge>
           )}
+          <button type="button" onClick={() => setPhasenOffen(true)} title="Spalten umbenennen, umfärben, umsortieren, anlegen"
+            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 ml-2">
+            <Settings2 className="w-3.5 h-3.5" /> Spalten
+          </button>
           {vorhandeneQuellen.length > 1 && (
             <div className="ml-auto flex items-center gap-1 flex-wrap">
               <span className="text-xs text-muted-foreground mr-1">Quelle:</span>
@@ -108,13 +116,15 @@ const Index = () => {
 
         <ScrollArea className="w-full whitespace-nowrap flex-1">
           <div className="flex gap-4 pb-4">
-            {visibleStages.map((stage) => (
+            {visibleStages.map((phase) => (
               <PipelineColumn
-                key={stage}
-                stage={stage}
+                key={phase.schluessel}
+                phase={phase}
+                phasen={phasen}
                 leads={gefilterteLeads}
                 onLeadClick={handleLeadClick}
                 onLeadUpdate={updateLead}
+                onPhasenBearbeiten={() => setPhasenOffen(true)}
               />
             ))}
           </div>
@@ -128,8 +138,17 @@ const Index = () => {
         onAdd={addLead}
       />
 
+      <PhasenEditor
+        {...phasenApi}
+        open={phasenOffen}
+        onOpenChange={setPhasenOffen}
+        anzahl={anzahlJePhase}
+        onLeadsVerschoben={refetch}
+      />
+
       <LeadDetailDialog
         lead={selectedLead}
+        phasen={phasen}
         open={isDetailDialogOpen}
         onOpenChange={(open) => {
           setIsDetailDialogOpen(open);

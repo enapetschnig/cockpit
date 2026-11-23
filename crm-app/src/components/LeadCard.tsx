@@ -4,19 +4,28 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useOffers } from '@/hooks/useOffers';
 import { OfferPicker } from '@/components/OfferPicker';
+import { PhasenPicker } from '@/components/PhasenPicker';
+import type { LeadPhase } from '@/hooks/useLeadPhasen';
 
 interface LeadCardProps {
   lead: Lead;
+  phasen?: LeadPhase[];
   onClick: () => void;
   onUpdate?: (id: string, updates: Partial<Lead>) => void;
+  onPhasenBearbeiten?: () => void;
 }
 
-export function LeadCard({ lead, onClick, onUpdate }: LeadCardProps) {
+export function LeadCard({ lead, phasen, onClick, onUpdate, onPhasenBearbeiten }: LeadCardProps) {
   const lastContact = lead.contactLogs[lead.contactLogs.length - 1];
   const { offers } = useOffers();
 
   return (
-    <div className="lead-card" onClick={onClick}>
+    <div
+      className="lead-card"
+      onClick={onClick}
+      draggable={!!onUpdate}
+      onDragStart={(e) => { e.dataTransfer.setData('text/lead-id', lead.id); e.dataTransfer.effectAllowed = 'move'; }}
+    >
       <div className="flex items-start justify-between mb-3">
         <div>
           <h3 className="font-semibold text-foreground">{lead.fullName}</h3>
@@ -33,7 +42,15 @@ export function LeadCard({ lead, onClick, onUpdate }: LeadCardProps) {
         </span>
       </div>
 
-      <div className="mb-3">
+      <div className="mb-3 flex items-center gap-1.5 flex-wrap">
+        {phasen && (
+          <PhasenPicker
+            phasen={phasen}
+            aktuell={lead.stage}
+            onChange={(stage) => onUpdate?.(lead.id, { stage })}
+            onBearbeiten={onPhasenBearbeiten}
+          />
+        )}
         <OfferPicker
           offers={offers}
           selectedOfferId={lead.offerId}
