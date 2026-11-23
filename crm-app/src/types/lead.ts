@@ -18,8 +18,9 @@ export type LeadSource =
   | 'instagram' 
   | 'google' 
   | 'website' 
-  | 'referral' 
-  | 'phone' 
+  | 'referral'
+  | 'phone'
+  | 'brief'
   | 'other';
 
 export interface ContactLog {
@@ -79,6 +80,7 @@ export const SOURCE_STYLE: Record<LeadSource, string> = {
   website: 'bg-emerald-100 text-emerald-800',
   referral: 'bg-violet-100 text-violet-800',
   phone: 'bg-slate-200 text-slate-800',
+  brief: 'bg-orange-100 text-orange-800',
   other: 'bg-muted text-muted-foreground',
 };
 
@@ -89,5 +91,6 @@ export const SOURCE_LABELS: Record<LeadSource, string> = {
   website: 'Website',
   referral: 'Empfehlung',
   phone: 'Telefon',
+  brief: 'Brief',
   other: 'Sonstige',
 };
