@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.import-lead]
 verify_jwt = false
+
+[functions.brief-qr]
+verify_jwt = false
