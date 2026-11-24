@@ -30,7 +30,9 @@ const db = supabase as any;
 async function alle<T>(tabelle: string, spalten: string, ordnung: string, filter?: (q: any) => any): Promise<T[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out: T[] = [];
   for (let von = 0; ; von += 1000) {
-    let q = db.from(tabelle).select(spalten).order(ordnung).range(von, von + 999);
+    let q = db.from(tabelle).select(spalten).order(ordnung);
+    if (ordnung !== 'id' && ordnung !== 'firma_key') q = q.order('id'); // feste Reihenfolge über die Seiten hinweg
+    q = q.range(von, von + 999);
     if (filter) q = filter(q);
     const { data, error } = await q;
     if (error) throw error;
