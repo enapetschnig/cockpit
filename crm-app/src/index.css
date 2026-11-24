@@ -6,6 +6,9 @@
 
 @layer base {
   :root {
+    /* Diagrammfarben (dataviz-Palette, geprüft: Farbsehschwäche + Kontrast) – Werbeerfolg: Umsatz blau, Kosten orange */
+    --viz-umsatz: #2a78d6;
+    --viz-kosten: #eb6834;
     --background: 210 20% 98%;
     --foreground: 220 20% 10%;
 
@@ -64,6 +67,8 @@
   }
 
   .dark {
+    --viz-umsatz: #3987e5;
+    --viz-kosten: #d95926;
     --background: 220 20% 8%;
     --foreground: 210 20% 98%;
 

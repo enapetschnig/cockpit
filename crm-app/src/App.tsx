@@ -32,6 +32,7 @@ import VertragEditor from './pages/VertragEditor';
 import Unterschreiben from './pages/Unterschreiben';
 import WartungPage from './pages/WartungPage';
 import BriefePage from './pages/BriefePage';
+import WerbeerfolgPage from './pages/WerbeerfolgPage';
 import AppsPage from './pages/AppsPage';
 import AppSeite from './pages/AppSeite';
 import SitzungSeite from './pages/SitzungSeite';
@@ -165,6 +166,7 @@ const App = () => (
           <Route path="/vertrag/:id" element={<ProtectedRoute><VertragEditor /></ProtectedRoute>} />
           <Route path="/wartung" element={<ProtectedRoute><WartungPage /></ProtectedRoute>} />
           <Route path="/briefe" element={<ProtectedRoute><BriefePage /></ProtectedRoute>} />
+          <Route path="/werbeerfolg" element={<ProtectedRoute><WerbeerfolgPage /></ProtectedRoute>} />
           <Route path="/apps" element={<ProtectedRoute><AppsPage /></ProtectedRoute>} />
           <Route path="/apps/:key" element={<ProtectedRoute><AppSeite /></ProtectedRoute>} />
           <Route path="/apps/:key/:id" element={<ProtectedRoute><SitzungSeite /></ProtectedRoute>} />
