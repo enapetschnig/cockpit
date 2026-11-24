@@ -40,6 +40,7 @@ export const APPS: AppInfo[] = [
   { key: 'gtholzbau', label: 'GT-Holzbau (Kärntner Holzhaus)' },
   // massenermittlung.at (12.11.2026) – eigenes Produkt, nicht beim Roboter (siehe api/_apps.ts).
   { key: 'massenermittlung', label: 'massenermittlung.at' },
+  { key: 'attl', label: 'ATTL Automationstechnik Lederer' },
 ];
 
 export const APP_LABEL: Record<string, string> =

@@ -53,6 +53,8 @@ export const APPS: AppInfo[] = [
   // massenermittlung.at (12.11.2026) – eigenes Produkt (Architektenplan → Aufmaß), Repo/Vercel massenermittlung. Meldungen ohne Bild und Ton.
   // Mit Absicht nicht beim Roboter: Änderungen an der Erkennung brauchen die Messläufe des Projekts (Feldtest).
   { key: 'massenermittlung', label: 'massenermittlung.at', projectRef: 'kozjixaelotjjhdrztjx' },
+  // ATTL – Automationstechnik Thomas Lederer GmbH + Einzelfirma, Saalfelden (20.11.2026), ERP aus der SETEC-Vorlage – Repo/Vercel attl.
+  { key: 'attl', label: 'ATTL Automationstechnik Lederer', projectRef: 'obbmbczosyqlaszclnen' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
