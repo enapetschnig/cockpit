@@ -26,7 +26,7 @@ Rechnen in `crm-app/src/lib/werbeerfolg.ts`).
 - Das händische **Auftragsvolumen** (`crm.order_volumes`, Seite /auftragsvolumen) fließt nicht ein – Christoph 24.11.2026:
   „nach den Rechnungen und Aufträgen im Buchhaltungssystem, nicht nach dem, was ich manuell eingebe“. Zuordnung seiner
   Einträge: Hölzi = Steron, „Robert Nachbar“ = Composite Solutions, „3dscan im holzbau“ = Netzker, „Sonnenoase Start ab
-  Oktober“ = Steinbrecher & Köberl. Hofer Fenster und Türen Wien hat (Stand 24.11.) weder Angebot noch Rechnung.
+  Oktober“ = Steinbrecher & Köberl, „Hofer Fenster und Türen“ = HT Montageteam (Thomas Hofer, Facebook-Anfrage).
   Ruff: 5.500 in Rechnungen statt 4.000 – 1417 steht als bezahlt, ohne Zahlung am Konto (wohl Doppel von 1418).
 
 ## Seite
