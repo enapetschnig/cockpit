@@ -10,7 +10,7 @@
  * ROAS = Auftragswert (bzw. Verrechnetes) der Kunden aus dem Kanal ÷ Kosten des Kanals im selben Zeitraum.
  */
 
-export type Herkunft = 'facebook' | 'instagram' | 'brief' | 'website' | 'empfehlung' | 'sonstiges';
+export type Herkunft = 'facebook' | 'instagram' | 'brief' | 'website' | 'empfehlung' | 'youtube' | 'privat' | 'sonstiges';
 export type KostenKanal = 'meta' | 'brief';
 
 export const HERKUNFT: { wert: Herkunft; label: string }[] = [
@@ -19,6 +19,8 @@ export const HERKUNFT: { wert: Herkunft; label: string }[] = [
   { wert: 'brief', label: 'Brief' },
   { wert: 'website', label: 'Website' },
   { wert: 'empfehlung', label: 'Empfehlung' },
+  { wert: 'youtube', label: 'YouTube' },
+  { wert: 'privat', label: 'Privat (selbst akquiriert)' },
   { wert: 'sonstiges', label: 'Sonstiges' },
 ];
 export const KANAL_LABEL: Record<KostenKanal, string> = { meta: 'Facebook & Instagram', brief: 'Briefe' };

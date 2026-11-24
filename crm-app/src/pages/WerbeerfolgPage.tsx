@@ -314,8 +314,8 @@ export default function WerbeerfolgPage() {
                   <dt className="text-muted-foreground">{KANAL_LABEL.brief}</dt><dd className="text-right">{euro0(s.brief.kosten)}</dd>
                 </dl>
                 <p className="text-[11px] text-muted-foreground mb-2">
-                  Aus dem Kontoauszug: FACEBK → Facebook & Instagram, PAGRO und POST → Briefe (so wie abgebucht).
-                  {s.andere !== 0 && ` Aufträge aus Website, Empfehlung und Sonstigem: ${euro0(s.andere)}.`}
+                  Aus dem Kontoauszug: FACEBK → Facebook & Instagram, PAGRO und POST → Briefe (erst ab Juni 2026, davor ausgenommen).
+                  {s.andere !== 0 && ` Aufträge über andere Wege (privat, Empfehlung, YouTube, Website …): ${euro0(s.andere)}.`}
                 </p>
                 <Button size="sm" variant="outline" className="w-full mb-2 text-xs" onClick={() => setKostenOffen((v) => !v)}>
                   {kostenOffen ? 'Buchungen ausblenden' : `Buchungen zeigen (${kostenImZeitraum.length})`}
