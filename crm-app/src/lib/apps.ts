@@ -41,6 +41,7 @@ export const APPS: AppInfo[] = [
   // massenermittlung.at (12.11.2026) – eigenes Produkt, nicht beim Roboter (siehe api/_apps.ts).
   { key: 'massenermittlung', label: 'massenermittlung.at' },
   { key: 'attl', label: 'ATTL Automationstechnik Lederer' },
+  { key: 'et-koenig', label: 'ET-König' },
 ];
 
 export const APP_LABEL: Record<string, string> =

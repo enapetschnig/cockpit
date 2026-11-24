@@ -55,6 +55,8 @@ export const APPS: AppInfo[] = [
   { key: 'massenermittlung', label: 'massenermittlung.at', projectRef: 'kozjixaelotjjhdrztjx' },
   // ATTL – Automationstechnik Thomas Lederer GmbH + Einzelfirma, Saalfelden (20.11.2026), ERP aus der SETEC-Vorlage – Repo/Vercel attl.
   { key: 'attl', label: 'ATTL Automationstechnik Lederer', projectRef: 'obbmbczosyqlaszclnen' },
+  // ET-König GmbH (Elektro + PV, Projektdokumentation/Erstaufnahme, 24.11.2026) – Repo/Vercel et-koenig.
+  { key: 'et-koenig', label: 'ET-König', projectRef: 'nvwtnibmhswqinimmpqc' },
 ];
 
 const BY_KEY = new Map(APPS.map((a) => [a.key, a]));
